@@ -50,7 +50,6 @@ pub fn parse_markdown(input: &str) -> Vec<Block> {
         Header(u8),
         Paragraph,
         List { ordered: bool, items: Vec<Vec<InlineElement>> },
-        ListItem,
     }
 
     let mut container_stack: Vec<Container> = Vec::new();
@@ -163,14 +162,14 @@ pub fn parse_markdown(input: &str) -> Vec<Block> {
                 style_stack.push(Style::Bold);
             }
             Event::End(TagEnd::Strong) => {
-                style_stack.retain(|s| !matches!(s, Style::Bold));
+                style_stack.pop();
             }
 
             Event::Start(Tag::Emphasis) => {
                 style_stack.push(Style::Italic);
             }
             Event::End(TagEnd::Emphasis) => {
-                style_stack.retain(|s| !matches!(s, Style::Italic));
+                style_stack.pop();
             }
 
             Event::Start(Tag::Link { dest_url, .. }) => {
@@ -199,13 +198,12 @@ pub fn parse_markdown(input: &str) -> Vec<Block> {
                 // (they were pushed as Text elements during the link body)
                 // Strategy: pop trailing Text/SoftBreak elements and combine into link text
                 let mut link_text = String::new();
-                let mut trailing = Vec::new();
                 // Walk backwards gathering plain Text items (not Bold/Italic/Code)
                 while let Some(last) = target_buf.last() {
                     match last {
                         InlineElement::Text(t) => {
                             link_text.insert_str(0, t);
-                            trailing.push(target_buf.pop().unwrap());
+                            target_buf.pop();
                         }
                         _ => break,
                     }
