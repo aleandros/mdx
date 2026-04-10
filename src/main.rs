@@ -1,3 +1,4 @@
+mod mermaid;
 mod parser;
 
 use anyhow::Result;
