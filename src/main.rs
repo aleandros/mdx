@@ -4,7 +4,7 @@ mod render;
 
 use anyhow::Result;
 use clap::Parser;
-use std::io::{IsTerminal, Read};
+use std::io::{IsTerminal, Read, Write};
 use std::path::PathBuf;
 
 #[derive(Parser)]
@@ -44,10 +44,56 @@ fn read_input_with_tty_check(args: &Args, stdin_is_terminal: bool) -> Result<Str
     }
 }
 
+fn get_width(args: &Args) -> u16 {
+    if let Some(w) = args.width {
+        return w;
+    }
+    crossterm::terminal::size().map(|(w, _)| w).unwrap_or(80)
+}
+
+fn use_pager(args: &Args) -> bool {
+    if args.no_pager {
+        return false;
+    }
+    if args.pager {
+        return true;
+    }
+    std::io::stdout().is_terminal()
+}
+
+fn pipe_output(blocks: &[render::RenderedBlock], no_color: bool) -> Result<()> {
+    let mut stdout = std::io::stdout().lock();
+    for block in blocks {
+        match block {
+            render::RenderedBlock::Lines(lines) => {
+                for line in lines {
+                    writeln!(stdout, "{}", render::styled_line_to_ansi(line, no_color))?;
+                }
+            }
+            render::RenderedBlock::Diagram { lines, .. } => {
+                for line in lines {
+                    writeln!(stdout, "{}", line)?;
+                }
+                writeln!(stdout)?;
+            }
+        }
+    }
+    Ok(())
+}
+
 fn main() -> Result<()> {
     let args = Args::parse();
     let input = read_input(&args)?;
-    println!("Read {} bytes", input.len());
+    let width = get_width(&args);
+    let no_color = std::env::var("NO_COLOR").is_ok();
+    let blocks = parser::parse_markdown(&input);
+    let rendered = render::render_blocks(&blocks, width);
+    if use_pager(&args) {
+        // TODO: pager mode (Task 8)
+        pipe_output(&rendered, no_color)?;
+    } else {
+        pipe_output(&rendered, no_color)?;
+    }
     Ok(())
 }
 
