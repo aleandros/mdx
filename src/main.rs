@@ -90,6 +90,16 @@ fn main() -> Result<()> {
     let blocks = parser::parse_markdown(&input);
     let rendered = render::render_blocks(&blocks, width);
     if use_pager(&args) {
+        let original_hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            let _ = crossterm::terminal::disable_raw_mode();
+            let _ = crossterm::execute!(
+                std::io::stdout(),
+                crossterm::terminal::LeaveAlternateScreen,
+                crossterm::event::DisableMouseCapture
+            );
+            original_hook(info);
+        }));
         pager::run_pager(rendered)?;
     } else {
         pipe_output(&rendered, no_color)?;
