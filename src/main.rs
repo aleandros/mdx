@@ -1,5 +1,6 @@
 mod mermaid;
 mod parser;
+mod render;
 
 use anyhow::Result;
 use clap::Parser;
