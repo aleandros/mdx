@@ -1,4 +1,4 @@
-use super::{FlowChart, NodeShape};
+use super::{Direction, FlowChart, NodeShape};
 
 const H_SPACING: usize = 4;
 const V_SPACING: usize = 2;
@@ -164,6 +164,9 @@ pub fn layout(chart: &FlowChart) -> LayoutResult {
         }
     }
 
+    // Determine whether rank axis is horizontal (LR/RL) or vertical (TD/BT)
+    let is_lr = matches!(chart.direction, Direction::LeftRight | Direction::RightLeft);
+
     // Phase 3: Coordinate assignment
     // For each rank compute node dimensions and max height
     let dims: Vec<(usize, usize)> = chart
@@ -172,52 +175,124 @@ pub fn layout(chart: &FlowChart) -> LayoutResult {
         .map(|n| node_dimensions(&n.label, &n.shape))
         .collect();
 
-    // Compute the pixel width of each rank (sum of node widths + H_SPACING between them)
-    let rank_widths: Vec<usize> = rank_groups
+    // For LR/RL: ranks go left→right (x-axis), within-rank nodes go top→bottom (y-axis).
+    // For TD/BT: ranks go top→bottom (y-axis), within-rank nodes go left→right (x-axis).
+    //
+    // We compute a "primary" (rank axis) and "secondary" (within-rank axis) coordinate,
+    // then map them to (x, y) at the end.
+
+    // "Secondary" size of each node: width for TD, height for LR
+    let node_secondary_size: Vec<usize> = dims
+        .iter()
+        .map(|&(w, h)| if is_lr { h } else { w })
+        .collect();
+
+    // "Primary" size of each node: height for TD, width for LR
+    let node_primary_size: Vec<usize> = dims
+        .iter()
+        .map(|&(w, h)| if is_lr { w } else { h })
+        .collect();
+
+    // Spacing along secondary axis (between nodes in same rank)
+    let secondary_spacing = if is_lr { V_SPACING } else { H_SPACING };
+    // Spacing along primary axis (between ranks)
+    let primary_spacing = if is_lr { H_SPACING } else { V_SPACING };
+
+    // Total secondary extent of each rank
+    let rank_secondary_extents: Vec<usize> = rank_groups
         .iter()
         .map(|group| {
             if group.is_empty() {
                 return 0;
             }
-            let total_node_width: usize = group.iter().map(|&idx| dims[idx].0).sum();
+            let total: usize = group.iter().map(|&idx| node_secondary_size[idx]).sum();
             let gaps = if group.len() > 1 {
-                (group.len() - 1) * H_SPACING
+                (group.len() - 1) * secondary_spacing
             } else {
                 0
             };
-            total_node_width + gaps
+            total + gaps
         })
         .collect();
 
-    let max_rank_width = *rank_widths.iter().max().unwrap_or(&0);
+    let max_secondary_extent = *rank_secondary_extents.iter().max().unwrap_or(&0);
 
-    // Compute y offsets per rank
-    let mut rank_y_offsets: Vec<usize> = vec![0; max_rank + 1];
-    let rank_max_heights: Vec<usize> = rank_groups
+    // Primary offsets per rank
+    let rank_max_primary: Vec<usize> = rank_groups
         .iter()
-        .map(|group| group.iter().map(|&idx| dims[idx].1).max().unwrap_or(0))
+        .map(|group| group.iter().map(|&idx| node_primary_size[idx]).max().unwrap_or(0))
         .collect();
 
-    let mut current_y = 0;
+    let mut rank_primary_offsets: Vec<usize> = vec![0; max_rank + 1];
+    let mut current_primary = 0;
     for r in 0..=max_rank {
-        rank_y_offsets[r] = current_y;
-        current_y += rank_max_heights[r] + V_SPACING;
+        rank_primary_offsets[r] = current_primary;
+        current_primary += rank_max_primary[r] + primary_spacing;
     }
 
-    // Assign x, y to each node
-    let mut node_x = vec![0usize; n];
-    let mut node_y = vec![0usize; n];
+    // Assign primary/secondary coordinate to each node
+    let mut node_primary = vec![0usize; n];
+    let mut node_secondary = vec![0usize; n];
 
     for (r, group) in rank_groups.iter().enumerate() {
-        // Center this rank horizontally relative to the widest rank
-        let rank_w = rank_widths[r];
-        let x_offset = (max_rank_width - rank_w) / 2;
+        // Center this rank along the secondary axis
+        let rank_extent = rank_secondary_extents[r];
+        let secondary_offset = (max_secondary_extent - rank_extent) / 2;
 
-        let mut cur_x = x_offset;
+        let mut cur_secondary = secondary_offset;
         for &idx in group {
-            node_x[idx] = cur_x;
-            node_y[idx] = rank_y_offsets[r];
-            cur_x += dims[idx].0 + H_SPACING;
+            node_primary[idx] = rank_primary_offsets[r];
+            node_secondary[idx] = cur_secondary;
+            cur_secondary += node_secondary_size[idx] + secondary_spacing;
+        }
+    }
+
+    // Map primary/secondary → x/y based on direction.
+    // For BT: reverse primary axis so highest rank is at top.
+    // For RL: reverse primary axis so highest rank is at left.
+    let total_primary = if max_rank + 1 > 0 {
+        rank_primary_offsets[max_rank] + rank_max_primary[max_rank]
+    } else {
+        0
+    };
+
+    let node_x: Vec<usize>;
+    let node_y: Vec<usize>;
+    let node_width: Vec<usize>;
+    let node_height: Vec<usize>;
+
+    match chart.direction {
+        Direction::TopDown => {
+            // primary = y (rank axis), secondary = x (within-rank axis)
+            node_x = node_secondary.clone();
+            node_y = node_primary.clone();
+            node_width = dims.iter().map(|&(w, _)| w).collect();
+            node_height = dims.iter().map(|&(_, h)| h).collect();
+        }
+        Direction::BottomTop => {
+            // primary = y but reversed: y = total_primary - primary_offset - node_height
+            node_x = node_secondary.clone();
+            node_y = (0..n)
+                .map(|i| total_primary.saturating_sub(node_primary[i] + node_primary_size[i]))
+                .collect();
+            node_width = dims.iter().map(|&(w, _)| w).collect();
+            node_height = dims.iter().map(|&(_, h)| h).collect();
+        }
+        Direction::LeftRight => {
+            // primary = x (rank axis), secondary = y (within-rank axis)
+            node_x = node_primary.clone();
+            node_y = node_secondary.clone();
+            node_width = dims.iter().map(|&(w, _)| w).collect();
+            node_height = dims.iter().map(|&(_, h)| h).collect();
+        }
+        Direction::RightLeft => {
+            // primary = x but reversed
+            node_x = (0..n)
+                .map(|i| total_primary.saturating_sub(node_primary[i] + node_primary_size[i]))
+                .collect();
+            node_y = node_secondary.clone();
+            node_width = dims.iter().map(|&(w, _)| w).collect();
+            node_height = dims.iter().map(|&(_, h)| h).collect();
         }
     }
 
@@ -232,16 +307,21 @@ pub fn layout(chart: &FlowChart) -> LayoutResult {
             shape: node.shape.clone(),
             x: node_x[i],
             y: node_y[i],
-            width: dims[i].0,
-            height: dims[i].1,
+            width: node_width[i],
+            height: node_height[i],
         })
         .collect();
 
     // Build positioned edges
-    let total_height = if max_rank + 1 > 0 {
-        rank_y_offsets[max_rank] + rank_max_heights[max_rank]
-    } else {
-        0
+    let total_height = match chart.direction {
+        Direction::TopDown => total_primary,
+        Direction::BottomTop => total_primary,
+        Direction::LeftRight | Direction::RightLeft => max_secondary_extent,
+    };
+
+    let total_width = match chart.direction {
+        Direction::TopDown | Direction::BottomTop => max_secondary_extent,
+        Direction::LeftRight | Direction::RightLeft => total_primary,
     };
 
     let positioned_edges: Vec<PositionedEdge> = chart
@@ -253,10 +333,32 @@ pub fn layout(chart: &FlowChart) -> LayoutResult {
             let from_node = &positioned_nodes[from_idx];
             let to_node = &positioned_nodes[to_idx];
 
-            // center-bottom of source
-            let start = (from_node.x + from_node.width / 2, from_node.y + from_node.height);
-            // center-top of target
-            let end = (to_node.x + to_node.width / 2, to_node.y);
+            let (start, end) = match chart.direction {
+                Direction::TopDown => {
+                    // center-bottom → center-top
+                    let s = (from_node.x + from_node.width / 2, from_node.y + from_node.height);
+                    let e = (to_node.x + to_node.width / 2, to_node.y);
+                    (s, e)
+                }
+                Direction::BottomTop => {
+                    // center-top of source → center-bottom of target (reversed ranks)
+                    let s = (from_node.x + from_node.width / 2, from_node.y);
+                    let e = (to_node.x + to_node.width / 2, to_node.y + to_node.height);
+                    (s, e)
+                }
+                Direction::LeftRight => {
+                    // center-right → center-left
+                    let s = (from_node.x + from_node.width, from_node.y + from_node.height / 2);
+                    let e = (to_node.x, to_node.y + to_node.height / 2);
+                    (s, e)
+                }
+                Direction::RightLeft => {
+                    // center-left → center-right
+                    let s = (from_node.x, from_node.y + from_node.height / 2);
+                    let e = (to_node.x + to_node.width, to_node.y + to_node.height / 2);
+                    (s, e)
+                }
+            };
 
             let points = route_edge(start, end);
 
@@ -273,7 +375,7 @@ pub fn layout(chart: &FlowChart) -> LayoutResult {
     LayoutResult {
         nodes: positioned_nodes,
         edges: positioned_edges,
-        width: max_rank_width,
+        width: total_width,
         height: total_height,
     }
 }
@@ -440,5 +542,142 @@ mod tests {
                 result.height
             );
         }
+    }
+
+    fn lr_chart(nodes: Vec<Node>, edges: Vec<Edge>) -> FlowChart {
+        FlowChart {
+            direction: Direction::LeftRight,
+            nodes,
+            edges,
+        }
+    }
+
+    fn bt_chart(nodes: Vec<Node>, edges: Vec<Edge>) -> FlowChart {
+        FlowChart {
+            direction: Direction::BottomTop,
+            nodes,
+            edges,
+        }
+    }
+
+    fn rl_chart(nodes: Vec<Node>, edges: Vec<Edge>) -> FlowChart {
+        FlowChart {
+            direction: Direction::RightLeft,
+            nodes,
+            edges,
+        }
+    }
+
+    /// LR: A->B->C chain — x strictly increases along the chain, y stays same
+    #[test]
+    fn test_lr_linear_chain() {
+        let chart = lr_chart(
+            vec![make_node("A", "A"), make_node("B", "B"), make_node("C", "C")],
+            vec![make_edge("A", "B"), make_edge("B", "C")],
+        );
+        let result = layout(&chart);
+        let find = |id: &str| result.nodes.iter().find(|n| n.id == id).unwrap().clone();
+        let a = find("A");
+        let b = find("B");
+        let c = find("C");
+
+        // x strictly increases (ranks go left→right)
+        assert!(a.x < b.x, "LR: A.x ({}) should be less than B.x ({})", a.x, b.x);
+        assert!(b.x < c.x, "LR: B.x ({}) should be less than C.x ({})", b.x, c.x);
+
+        // All at same y (single row)
+        assert_eq!(a.y, b.y, "LR: A and B should have same y");
+        assert_eq!(b.y, c.y, "LR: B and C should have same y");
+    }
+
+    /// LR branching: A->B, A->C — B and C at same x (same rank), different y
+    #[test]
+    fn test_lr_branching() {
+        let chart = lr_chart(
+            vec![make_node("A", "A"), make_node("B", "B"), make_node("C", "C")],
+            vec![make_edge("A", "B"), make_edge("A", "C")],
+        );
+        let result = layout(&chart);
+        let find = |id: &str| result.nodes.iter().find(|n| n.id == id).unwrap().clone();
+        let a = find("A");
+        let b = find("B");
+        let c = find("C");
+
+        // A rank 0, B/C rank 1 → B and C at same x
+        assert!(a.x < b.x, "LR: A.x ({}) should be less than B.x ({})", a.x, b.x);
+        assert_eq!(b.x, c.x, "LR: B.x ({}) should equal C.x ({})", b.x, c.x);
+
+        // B and C at different y
+        assert_ne!(b.y, c.y, "LR: B.y ({}) should differ from C.y ({})", b.y, c.y);
+    }
+
+    /// LR edge: should use center-right of source and center-left of target
+    #[test]
+    fn test_lr_edge_ports() {
+        let chart = lr_chart(
+            vec![make_node("A", "A"), make_node("B", "B")],
+            vec![make_edge("A", "B")],
+        );
+        let result = layout(&chart);
+        let a = result.nodes.iter().find(|n| n.id == "A").unwrap();
+        let b = result.nodes.iter().find(|n| n.id == "B").unwrap();
+        let edge = &result.edges[0];
+
+        // First point should be center-right of A
+        assert_eq!(
+            edge.points[0],
+            (a.x + a.width, a.y + a.height / 2),
+            "LR edge start should be center-right of source"
+        );
+        // Last point should be center-left of B
+        assert_eq!(
+            *edge.points.last().unwrap(),
+            (b.x, b.y + b.height / 2),
+            "LR edge end should be center-left of target"
+        );
+    }
+
+    /// BT: A->B->C chain — y strictly decreases along the chain (A at bottom, C at top)
+    #[test]
+    fn test_bt_linear_chain() {
+        let chart = bt_chart(
+            vec![make_node("A", "A"), make_node("B", "B"), make_node("C", "C")],
+            vec![make_edge("A", "B"), make_edge("B", "C")],
+        );
+        let result = layout(&chart);
+        let find = |id: &str| result.nodes.iter().find(|n| n.id == id).unwrap().clone();
+        let a = find("A");
+        let b = find("B");
+        let c = find("C");
+
+        // y strictly decreases: A at bottom (larger y), C at top (smaller y)
+        assert!(a.y > b.y, "BT: A.y ({}) should be greater than B.y ({})", a.y, b.y);
+        assert!(b.y > c.y, "BT: B.y ({}) should be greater than C.y ({})", b.y, c.y);
+
+        // All at same x
+        assert_eq!(a.x, b.x, "BT: A and B should have same x");
+        assert_eq!(b.x, c.x, "BT: B and C should have same x");
+    }
+
+    /// RL: A->B->C chain — x strictly decreases along the chain (A at right, C at left)
+    #[test]
+    fn test_rl_linear_chain() {
+        let chart = rl_chart(
+            vec![make_node("A", "A"), make_node("B", "B"), make_node("C", "C")],
+            vec![make_edge("A", "B"), make_edge("B", "C")],
+        );
+        let result = layout(&chart);
+        let find = |id: &str| result.nodes.iter().find(|n| n.id == id).unwrap().clone();
+        let a = find("A");
+        let b = find("B");
+        let c = find("C");
+
+        // x strictly decreases: A at right, C at left
+        assert!(a.x > b.x, "RL: A.x ({}) should be greater than B.x ({})", a.x, b.x);
+        assert!(b.x > c.x, "RL: B.x ({}) should be greater than C.x ({})", b.x, c.x);
+
+        // All at same y
+        assert_eq!(a.y, b.y, "RL: A and B should have same y");
+        assert_eq!(b.y, c.y, "RL: B and C should have same y");
     }
 }

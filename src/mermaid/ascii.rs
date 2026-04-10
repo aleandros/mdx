@@ -215,12 +215,26 @@ fn draw_edge(canvas: &mut Canvas, edge: &PositionedEdge) {
         }
     }
 
-    // Edge label near the first segment, offset by 2 from start x
+    // Edge label placed at the midpoint of the first segment, offset right by 1
     if let Some(label) = &edge.label
         && !label.is_empty()
     {
         let (x0, y0) = points[0];
-        canvas.draw_text(x0 + 2, y0, label);
+        let (x1, y1) = points[1];
+        let label_x;
+        let label_y;
+        if x0 == x1 {
+            // Vertical segment: place label horizontally offset, vertically centered
+            let y_mid = (y0 + y1) / 2;
+            label_x = x0 + 1;
+            label_y = y_mid;
+        } else {
+            // Horizontal segment: place label vertically offset, horizontally centered
+            let x_mid = (x0 + x1) / 2;
+            label_x = x_mid;
+            label_y = if y0 > 0 { y0 - 1 } else { y0 };
+        }
+        canvas.draw_text(label_x, label_y, label);
     }
 }
 
@@ -465,5 +479,53 @@ mod tests {
         assert_eq!(lines[1], "hi", "Row with text should trim trailing spaces");
         // Line 2: empty → ""
         assert_eq!(lines[2], "", "Empty row should trim to empty string");
+    }
+
+    #[test]
+    fn test_edge_label_not_on_node_border() {
+        use crate::mermaid::layout::PositionedEdge;
+
+        // Node A at (0,0) height=3 → bottom border at y=2
+        // Node B at (0,10) → top border at y=10
+        // Edge from (3, 3) to (3, 10): vertical segment through rows 3..9
+        // Midpoint of first (and only) segment: y=(3+10)/2=6
+        // Label should appear at row 6 — strictly between y=2 (node A bottom) and y=10 (node B top)
+        let node_a = make_positioned_node("A", "Hi", NodeShape::Rect, 0, 0, 6, 3);
+        let node_b = make_positioned_node("B", "Lo", NodeShape::Rect, 0, 10, 6, 3);
+
+        let edge = PositionedEdge {
+            from: "A".to_string(),
+            to: "B".to_string(),
+            label: Some("yes".to_string()),
+            style: EdgeStyle::Arrow,
+            points: vec![(3, 3), (3, 10)],
+        };
+
+        let layout = LayoutResult {
+            nodes: vec![node_a, node_b],
+            edges: vec![edge],
+            width: 10,
+            height: 14,
+        };
+        let lines = render(&layout);
+
+        // Find rows that contain "yes"
+        let label_rows: Vec<usize> = lines
+            .iter()
+            .enumerate()
+            .filter(|(_, l)| l.contains("yes"))
+            .map(|(i, _)| i)
+            .collect();
+
+        assert!(!label_rows.is_empty(), "Label 'yes' should appear in rendered output");
+
+        for &row in &label_rows {
+            // Label must NOT be on node A's rows (0..=2) or node B's rows (10..=12)
+            assert!(
+                row > 2 && row < 10,
+                "Label 'yes' at row {} should be between node borders (rows 3..9)",
+                row
+            );
+        }
     }
 }
