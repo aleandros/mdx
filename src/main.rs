@@ -1,3 +1,5 @@
+mod parser;
+
 use anyhow::Result;
 use clap::Parser;
 use std::io::{IsTerminal, Read};
