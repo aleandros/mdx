@@ -1,4 +1,5 @@
 mod mermaid;
+mod pager;
 mod parser;
 mod render;
 
@@ -89,8 +90,7 @@ fn main() -> Result<()> {
     let blocks = parser::parse_markdown(&input);
     let rendered = render::render_blocks(&blocks, width);
     if use_pager(&args) {
-        // TODO: pager mode (Task 8)
-        pipe_output(&rendered, no_color)?;
+        pager::run_pager(rendered)?;
     } else {
         pipe_output(&rendered, no_color)?;
     }
