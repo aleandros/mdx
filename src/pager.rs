@@ -121,11 +121,7 @@ impl PagerState {
     fn max_scroll(&self) -> usize {
         let total = self.flat_lines.len();
         let height = self.terminal_height as usize;
-        if total > height {
-            total - height
-        } else {
-            0
-        }
+        total.saturating_sub(height)
     }
 
     fn clamp_scroll(&mut self) {

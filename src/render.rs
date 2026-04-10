@@ -4,6 +4,7 @@ use crate::parser::{Block, InlineElement};
 // ─── Styled output types ───────────────────────────────────────────────────
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(dead_code)]
 pub enum Color {
     Red,
     Green,
@@ -264,7 +265,7 @@ pub fn render_blocks(blocks: &[Block], width: u16) -> Vec<RenderedBlock> {
 
             Block::HorizontalRule => {
                 let rule_char = '─';
-                let rule_text: String = std::iter::repeat(rule_char).take(width as usize).collect();
+                let rule_text: String = std::iter::repeat_n(rule_char, width as usize).collect();
                 let rule_line = StyledLine {
                     spans: vec![StyledSpan {
                         text: rule_text,

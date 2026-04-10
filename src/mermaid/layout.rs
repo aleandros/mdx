@@ -5,6 +5,7 @@ const V_SPACING: usize = 2;
 
 #[derive(Debug, Clone)]
 pub struct PositionedNode {
+    #[allow(dead_code)]
     pub id: String,
     pub label: String,
     pub shape: super::NodeShape,
@@ -16,7 +17,9 @@ pub struct PositionedNode {
 
 #[derive(Debug, Clone)]
 pub struct PositionedEdge {
+    #[allow(dead_code)]
     pub from: String,
+    #[allow(dead_code)]
     pub to: String,
     pub label: Option<String>,
     pub style: super::EdgeStyle,
@@ -36,7 +39,7 @@ fn node_dimensions(label: &str, shape: &NodeShape) -> (usize, usize) {
         NodeShape::Rect | NodeShape::Rounded | NodeShape::Circle => (label.len() + 4, 3),
         NodeShape::Diamond => {
             let inner_w = label.len() + 2;
-            let half = (inner_w + 1) / 2;
+            let half = inner_w.div_ceil(2);
             (inner_w + 2, half * 2 + 1)
         }
     }
@@ -89,8 +92,8 @@ pub fn layout(chart: &FlowChart) -> LayoutResult {
     let mut ranks = vec![0usize; n];
     let mut queue = std::collections::VecDeque::new();
 
-    for i in 0..n {
-        if in_degree[i] == 0 {
+    for (i, &deg) in in_degree.iter().enumerate() {
+        if deg == 0 {
             queue.push_back(i);
         }
     }
@@ -130,6 +133,7 @@ pub fn layout(chart: &FlowChart) -> LayoutResult {
         pos_in_rank[idx] = pos;
     }
 
+    #[allow(clippy::needless_range_loop)]
     for r in 1..=max_rank {
         let group = &rank_groups[r];
         // Compute barycenter for each node: average position of predecessors in rank r-1

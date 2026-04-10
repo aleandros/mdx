@@ -216,11 +216,11 @@ fn draw_edge(canvas: &mut Canvas, edge: &PositionedEdge) {
     }
 
     // Edge label near the first segment, offset by 2 from start x
-    if let Some(label) = &edge.label {
-        if !label.is_empty() {
-            let (x0, y0) = points[0];
-            canvas.draw_text(x0 + 2, y0, label);
-        }
+    if let Some(label) = &edge.label
+        && !label.is_empty()
+    {
+        let (x0, y0) = points[0];
+        canvas.draw_text(x0 + 2, y0, label);
     }
 }
 

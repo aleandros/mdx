@@ -11,6 +11,7 @@ pub enum InlineElement {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+#[allow(clippy::enum_variant_names)]
 pub enum Block {
     Header {
         level: u8,
