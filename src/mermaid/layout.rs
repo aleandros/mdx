@@ -1,7 +1,7 @@
 use super::{Direction, FlowChart, NodeShape};
 
 const H_SPACING: usize = 4;
-const V_SPACING: usize = 2;
+const V_SPACING: usize = 4;
 
 #[derive(Debug, Clone)]
 pub struct PositionedNode {
@@ -13,6 +13,8 @@ pub struct PositionedNode {
     pub y: usize,
     pub width: usize,
     pub height: usize,
+    /// Use compact rendering (3-row hexagon) for diamonds in LR/RL direction
+    pub compact: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -34,23 +36,53 @@ pub struct LayoutResult {
     pub height: usize,
 }
 
-fn node_dimensions(label: &str, shape: &NodeShape) -> (usize, usize) {
+fn node_dimensions(label: &str, shape: &NodeShape, compact_diamond: bool) -> (usize, usize) {
     match shape {
         NodeShape::Rect | NodeShape::Rounded | NodeShape::Circle => (label.len() + 4, 3),
         NodeShape::Diamond => {
-            let inner_w = label.len() + 2;
-            let half = inner_w.div_ceil(2);
-            (inner_w + 2, half * 2 + 1)
+            if compact_diamond {
+                // Compact 3-row hexagon for LR/RL
+                (label.len() + 4, 3)
+            } else {
+                let inner_w = label.len() + 2;
+                let half = inner_w.div_ceil(2);
+                (inner_w + 2, half * 2 + 1)
+            }
         }
     }
 }
 
-fn route_edge(start: (usize, usize), end: (usize, usize)) -> Vec<(usize, usize)> {
+fn route_edge(
+    start: (usize, usize),
+    end: (usize, usize),
+    vertical_primary: bool,
+) -> Vec<(usize, usize)> {
     if start.0 == end.0 {
-        vec![start, end]
-    } else {
+        return vec![start, end];
+    }
+    if start.1 == end.1 {
+        return vec![start, end];
+    }
+
+    let dx = start.0.abs_diff(end.0);
+    let dy = start.1.abs_diff(end.1);
+
+    // Snap near-aligned edges to straight lines
+    if dx <= 1 {
+        return vec![(start.0, start.1), (start.0, end.1)];
+    }
+    if dy <= 1 {
+        return vec![(start.0, start.1), (end.0, start.1)];
+    }
+
+    if vertical_primary {
+        // TD/BT: vertical first, then horizontal
         let mid_y = (start.1 + end.1) / 2;
         vec![start, (start.0, mid_y), (end.0, mid_y), end]
+    } else {
+        // LR/RL: horizontal first, then vertical
+        let mid_x = (start.0 + end.0) / 2;
+        vec![start, (mid_x, start.1), (mid_x, end.1), end]
     }
 }
 
@@ -100,20 +132,32 @@ pub fn layout(chart: &FlowChart) -> LayoutResult {
 
     // We need a remaining in-degree counter to process topologically
     let mut remaining_in = in_degree.clone();
+    let mut processed = vec![false; n];
 
-    while let Some(idx) = queue.pop_front() {
-        for &succ in &successors[idx] {
-            if ranks[succ] < ranks[idx] + 1 {
-                ranks[succ] = ranks[idx] + 1;
-            }
-            remaining_in[succ] -= 1;
-            if remaining_in[succ] == 0 {
-                queue.push_back(succ);
+    // Process nodes, breaking cycles by forcing unprocessed nodes as sources
+    loop {
+        while let Some(idx) = queue.pop_front() {
+            processed[idx] = true;
+            for &succ in &successors[idx] {
+                // Only update rank for unprocessed nodes (skip back-edges)
+                if !processed[succ] && ranks[succ] < ranks[idx] + 1 {
+                    ranks[succ] = ranks[idx] + 1;
+                }
+                remaining_in[succ] = remaining_in[succ].saturating_sub(1);
+                if remaining_in[succ] == 0 && !processed[succ] {
+                    queue.push_back(succ);
+                }
             }
         }
-    }
 
-    // Nodes not reached (cycles) already default to rank 0
+        // If cycle nodes remain, force the first unprocessed node as source
+        if let Some(i) = (0..n).find(|&i| !processed[i]) {
+            remaining_in[i] = 0;
+            queue.push_back(i);
+        } else {
+            break;
+        }
+    }
 
     // Phase 2: Order within ranks (barycenter heuristic)
     let max_rank = *ranks.iter().max().unwrap_or(&0);
@@ -172,7 +216,7 @@ pub fn layout(chart: &FlowChart) -> LayoutResult {
     let dims: Vec<(usize, usize)> = chart
         .nodes
         .iter()
-        .map(|n| node_dimensions(&n.label, &n.shape))
+        .map(|n| node_dimensions(&n.label, &n.shape, is_lr))
         .collect();
 
     // For LR/RL: ranks go left→right (x-axis), within-rank nodes go top→bottom (y-axis).
@@ -309,6 +353,7 @@ pub fn layout(chart: &FlowChart) -> LayoutResult {
             y: node_y[i],
             width: node_width[i],
             height: node_height[i],
+            compact: is_lr && node.shape == NodeShape::Diamond,
         })
         .collect();
 
@@ -360,7 +405,7 @@ pub fn layout(chart: &FlowChart) -> LayoutResult {
                 }
             };
 
-            let points = route_edge(start, end);
+            let points = route_edge(start, end, !is_lr);
 
             Some(PositionedEdge {
                 from: edge.from.clone(),
