@@ -106,11 +106,7 @@ fn test_no_color_strips_highlighting() {
     let dir = std::env::temp_dir().join("mdx_integration");
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("highlight_nocolor.md");
-    std::fs::write(
-        &path,
-        "```rust\nfn main() {}\n```\n",
-    )
-    .unwrap();
+    std::fs::write(&path, "```rust\nfn main() {}\n```\n").unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_mdx"))
         .arg(&path)
         .arg("--no-pager")
@@ -123,7 +119,10 @@ fn test_no_color_strips_highlighting() {
         "NO_COLOR output should have no ANSI escapes: {}",
         stdout
     );
-    assert!(stdout.contains("fn main()"), "Should still contain code text");
+    assert!(
+        stdout.contains("fn main()"),
+        "Should still contain code text"
+    );
 }
 
 #[test]
@@ -131,11 +130,7 @@ fn test_theme_flag_produces_output() {
     let dir = std::env::temp_dir().join("mdx_integration");
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("highlight_theme.md");
-    std::fs::write(
-        &path,
-        "```rust\nfn main() {}\n```\n",
-    )
-    .unwrap();
+    std::fs::write(&path, "```rust\nfn main() {}\n```\n").unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_mdx"))
         .arg(&path)
         .arg("--no-pager")

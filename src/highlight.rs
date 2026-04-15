@@ -16,8 +16,7 @@ impl Highlighter {
         if let Some(ref name) = theme_name
             && !theme_set.themes.contains_key(name.as_str())
         {
-            let mut available: Vec<&str> =
-                theme_set.themes.keys().map(|s| s.as_str()).collect();
+            let mut available: Vec<&str> = theme_set.themes.keys().map(|s| s.as_str()).collect();
             available.sort();
             return Err(format!(
                 "Unknown theme '{}'. Available themes:\n  {}",
@@ -170,7 +169,11 @@ mod tests {
         let result = Highlighter::new(Some("nonexistent_theme_xyz".to_string()));
         assert!(result.is_err(), "Invalid theme should return Err");
         let err = result.unwrap_err();
-        assert!(err.contains("Unknown theme"), "Error should mention unknown theme: {}", err);
+        assert!(
+            err.contains("Unknown theme"),
+            "Error should mention unknown theme: {}",
+            err
+        );
     }
 
     #[test]
@@ -182,9 +185,9 @@ mod tests {
         let lines = result.unwrap();
         assert_eq!(lines.len(), 3, "Should have 3 lines of code");
         // At least some spans should have color (not all plain)
-        let has_color = lines.iter().any(|line| {
-            line.iter().any(|span| span.style.fg.is_some())
-        });
+        let has_color = lines
+            .iter()
+            .any(|line| line.iter().any(|span| span.style.fg.is_some()));
         assert!(has_color, "Highlighted code should have colored spans");
     }
 
@@ -211,7 +214,8 @@ mod tests {
         let lines = result.unwrap();
         // With a named theme, should produce Rgb colors
         let has_rgb = lines.iter().any(|line| {
-            line.iter().any(|span| matches!(span.style.fg, Some(Color::Rgb(_, _, _))))
+            line.iter()
+                .any(|span| matches!(span.style.fg, Some(Color::Rgb(_, _, _))))
         });
         assert!(has_rgb, "Named theme should produce Rgb colors");
     }
@@ -225,7 +229,8 @@ mod tests {
         let lines = result.unwrap();
         // Default (ANSI) mode should NOT produce Rgb colors
         let has_rgb = lines.iter().any(|line| {
-            line.iter().any(|span| matches!(span.style.fg, Some(Color::Rgb(_, _, _))))
+            line.iter()
+                .any(|span| matches!(span.style.fg, Some(Color::Rgb(_, _, _))))
         });
         assert!(!has_rgb, "Default ANSI mode should not produce Rgb colors");
     }

@@ -185,7 +185,11 @@ fn render_code_block_lines(
 
 // ─── Main rendering entry point ────────────────────────────────────────────
 
-pub fn render_blocks(blocks: &[Block], width: u16, highlighter: &crate::highlight::Highlighter) -> Vec<RenderedBlock> {
+pub fn render_blocks(
+    blocks: &[Block],
+    width: u16,
+    highlighter: &crate::highlight::Highlighter,
+) -> Vec<RenderedBlock> {
     let mut out = Vec::new();
 
     for block in blocks {
@@ -393,7 +397,9 @@ mod tests {
         assert_eq!(rendered.len(), 1);
         if let RenderedBlock::Lines(lines) = &rendered[0] {
             let code_line = lines.iter().find(|l| {
-                l.spans.iter().any(|s| s.text.contains("fn") || s.text.contains("main"))
+                l.spans
+                    .iter()
+                    .any(|s| s.text.contains("fn") || s.text.contains("main"))
             });
             assert!(code_line.is_some(), "Should have code line with text");
         } else {
@@ -507,16 +513,24 @@ mod tests {
         if let RenderedBlock::Lines(lines) = &rendered[0] {
             // Should have language label + code line(s) + blank line
             // The code lines should have some colored spans (not all DarkGray dim)
-            let code_lines: Vec<_> = lines.iter().filter(|l| {
-                l.spans.iter().any(|s| s.text.contains("fn") || s.text.contains("main"))
-            }).collect();
+            let code_lines: Vec<_> = lines
+                .iter()
+                .filter(|l| {
+                    l.spans
+                        .iter()
+                        .any(|s| s.text.contains("fn") || s.text.contains("main"))
+                })
+                .collect();
             assert!(!code_lines.is_empty(), "Should have code lines");
             let has_non_gray_color = code_lines.iter().any(|line| {
-                line.spans.iter().any(|s| {
-                    matches!(s.style.fg, Some(ref c) if *c != Color::DarkGray)
-                })
+                line.spans
+                    .iter()
+                    .any(|s| matches!(s.style.fg, Some(ref c) if *c != Color::DarkGray))
             });
-            assert!(has_non_gray_color, "Highlighted Rust code should have colors beyond DarkGray");
+            assert!(
+                has_non_gray_color,
+                "Highlighted Rust code should have colors beyond DarkGray"
+            );
         } else {
             panic!("Expected Lines variant");
         }

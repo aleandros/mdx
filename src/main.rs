@@ -1,8 +1,8 @@
+mod highlight;
 mod mermaid;
 mod pager;
 mod parser;
 mod render;
-mod highlight;
 
 use anyhow::Result;
 use clap::Parser;
@@ -106,8 +106,8 @@ fn main() -> Result<()> {
     let input = read_input(&args)?;
     let width = get_width(&args);
     let no_color = std::env::var("NO_COLOR").is_ok();
-    let highlighter = highlight::Highlighter::new(args.theme.clone())
-        .map_err(|e| anyhow::anyhow!(e))?;
+    let highlighter =
+        highlight::Highlighter::new(args.theme.clone()).map_err(|e| anyhow::anyhow!(e))?;
     let blocks = parser::parse_markdown(&input);
     let rendered = render::render_blocks(&blocks, width, &highlighter);
     if use_pager(&args) {
