@@ -2,6 +2,7 @@ mod mermaid;
 mod pager;
 mod parser;
 mod render;
+mod highlight;
 
 use anyhow::Result;
 use clap::Parser;
