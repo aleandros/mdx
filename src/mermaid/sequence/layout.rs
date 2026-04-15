@@ -102,12 +102,7 @@ pub fn layout(diagram: &SequenceDiagram) -> SequenceLayout {
     let mut gaps: Vec<usize> = vec![MIN_COLUMN_GAP; n.saturating_sub(1)];
 
     // Walk all events recursively to find messages and update gaps
-    collect_message_gaps(
-        &diagram.events,
-        &participant_index,
-        &box_widths,
-        &mut gaps,
-    );
+    collect_message_gaps(&diagram.events, &participant_index, &box_widths, &mut gaps);
 
     // Step 3: Assign x positions (center_x) for each participant
     // center_x[0] = box_widths[0] / 2
@@ -191,7 +186,9 @@ fn collect_message_gaps(
 ) {
     for event in events {
         match event {
-            Event::Message { from, to, label, .. } => {
+            Event::Message {
+                from, to, label, ..
+            } => {
                 if from == to {
                     continue; // self-message, no inter-participant gap needed
                 }
@@ -223,12 +220,7 @@ fn collect_message_gaps(
             }
             Event::Fragment { sections, .. } => {
                 for section in sections {
-                    collect_message_gaps(
-                        &section.events,
-                        participant_index,
-                        box_widths,
-                        gaps,
-                    );
+                    collect_message_gaps(&section.events, participant_index, box_widths, gaps);
                 }
             }
             _ => {}
@@ -254,7 +246,12 @@ fn process_events(
 ) {
     for event in events {
         match event {
-            Event::Message { from, to, label, arrow } => {
+            Event::Message {
+                from,
+                to,
+                label,
+                arrow,
+            } => {
                 let fi = participant_index.get(from).copied().unwrap_or(0);
                 let ti = participant_index.get(to).copied().unwrap_or(0);
                 let self_msg = from == to;
@@ -284,7 +281,11 @@ fn process_events(
                     *current_y += MESSAGE_HEIGHT;
                 }
             }
-            Event::Note { position, participants, text } => {
+            Event::Note {
+                position,
+                participants,
+                text,
+            } => {
                 let note_width = text.len() + 4;
 
                 let (note_x, width) = match position {
@@ -293,7 +294,7 @@ fn process_events(
                         let right_edge = participants
                             .iter()
                             .filter_map(|id| participant_index.get(id))
-                            .map(|&i| center_xs[i] + (box_widths[i] + 1) / 2)
+                            .map(|&i| center_xs[i] + box_widths[i].div_ceil(2))
                             .max()
                             .unwrap_or(0);
                         (right_edge + 1, note_width)
@@ -320,7 +321,7 @@ fn process_events(
                         let max_x = participants
                             .iter()
                             .filter_map(|id| participant_index.get(id))
-                            .map(|&i| center_xs[i] + (box_widths[i] + 1) / 2)
+                            .map(|&i| center_xs[i] + box_widths[i].div_ceil(2))
                             .max()
                             .unwrap_or(min_x + note_width);
                         let width = (max_x - min_x).max(note_width);
@@ -359,7 +360,11 @@ fn process_events(
                 }
                 // 0 rows consumed
             }
-            Event::Fragment { kind, label, sections } => {
+            Event::Fragment {
+                kind,
+                label,
+                sections,
+            } => {
                 let frag_y = *current_y;
 
                 // Fragment header takes 1 row
@@ -419,11 +424,15 @@ fn process_events(
                     kind_str_len + label.len() + 7 // "─ kind [label] ─┐"
                 };
                 // Also consider section divider labels
-                let divider_min = section_dividers.iter().filter_map(|(_, lbl)| lbl.as_ref())
+                let divider_min = section_dividers
+                    .iter()
+                    .filter_map(|(_, lbl)| lbl.as_ref())
                     .map(|lbl| lbl.len() + 7) // "─ [label] ─┤"
                     .max()
                     .unwrap_or(0);
-                let frag_width = (frag_right_x - frag_left_x).max(header_min).max(divider_min);
+                let frag_width = (frag_right_x - frag_left_x)
+                    .max(header_min)
+                    .max(divider_min);
 
                 fragments.push(PositionedFragment {
                     x: frag_left_x,
@@ -545,10 +554,7 @@ mod tests {
 
     #[test]
     fn test_three_participants_ordered() {
-        let diagram = make_diagram(
-            vec![("A", "Alice"), ("B", "Bob"), ("C", "Charlie")],
-            vec![],
-        );
+        let diagram = make_diagram(vec![("A", "Alice"), ("B", "Bob"), ("C", "Charlie")], vec![]);
         let result = layout(&diagram);
         assert!(result.participants[0].center_x < result.participants[1].center_x);
         assert!(result.participants[1].center_x < result.participants[2].center_x);
@@ -631,8 +637,14 @@ mod tests {
     fn test_autonumber_prefixes_labels() {
         let diagram = SequenceDiagram {
             participants: vec![
-                Participant { id: "A".to_string(), label: "A".to_string() },
-                Participant { id: "B".to_string(), label: "B".to_string() },
+                Participant {
+                    id: "A".to_string(),
+                    label: "A".to_string(),
+                },
+                Participant {
+                    id: "B".to_string(),
+                    label: "B".to_string(),
+                },
             ],
             events: vec![
                 Event::Message {

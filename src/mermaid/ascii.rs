@@ -226,7 +226,7 @@ fn connectivity_to_char(bits: u8) -> char {
     match bits {
         0 => ' ',
         // Single or straight
-        0b0001 | 0b0010 | 0b0011 => '│',
+        0b0001..=0b0011 => '│',
         0b0100 | 0b1000 | 0b1100 => '─',
         // Corners
         0b1001 => '└',
@@ -244,6 +244,7 @@ fn connectivity_to_char(bits: u8) -> char {
     }
 }
 
+#[allow(clippy::needless_range_loop)]
 fn mark_segment(conn: &mut [Vec<u8>], p0: (usize, usize), p1: (usize, usize), w: usize, h: usize) {
     if p0.0 == p1.0 {
         let x = p0.0;
@@ -292,12 +293,7 @@ fn mark_segment(conn: &mut [Vec<u8>], p0: (usize, usize), p1: (usize, usize), w:
     }
 }
 
-fn mark_edge_connectivity(
-    conn: &mut [Vec<u8>],
-    points: &[(usize, usize)],
-    w: usize,
-    h: usize,
-) {
+fn mark_edge_connectivity(conn: &mut [Vec<u8>], points: &[(usize, usize)], w: usize, h: usize) {
     for seg in 0..points.len().saturating_sub(1) {
         mark_segment(conn, points[seg], points[seg + 1], w, h);
     }
@@ -327,9 +323,7 @@ fn apply_edge_style(canvas: &mut Canvas, conn: &[Vec<u8>], edge: &PositionedEdge
         } else if y0 == y1 {
             let (x_start, x_end) = if x0 <= x1 { (x0, x1) } else { (x1, x0) };
             for x in x_start..=x_end {
-                if y0 < conn.len()
-                    && x < conn[0].len()
-                    && (conn[y0][x] & (DIR_UP | DIR_DOWN)) == 0
+                if y0 < conn.len() && x < conn[0].len() && (conn[y0][x] & (DIR_UP | DIR_DOWN)) == 0
                 {
                     canvas.set(x, y0, h_char);
                 }
@@ -441,10 +435,10 @@ pub fn render(layout: &LayoutResult) -> Vec<String> {
     }
 
     // 2. Draw box-drawing chars from connectivity
-    for y in 0..canvas_height {
-        for x in 0..canvas_width {
-            if conn[y][x] != 0 {
-                canvas.set(x, y, connectivity_to_char(conn[y][x]));
+    for (y, row) in conn.iter().enumerate() {
+        for (x, &bits) in row.iter().enumerate() {
+            if bits != 0 {
+                canvas.set(x, y, connectivity_to_char(bits));
             }
         }
     }
@@ -520,7 +514,11 @@ mod tests {
         let lines = render(&layout);
 
         // Should have at least 3 lines
-        assert!(lines.len() >= 3, "Expected at least 3 lines, got {}", lines.len());
+        assert!(
+            lines.len() >= 3,
+            "Expected at least 3 lines, got {}",
+            lines.len()
+        );
 
         // Top row must contain box-drawing top-left corner
         assert!(
@@ -667,7 +665,10 @@ mod tests {
         assert!(all_text.contains('\\'), "Diamond should contain '\\'");
 
         // Label must be present
-        assert!(all_text.contains("Yes"), "Diamond should contain label 'Yes'");
+        assert!(
+            all_text.contains("Yes"),
+            "Diamond should contain label 'Yes'"
+        );
     }
 
     #[test]
@@ -722,7 +723,10 @@ mod tests {
             .map(|(i, _)| i)
             .collect();
 
-        assert!(!label_rows.is_empty(), "Label 'yes' should appear in rendered output");
+        assert!(
+            !label_rows.is_empty(),
+            "Label 'yes' should appear in rendered output"
+        );
 
         for &row in &label_rows {
             // Label must NOT be on node A's rows (0..=2) or node B's rows (10..=12)

@@ -9,7 +9,11 @@ use std::io::{IsTerminal, Read, Write};
 use std::path::PathBuf;
 
 #[derive(Parser)]
-#[command(name = "mdx", version, about = "Terminal markdown renderer with mermaid diagrams")]
+#[command(
+    name = "mdx",
+    version,
+    about = "Terminal markdown renderer with mermaid diagrams"
+)]
 struct Args {
     /// Markdown file to render
     file: Option<PathBuf>,
@@ -133,14 +137,24 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("test.md");
         std::fs::write(&path, "# Hello").unwrap();
-        let args = Args { file: Some(path), pager: false, no_pager: false, width: None };
+        let args = Args {
+            file: Some(path),
+            pager: false,
+            no_pager: false,
+            width: None,
+        };
         let input = read_input(&args).unwrap();
         assert_eq!(input, "# Hello");
     }
 
     #[test]
     fn test_read_input_no_file_no_stdin() {
-        let args = Args { file: None, pager: false, no_pager: false, width: None };
+        let args = Args {
+            file: None,
+            pager: false,
+            no_pager: false,
+            width: None,
+        };
         // Simulate TTY context: stdin is a terminal, no file provided → must error
         assert!(read_input_with_tty_check(&args, true).is_err());
     }

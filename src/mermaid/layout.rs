@@ -112,9 +112,10 @@ pub fn layout(chart: &FlowChart) -> LayoutResult {
     let mut predecessors: Vec<Vec<usize>> = vec![vec![]; n];
 
     for edge in &chart.edges {
-        if let (Some(&from_idx), Some(&to_idx)) =
-            (node_index.get(edge.from.as_str()), node_index.get(edge.to.as_str()))
-        {
+        if let (Some(&from_idx), Some(&to_idx)) = (
+            node_index.get(edge.from.as_str()),
+            node_index.get(edge.to.as_str()),
+        ) {
             successors[from_idx].push(to_idx);
             predecessors[to_idx].push(from_idx);
             in_degree[to_idx] += 1;
@@ -264,7 +265,13 @@ pub fn layout(chart: &FlowChart) -> LayoutResult {
     // Primary offsets per rank
     let rank_max_primary: Vec<usize> = rank_groups
         .iter()
-        .map(|group| group.iter().map(|&idx| node_primary_size[idx]).max().unwrap_or(0))
+        .map(|group| {
+            group
+                .iter()
+                .map(|&idx| node_primary_size[idx])
+                .max()
+                .unwrap_or(0)
+        })
         .collect();
 
     let mut rank_primary_offsets: Vec<usize> = vec![0; max_rank + 1];
@@ -381,7 +388,10 @@ pub fn layout(chart: &FlowChart) -> LayoutResult {
             let (start, end) = match chart.direction {
                 Direction::TopDown => {
                     // center-bottom → center-top
-                    let s = (from_node.x + from_node.width / 2, from_node.y + from_node.height);
+                    let s = (
+                        from_node.x + from_node.width / 2,
+                        from_node.y + from_node.height,
+                    );
                     let e = (to_node.x + to_node.width / 2, to_node.y);
                     (s, e)
                 }
@@ -393,7 +403,10 @@ pub fn layout(chart: &FlowChart) -> LayoutResult {
                 }
                 Direction::LeftRight => {
                     // center-right → center-left
-                    let s = (from_node.x + from_node.width, from_node.y + from_node.height / 2);
+                    let s = (
+                        from_node.x + from_node.width,
+                        from_node.y + from_node.height / 2,
+                    );
                     let e = (to_node.x, to_node.y + to_node.height / 2);
                     (s, e)
                 }
@@ -459,7 +472,11 @@ mod tests {
     #[test]
     fn test_linear_chain_ranks() {
         let chart = simple_chart(
-            vec![make_node("A", "A"), make_node("B", "B"), make_node("C", "C")],
+            vec![
+                make_node("A", "A"),
+                make_node("B", "B"),
+                make_node("C", "C"),
+            ],
             vec![make_edge("A", "B"), make_edge("B", "C")],
         );
         let result = layout(&chart);
@@ -481,7 +498,11 @@ mod tests {
     #[test]
     fn test_branching_layout() {
         let chart = simple_chart(
-            vec![make_node("A", "A"), make_node("B", "B"), make_node("C", "C")],
+            vec![
+                make_node("A", "A"),
+                make_node("B", "B"),
+                make_node("C", "C"),
+            ],
             vec![make_edge("A", "B"), make_edge("A", "C")],
         );
         let result = layout(&chart);
@@ -617,7 +638,11 @@ mod tests {
     #[test]
     fn test_lr_linear_chain() {
         let chart = lr_chart(
-            vec![make_node("A", "A"), make_node("B", "B"), make_node("C", "C")],
+            vec![
+                make_node("A", "A"),
+                make_node("B", "B"),
+                make_node("C", "C"),
+            ],
             vec![make_edge("A", "B"), make_edge("B", "C")],
         );
         let result = layout(&chart);
@@ -627,8 +652,18 @@ mod tests {
         let c = find("C");
 
         // x strictly increases (ranks go left→right)
-        assert!(a.x < b.x, "LR: A.x ({}) should be less than B.x ({})", a.x, b.x);
-        assert!(b.x < c.x, "LR: B.x ({}) should be less than C.x ({})", b.x, c.x);
+        assert!(
+            a.x < b.x,
+            "LR: A.x ({}) should be less than B.x ({})",
+            a.x,
+            b.x
+        );
+        assert!(
+            b.x < c.x,
+            "LR: B.x ({}) should be less than C.x ({})",
+            b.x,
+            c.x
+        );
 
         // All at same y (single row)
         assert_eq!(a.y, b.y, "LR: A and B should have same y");
@@ -639,7 +674,11 @@ mod tests {
     #[test]
     fn test_lr_branching() {
         let chart = lr_chart(
-            vec![make_node("A", "A"), make_node("B", "B"), make_node("C", "C")],
+            vec![
+                make_node("A", "A"),
+                make_node("B", "B"),
+                make_node("C", "C"),
+            ],
             vec![make_edge("A", "B"), make_edge("A", "C")],
         );
         let result = layout(&chart);
@@ -649,11 +688,20 @@ mod tests {
         let c = find("C");
 
         // A rank 0, B/C rank 1 → B and C at same x
-        assert!(a.x < b.x, "LR: A.x ({}) should be less than B.x ({})", a.x, b.x);
+        assert!(
+            a.x < b.x,
+            "LR: A.x ({}) should be less than B.x ({})",
+            a.x,
+            b.x
+        );
         assert_eq!(b.x, c.x, "LR: B.x ({}) should equal C.x ({})", b.x, c.x);
 
         // B and C at different y
-        assert_ne!(b.y, c.y, "LR: B.y ({}) should differ from C.y ({})", b.y, c.y);
+        assert_ne!(
+            b.y, c.y,
+            "LR: B.y ({}) should differ from C.y ({})",
+            b.y, c.y
+        );
     }
 
     /// LR edge: should use center-right of source and center-left of target
@@ -686,7 +734,11 @@ mod tests {
     #[test]
     fn test_bt_linear_chain() {
         let chart = bt_chart(
-            vec![make_node("A", "A"), make_node("B", "B"), make_node("C", "C")],
+            vec![
+                make_node("A", "A"),
+                make_node("B", "B"),
+                make_node("C", "C"),
+            ],
             vec![make_edge("A", "B"), make_edge("B", "C")],
         );
         let result = layout(&chart);
@@ -696,8 +748,18 @@ mod tests {
         let c = find("C");
 
         // y strictly decreases: A at bottom (larger y), C at top (smaller y)
-        assert!(a.y > b.y, "BT: A.y ({}) should be greater than B.y ({})", a.y, b.y);
-        assert!(b.y > c.y, "BT: B.y ({}) should be greater than C.y ({})", b.y, c.y);
+        assert!(
+            a.y > b.y,
+            "BT: A.y ({}) should be greater than B.y ({})",
+            a.y,
+            b.y
+        );
+        assert!(
+            b.y > c.y,
+            "BT: B.y ({}) should be greater than C.y ({})",
+            b.y,
+            c.y
+        );
 
         // All at same x
         assert_eq!(a.x, b.x, "BT: A and B should have same x");
@@ -708,7 +770,11 @@ mod tests {
     #[test]
     fn test_rl_linear_chain() {
         let chart = rl_chart(
-            vec![make_node("A", "A"), make_node("B", "B"), make_node("C", "C")],
+            vec![
+                make_node("A", "A"),
+                make_node("B", "B"),
+                make_node("C", "C"),
+            ],
             vec![make_edge("A", "B"), make_edge("B", "C")],
         );
         let result = layout(&chart);
@@ -718,8 +784,18 @@ mod tests {
         let c = find("C");
 
         // x strictly decreases: A at right, C at left
-        assert!(a.x > b.x, "RL: A.x ({}) should be greater than B.x ({})", a.x, b.x);
-        assert!(b.x > c.x, "RL: B.x ({}) should be greater than C.x ({})", b.x, c.x);
+        assert!(
+            a.x > b.x,
+            "RL: A.x ({}) should be greater than B.x ({})",
+            a.x,
+            b.x
+        );
+        assert!(
+            b.x > c.x,
+            "RL: B.x ({}) should be greater than C.x ({})",
+            b.x,
+            c.x
+        );
 
         // All at same y
         assert_eq!(a.y, b.y, "RL: A and B should have same y");

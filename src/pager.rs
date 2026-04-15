@@ -3,7 +3,9 @@ use std::io::stdout;
 
 use anyhow::Result;
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, MouseEventKind},
+    event::{
+        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, MouseEventKind,
+    },
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
@@ -63,7 +65,11 @@ fn styled_line_to_ratatui(line: &StyledLine) -> Line<'static> {
 enum FlatLine {
     Styled(StyledLine),
     DiagramAscii(String),
-    DiagramCollapsed { block_index: usize, node_count: usize, edge_count: usize },
+    DiagramCollapsed {
+        block_index: usize,
+        node_count: usize,
+        edge_count: usize,
+    },
 }
 
 // ─── PagerState ────────────────────────────────────────────────────────────
@@ -100,7 +106,11 @@ impl PagerState {
                         self.flat_lines.push(FlatLine::Styled(line.clone()));
                     }
                 }
-                RenderedBlock::Diagram { lines, node_count, edge_count } => {
+                RenderedBlock::Diagram {
+                    lines,
+                    node_count,
+                    edge_count,
+                } => {
                     let is_large = lines.len() > threshold;
                     if is_large && !self.expanded.contains(&block_index) {
                         self.flat_lines.push(FlatLine::DiagramCollapsed {
@@ -161,7 +171,9 @@ impl PagerState {
         // and if it's expanded, collapse it
         let mut found_expanded: Option<usize> = None;
         for (block_index, block) in self.content.iter().enumerate() {
-            if matches!(block, RenderedBlock::Diagram { .. }) && self.expanded.contains(&block_index) {
+            if matches!(block, RenderedBlock::Diagram { .. })
+                && self.expanded.contains(&block_index)
+            {
                 found_expanded = Some(block_index);
                 break;
             }
@@ -177,7 +189,11 @@ impl PagerState {
         match flat {
             FlatLine::Styled(line) => styled_line_to_ratatui(line),
             FlatLine::DiagramAscii(text) => Line::raw(text.clone()),
-            FlatLine::DiagramCollapsed { node_count, edge_count, .. } => {
+            FlatLine::DiagramCollapsed {
+                node_count,
+                edge_count,
+                ..
+            } => {
                 let text = format!(
                     "  [Flowchart: {} nodes, {} edges — Tab to expand]",
                     node_count, edge_count

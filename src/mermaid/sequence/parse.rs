@@ -1,6 +1,8 @@
 use anyhow::bail;
 
-use super::{ArrowStyle, Event, FragmentKind, FragmentSection, NotePosition, Participant, SequenceDiagram};
+use super::{
+    ArrowStyle, Event, FragmentKind, FragmentSection, NotePosition, Participant, SequenceDiagram,
+};
 
 pub fn parse_sequence(input: &str) -> anyhow::Result<SequenceDiagram> {
     let mut lines = input.lines().peekable();
@@ -33,16 +35,6 @@ pub fn parse_sequence(input: &str) -> anyhow::Result<SequenceDiagram> {
     // Top-level events list
     let mut top_events: Vec<Event> = vec![];
 
-    // Helper closure to find or create a participant
-    let mut ensure_participant = |participants: &mut Vec<Participant>, id: &str| {
-        if !participants.iter().any(|p| p.id == id) {
-            participants.push(Participant {
-                id: id.to_string(),
-                label: id.to_string(),
-            });
-        }
-    };
-
     // Push an event to the current scope (top-level or innermost fragment section)
     macro_rules! push_event {
         ($event:expr) => {
@@ -62,7 +54,10 @@ pub fn parse_sequence(input: &str) -> anyhow::Result<SequenceDiagram> {
         }
 
         // participant / actor
-        if let Some(rest) = line.strip_prefix("participant ").or_else(|| line.strip_prefix("actor ")) {
+        if let Some(rest) = line
+            .strip_prefix("participant ")
+            .or_else(|| line.strip_prefix("actor "))
+        {
             let rest = rest.trim();
             if let Some((id, label)) = rest.split_once(" as ") {
                 let id = id.trim().to_string();
@@ -73,7 +68,10 @@ pub fn parse_sequence(input: &str) -> anyhow::Result<SequenceDiagram> {
             } else {
                 let id = rest.to_string();
                 if !participants.iter().any(|p| p.id == id) {
-                    participants.push(Participant { id: id.clone(), label: id });
+                    participants.push(Participant {
+                        id: id.clone(),
+                        label: id,
+                    });
                 }
             }
             continue;
@@ -98,17 +96,18 @@ pub fn parse_sequence(input: &str) -> anyhow::Result<SequenceDiagram> {
         }
 
         // Note right of / left of / over
-        if let Some(rest) = line.strip_prefix("Note ") {
-            if let Some(event) = parse_note(rest) {
-                push_event!(event);
-                continue;
-            }
+        if let Some(event) = line.strip_prefix("Note ").and_then(parse_note) {
+            push_event!(event);
+            continue;
         }
 
         // Fragment openers: loop, alt, opt, par
         if let Some(kind) = parse_fragment_opener(line) {
             let label = parse_fragment_label(line);
-            let first_section = FragmentSection { label: None, events: vec![] };
+            let first_section = FragmentSection {
+                label: None,
+                events: vec![],
+            };
             fragment_stack.push((kind, label, vec![first_section]));
             continue;
         }
@@ -121,7 +120,10 @@ pub fn parse_sequence(input: &str) -> anyhow::Result<SequenceDiagram> {
                 Some(line["else ".len()..].trim().to_string())
             };
             if let Some((_, _, sections)) = fragment_stack.last_mut() {
-                sections.push(FragmentSection { label: section_label, events: vec![] });
+                sections.push(FragmentSection {
+                    label: section_label,
+                    events: vec![],
+                });
             }
             continue;
         }
@@ -132,7 +134,10 @@ pub fn parse_sequence(input: &str) -> anyhow::Result<SequenceDiagram> {
                 Some(line["and ".len()..].trim().to_string())
             };
             if let Some((_, _, sections)) = fragment_stack.last_mut() {
-                sections.push(FragmentSection { label: section_label, events: vec![] });
+                sections.push(FragmentSection {
+                    label: section_label,
+                    events: vec![],
+                });
             }
             continue;
         }
@@ -140,7 +145,11 @@ pub fn parse_sequence(input: &str) -> anyhow::Result<SequenceDiagram> {
         // end — pop fragment
         if line == "end" {
             if let Some((kind, label, sections)) = fragment_stack.pop() {
-                let event = Event::Fragment { kind, label, sections };
+                let event = Event::Fragment {
+                    kind,
+                    label,
+                    sections,
+                };
                 push_event!(event);
             }
             continue;
@@ -181,7 +190,11 @@ fn parse_note(rest: &str) -> Option<Event> {
         .collect();
     let text = text.trim().to_string();
 
-    Some(Event::Note { position, participants, text })
+    Some(Event::Note {
+        position,
+        participants,
+        text,
+    })
 }
 
 fn parse_fragment_opener(line: &str) -> Option<FragmentKind> {
@@ -265,7 +278,7 @@ fn parse_message(line: &str, participants: &mut Vec<Participant>) -> Option<Even
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mermaid::sequence::{ArrowStyle, Event, NotePosition, FragmentKind};
+    use crate::mermaid::sequence::{ArrowStyle, Event, FragmentKind, NotePosition};
 
     #[test]
     fn test_parse_explicit_participants() {
@@ -299,7 +312,13 @@ mod tests {
         let input = "sequenceDiagram\n    participant A\n    participant B\n    A->>B: Hello\n";
         let diagram = parse_sequence(input).unwrap();
         assert_eq!(diagram.events.len(), 1);
-        if let Event::Message { from, to, label, arrow } = &diagram.events[0] {
+        if let Event::Message {
+            from,
+            to,
+            label,
+            arrow,
+        } = &diagram.events[0]
+        {
             assert_eq!(from, "A");
             assert_eq!(to, "B");
             assert_eq!(label, "Hello");
@@ -325,18 +344,29 @@ sequenceDiagram
         let diagram = parse_sequence(input).unwrap();
         assert_eq!(diagram.events.len(), 6);
 
-        let arrows: Vec<ArrowStyle> = diagram.events.iter().map(|e| {
-            if let Event::Message { arrow, .. } = e { arrow.clone() } else { panic!() }
-        }).collect();
+        let arrows: Vec<ArrowStyle> = diagram
+            .events
+            .iter()
+            .map(|e| {
+                if let Event::Message { arrow, .. } = e {
+                    arrow.clone()
+                } else {
+                    panic!()
+                }
+            })
+            .collect();
 
-        assert_eq!(arrows, vec![
-            ArrowStyle::SolidArrow,
-            ArrowStyle::DashedArrow,
-            ArrowStyle::SolidOpen,
-            ArrowStyle::DashedOpen,
-            ArrowStyle::SolidCross,
-            ArrowStyle::DashedCross,
-        ]);
+        assert_eq!(
+            arrows,
+            vec![
+                ArrowStyle::SolidArrow,
+                ArrowStyle::DashedArrow,
+                ArrowStyle::SolidOpen,
+                ArrowStyle::DashedOpen,
+                ArrowStyle::SolidCross,
+                ArrowStyle::DashedCross,
+            ]
+        );
     }
 
     #[test]
@@ -368,7 +398,12 @@ sequenceDiagram
         let input = "sequenceDiagram\n    participant A\n    Note right of A: Hello\n";
         let diagram = parse_sequence(input).unwrap();
         assert_eq!(diagram.events.len(), 1);
-        if let Event::Note { position, participants, text } = &diagram.events[0] {
+        if let Event::Note {
+            position,
+            participants,
+            text,
+        } = &diagram.events[0]
+        {
             assert_eq!(*position, NotePosition::RightOf);
             assert_eq!(participants, &vec!["A".to_string()]);
             assert_eq!(text, "Hello");
@@ -379,9 +414,15 @@ sequenceDiagram
 
     #[test]
     fn test_parse_note_over_spanning() {
-        let input = "sequenceDiagram\n    participant A\n    participant B\n    Note over A,B: Shared\n";
+        let input =
+            "sequenceDiagram\n    participant A\n    participant B\n    Note over A,B: Shared\n";
         let diagram = parse_sequence(input).unwrap();
-        if let Event::Note { position, participants, .. } = &diagram.events[0] {
+        if let Event::Note {
+            position,
+            participants,
+            ..
+        } = &diagram.events[0]
+        {
             assert_eq!(*position, NotePosition::Over);
             assert_eq!(participants.len(), 2);
         } else {
@@ -394,8 +435,12 @@ sequenceDiagram
         let input = "sequenceDiagram\n    participant A\n    activate A\n    deactivate A\n";
         let diagram = parse_sequence(input).unwrap();
         assert_eq!(diagram.events.len(), 2);
-        assert!(matches!(&diagram.events[0], Event::Activate { participant } if participant == "A"));
-        assert!(matches!(&diagram.events[1], Event::Deactivate { participant } if participant == "A"));
+        assert!(
+            matches!(&diagram.events[0], Event::Activate { participant } if participant == "A")
+        );
+        assert!(
+            matches!(&diagram.events[1], Event::Deactivate { participant } if participant == "A")
+        );
     }
 
     #[test]
@@ -410,7 +455,12 @@ sequenceDiagram
 ";
         let diagram = parse_sequence(input).unwrap();
         assert_eq!(diagram.events.len(), 1);
-        if let Event::Fragment { kind, label, sections } = &diagram.events[0] {
+        if let Event::Fragment {
+            kind,
+            label,
+            sections,
+        } = &diagram.events[0]
+        {
             assert_eq!(*kind, FragmentKind::Loop);
             assert_eq!(label, "Every minute");
             assert_eq!(sections.len(), 1);
@@ -468,7 +518,12 @@ sequenceDiagram
         if let Event::Fragment { kind, sections, .. } = &diagram.events[0] {
             assert_eq!(*kind, FragmentKind::Loop);
             assert_eq!(sections[0].events.len(), 1);
-            if let Event::Fragment { kind: inner_kind, sections: inner_sections, .. } = &sections[0].events[0] {
+            if let Event::Fragment {
+                kind: inner_kind,
+                sections: inner_sections,
+                ..
+            } = &sections[0].events[0]
+            {
                 assert_eq!(*inner_kind, FragmentKind::Alt);
                 assert_eq!(inner_sections.len(), 2);
             } else {

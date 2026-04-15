@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use anyhow::{bail, Context};
+use anyhow::{Context, bail};
 
 use super::{Direction, Edge, EdgeStyle, FlowChart, Node, NodeShape};
 
@@ -45,12 +45,13 @@ pub fn parse_flowchart(input: &str) -> anyhow::Result<FlowChart> {
             .with_context(|| format!("Failed to parse line: {:?}", trimmed))?;
     }
 
-    let nodes: Vec<Node> = node_order
-        .iter()
-        .map(|id| node_map[id].clone())
-        .collect();
+    let nodes: Vec<Node> = node_order.iter().map(|id| node_map[id].clone()).collect();
 
-    Ok(FlowChart { direction, nodes, edges })
+    Ok(FlowChart {
+        direction,
+        nodes,
+        edges,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -130,11 +131,7 @@ fn parse_statement(
 // Register a node, respecting that explicit labels override implicit ones
 // ---------------------------------------------------------------------------
 
-fn register_node(
-    node: &Node,
-    node_order: &mut Vec<String>,
-    node_map: &mut HashMap<String, Node>,
-) {
+fn register_node(node: &Node, node_order: &mut Vec<String>, node_map: &mut HashMap<String, Node>) {
     let has_explicit_label = node.shape != NodeShape::Rect || node.label != node.id;
 
     if let Some(existing) = node_map.get_mut(&node.id) {
@@ -160,14 +157,22 @@ fn parse_node_term(chars: &[char], pos: &mut usize) -> anyhow::Result<Node> {
 
     // Determine shape from the next character (if any)
     if *pos >= chars.len() {
-        return Ok(Node { id: id.clone(), label: id, shape: NodeShape::Rect });
+        return Ok(Node {
+            id: id.clone(),
+            label: id,
+            shape: NodeShape::Rect,
+        });
     }
 
     match chars[*pos] {
         '[' => {
             *pos += 1;
             let label = collect_until(chars, pos, ']')?;
-            Ok(Node { id, label, shape: NodeShape::Rect })
+            Ok(Node {
+                id,
+                label,
+                shape: NodeShape::Rect,
+            })
         }
         '(' => {
             // Could be `(label)` (rounded) or `((label))` (circle)
@@ -180,21 +185,37 @@ fn parse_node_term(chars: &[char], pos: &mut usize) -> anyhow::Result<Node> {
                 if *pos < chars.len() && chars[*pos] == ')' {
                     *pos += 1;
                 }
-                Ok(Node { id, label, shape: NodeShape::Circle })
+                Ok(Node {
+                    id,
+                    label,
+                    shape: NodeShape::Circle,
+                })
             } else {
                 // Rounded: (label)
                 let label = collect_until(chars, pos, ')')?;
-                Ok(Node { id, label, shape: NodeShape::Rounded })
+                Ok(Node {
+                    id,
+                    label,
+                    shape: NodeShape::Rounded,
+                })
             }
         }
         '{' => {
             *pos += 1;
             let label = collect_until(chars, pos, '}')?;
-            Ok(Node { id, label, shape: NodeShape::Diamond })
+            Ok(Node {
+                id,
+                label,
+                shape: NodeShape::Diamond,
+            })
         }
         _ => {
             // Bare node — label equals id
-            Ok(Node { id: id.clone(), label: id, shape: NodeShape::Rect })
+            Ok(Node {
+                id: id.clone(),
+                label: id,
+                shape: NodeShape::Rect,
+            })
         }
     }
 }
@@ -430,7 +451,8 @@ mod tests {
 
     #[test]
     fn test_parse_skips_comments_and_empty_lines() {
-        let input = "graph TD\n%% this is a comment\n\n    A --> B\n%% another comment\n    B --> C\n";
+        let input =
+            "graph TD\n%% this is a comment\n\n    A --> B\n%% another comment\n    B --> C\n";
         let chart = flowchart(input);
         assert_eq!(chart.nodes.len(), 3);
         assert_eq!(chart.edges.len(), 2);

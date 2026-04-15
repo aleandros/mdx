@@ -1,5 +1,5 @@
-use super::layout::{PositionedFragment, SequenceLayout};
 use super::ArrowStyle;
+use super::layout::{PositionedFragment, SequenceLayout};
 use crate::mermaid::ascii::Canvas;
 
 pub fn render(layout: &SequenceLayout) -> Vec<String> {
@@ -508,19 +508,21 @@ mod tests {
 
     #[test]
     fn test_render_self_message() {
-        let output = render_fixture(
-            "sequenceDiagram\n    participant A\n    A->>A: Think\n",
+        let output = render_fixture("sequenceDiagram\n    participant A\n    A->>A: Think\n");
+        assert!(
+            output.contains("Think"),
+            "Should contain self-message label"
         );
-        assert!(output.contains("Think"), "Should contain self-message label");
         assert!(output.contains("┐"), "Should contain self-message corner");
-        assert!(output.contains("┘"), "Should contain self-message return corner");
+        assert!(
+            output.contains("┘"),
+            "Should contain self-message return corner"
+        );
     }
 
     #[test]
     fn test_render_note() {
-        let output = render_fixture(
-            "sequenceDiagram\n    participant A\n    Note over A: Hello\n",
-        );
+        let output = render_fixture("sequenceDiagram\n    participant A\n    Note over A: Hello\n");
         assert!(output.contains("Hello"), "Should contain note text");
     }
 

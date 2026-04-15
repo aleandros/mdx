@@ -50,7 +50,10 @@ pub fn parse_markdown(input: &str) -> Vec<Block> {
     enum Container {
         Header(u8),
         Paragraph,
-        List { ordered: bool, items: Vec<Vec<InlineElement>> },
+        List {
+            ordered: bool,
+            items: Vec<Vec<InlineElement>>,
+        },
     }
 
     let mut container_stack: Vec<Container> = Vec::new();
@@ -194,7 +197,11 @@ pub fn parse_markdown(input: &str) -> Vec<Block> {
 
                 // The text accumulated since Start(Link) should be rewritten as a Link element.
                 // We look for the last Text element added and convert it.
-                let target_buf = if in_list_item { &mut list_item_buf } else { &mut inline_buf };
+                let target_buf = if in_list_item {
+                    &mut list_item_buf
+                } else {
+                    &mut inline_buf
+                };
                 // Collect all Text elements added since the link started into one string
                 // (they were pushed as Text elements during the link body)
                 // Strategy: pop trailing Text/SoftBreak elements and combine into link text
@@ -209,12 +216,19 @@ pub fn parse_markdown(input: &str) -> Vec<Block> {
                         _ => break,
                     }
                 }
-                target_buf.push(InlineElement::Link { text: link_text, url });
+                target_buf.push(InlineElement::Link {
+                    text: link_text,
+                    url,
+                });
             }
 
             Event::Text(text) => {
                 let text_str = text.to_string();
-                let target_buf = if in_list_item { &mut list_item_buf } else { &mut inline_buf };
+                let target_buf = if in_list_item {
+                    &mut list_item_buf
+                } else {
+                    &mut inline_buf
+                };
 
                 if in_code_block.is_some() {
                     code_buf.push_str(&text_str);
@@ -231,12 +245,20 @@ pub fn parse_markdown(input: &str) -> Vec<Block> {
             }
 
             Event::Code(text) => {
-                let target_buf = if in_list_item { &mut list_item_buf } else { &mut inline_buf };
+                let target_buf = if in_list_item {
+                    &mut list_item_buf
+                } else {
+                    &mut inline_buf
+                };
                 target_buf.push(InlineElement::Code(text.to_string()));
             }
 
             Event::SoftBreak => {
-                let target_buf = if in_list_item { &mut list_item_buf } else { &mut inline_buf };
+                let target_buf = if in_list_item {
+                    &mut list_item_buf
+                } else {
+                    &mut inline_buf
+                };
                 if in_code_block.is_none() {
                     target_buf.push(InlineElement::SoftBreak);
                 }
@@ -371,6 +393,12 @@ mod tests {
         assert!(matches!(blocks[0], Block::Header { level: 1, .. }));
         assert!(matches!(blocks[1], Block::Paragraph { .. }));
         assert!(matches!(blocks[2], Block::HorizontalRule));
-        assert!(matches!(blocks[3], Block::CodeBlock { language: Some(_), .. }));
+        assert!(matches!(
+            blocks[3],
+            Block::CodeBlock {
+                language: Some(_),
+                ..
+            }
+        ));
     }
 }

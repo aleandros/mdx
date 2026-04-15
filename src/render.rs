@@ -338,10 +338,7 @@ mod tests {
             assert!(!first_line.spans.is_empty());
             let span = &first_line.spans[0];
             assert!(span.style.bold, "Header should be bold");
-            assert!(
-                span.text.contains("Title"),
-                "Header should contain 'Title'"
-            );
+            assert!(span.text.contains("Title"), "Header should contain 'Title'");
         } else {
             panic!("Expected Lines variant");
         }
