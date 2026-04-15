@@ -18,6 +18,12 @@ impl Highlighter {
         }
     }
 
+    pub fn available_themes(&self) -> Vec<&str> {
+        let mut names: Vec<&str> = self.theme_set.themes.keys().map(|s| s.as_str()).collect();
+        names.sort();
+        names
+    }
+
     /// Highlight code, returning styled spans per line.
     /// Returns None if the language is unrecognized or absent.
     pub fn highlight_code(

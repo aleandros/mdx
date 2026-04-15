@@ -30,6 +30,10 @@ struct Args {
     /// Override terminal width for wrapping
     #[arg(short, long)]
     width: Option<u16>,
+
+    /// Syntax highlighting theme (use --theme=list to see available themes)
+    #[arg(long)]
+    theme: Option<String>,
 }
 
 fn read_input(args: &Args) -> Result<String> {
@@ -92,8 +96,18 @@ fn main() -> Result<()> {
     let input = read_input(&args)?;
     let width = get_width(&args);
     let no_color = std::env::var("NO_COLOR").is_ok();
+
+    // Handle --theme=list
+    if args.theme.as_deref() == Some("list") {
+        let h = highlight::Highlighter::new(None);
+        for name in h.available_themes() {
+            println!("{}", name);
+        }
+        return Ok(());
+    }
+
+    let highlighter = highlight::Highlighter::new(args.theme.clone());
     let blocks = parser::parse_markdown(&input);
-    let highlighter = highlight::Highlighter::new(None);
     let rendered = render::render_blocks(&blocks, width, &highlighter);
     if use_pager(&args) {
         let original_hook = std::panic::take_hook();
@@ -144,6 +158,7 @@ mod tests {
             pager: false,
             no_pager: false,
             width: None,
+            theme: None,
         };
         let input = read_input(&args).unwrap();
         assert_eq!(input, "# Hello");
@@ -156,6 +171,7 @@ mod tests {
             pager: false,
             no_pager: false,
             width: None,
+            theme: None,
         };
         // Simulate TTY context: stdin is a terminal, no file provided → must error
         assert!(read_input_with_tty_check(&args, true).is_err());
