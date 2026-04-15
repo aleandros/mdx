@@ -153,6 +153,7 @@ pub fn layout(diagram: &SequenceDiagram) -> SequenceLayout {
     // Per-participant activation stacks: participant index -> stack of y_start values
     let mut activation_stacks: Vec<Vec<usize>> = vec![vec![]; n];
 
+    let mut message_counter: usize = 0;
     process_events(
         &diagram.events,
         &participant_index,
@@ -164,6 +165,8 @@ pub fn layout(diagram: &SequenceDiagram) -> SequenceLayout {
         &mut activations,
         &mut fragments,
         &mut activation_stacks,
+        diagram.autonumber,
+        &mut message_counter,
     );
 
     let height = current_y;
@@ -246,6 +249,8 @@ fn process_events(
     activations: &mut Vec<PositionedActivation>,
     fragments: &mut Vec<PositionedFragment>,
     activation_stacks: &mut Vec<Vec<usize>>,
+    autonumber: bool,
+    message_counter: &mut usize,
 ) {
     for event in events {
         match event {
@@ -257,11 +262,18 @@ fn process_events(
                 let from_x = center_xs[fi];
                 let to_x = center_xs[ti];
 
+                let display_label = if autonumber {
+                    *message_counter += 1;
+                    format!("{}. {}", *message_counter, label)
+                } else {
+                    label.clone()
+                };
+
                 messages.push(PositionedMessage {
                     from_x,
                     to_x,
                     y: *current_y,
-                    label: label.clone(),
+                    label: display_label,
                     arrow: arrow.clone(),
                     self_message: self_msg,
                 });
@@ -377,6 +389,8 @@ fn process_events(
                         activations,
                         fragments,
                         activation_stacks,
+                        autonumber,
+                        message_counter,
                     );
 
                     // If not the last section, add a divider row labeled with the NEXT section's label
@@ -611,6 +625,34 @@ mod tests {
         assert_eq!(result.fragments.len(), 1);
         assert!(result.fragments[0].height > 0);
         assert!(result.fragments[0].width > 0);
+    }
+
+    #[test]
+    fn test_autonumber_prefixes_labels() {
+        let diagram = SequenceDiagram {
+            participants: vec![
+                Participant { id: "A".to_string(), label: "A".to_string() },
+                Participant { id: "B".to_string(), label: "B".to_string() },
+            ],
+            events: vec![
+                Event::Message {
+                    from: "A".to_string(),
+                    to: "B".to_string(),
+                    label: "First".to_string(),
+                    arrow: ArrowStyle::SolidArrow,
+                },
+                Event::Message {
+                    from: "B".to_string(),
+                    to: "A".to_string(),
+                    label: "Second".to_string(),
+                    arrow: ArrowStyle::DashedArrow,
+                },
+            ],
+            autonumber: true,
+        };
+        let result = layout(&diagram);
+        assert_eq!(result.messages[0].label, "1. First");
+        assert_eq!(result.messages[1].label, "2. Second");
     }
 
     #[test]
