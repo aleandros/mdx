@@ -53,6 +53,7 @@ fn color_to_ratatui(color: &Color) -> RColor {
         Color::BrightCyan => RColor::LightCyan,
         Color::BrightMagenta => RColor::LightMagenta,
         Color::DarkGray => RColor::DarkGray,
+        Color::Rgb(r, g, b) => RColor::Rgb(*r, *g, *b),
     }
 }
 

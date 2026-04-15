@@ -17,6 +17,7 @@ pub enum Color {
     BrightCyan,
     BrightMagenta,
     DarkGray,
+    Rgb(u8, u8, u8),
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -65,10 +66,7 @@ pub enum RenderedBlock {
 
 // ─── Rendering helpers ─────────────────────────────────────────────────────
 
-fn color_ansi_code(color: &Color, bright: bool) -> &'static str {
-    // We handle bright variants explicitly in the Color enum,
-    // so `bright` param is unused here but kept for clarity.
-    let _ = bright;
+fn color_ansi_code(color: &Color) -> &'static str {
     match color {
         Color::Red => "31",
         Color::Green => "32",
@@ -81,6 +79,7 @@ fn color_ansi_code(color: &Color, bright: bool) -> &'static str {
         Color::BrightCyan => "96",
         Color::BrightMagenta => "95",
         Color::DarkGray => "90",
+        Color::Rgb(_, _, _) => unreachable!("Rgb is handled separately in styled_line_to_ansi"),
     }
 }
 
@@ -293,19 +292,22 @@ pub fn styled_line_to_ansi(line: &StyledLine, no_color: bool) -> String {
     let mut result = String::new();
     for span in &line.spans {
         let style = &span.style;
-        let mut codes: Vec<&str> = Vec::new();
+        let mut codes: Vec<String> = Vec::new();
 
         if style.bold {
-            codes.push("1");
+            codes.push("1".to_string());
         }
         if style.italic {
-            codes.push("3");
+            codes.push("3".to_string());
         }
         if style.dim {
-            codes.push("2");
+            codes.push("2".to_string());
         }
         if let Some(ref color) = style.fg {
-            codes.push(color_ansi_code(color, false));
+            match color {
+                Color::Rgb(r, g, b) => codes.push(format!("38;2;{};{};{}", r, g, b)),
+                other => codes.push(color_ansi_code(other).to_string()),
+            }
         }
 
         if codes.is_empty() {
@@ -490,6 +492,26 @@ mod tests {
         let output = styled_line_to_ansi(&line, true);
         assert!(!output.contains('\x1b'), "Should have no escape codes");
         assert_eq!(output, "Hello world");
+    }
+
+    #[test]
+    fn test_ansi_output_rgb_color() {
+        let line = StyledLine {
+            spans: vec![StyledSpan {
+                text: "colored".to_string(),
+                style: SpanStyle {
+                    fg: Some(Color::Rgb(255, 100, 50)),
+                    ..Default::default()
+                },
+            }],
+        };
+        let output = styled_line_to_ansi(&line, false);
+        assert!(
+            output.contains("\x1b[38;2;255;100;50m"),
+            "Should use 24-bit color escape: {}",
+            output
+        );
+        assert!(output.contains("colored"));
     }
 
     #[test]
