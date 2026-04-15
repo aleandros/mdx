@@ -5,7 +5,7 @@ use super::{EdgeStyle, NodeShape};
 // Canvas
 // ---------------------------------------------------------------------------
 
-pub struct Canvas {
+pub(crate) struct Canvas {
     grid: Vec<Vec<char>>,
     width: usize,
     height: usize,
