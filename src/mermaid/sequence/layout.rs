@@ -272,24 +272,52 @@ fn process_events(
                     *current_y += MESSAGE_HEIGHT;
                 }
             }
-            Event::Note { participants, text, .. } => {
-                // Find leftmost participant
-                let min_x = participants
-                    .iter()
-                    .filter_map(|id| participant_index.get(id))
-                    .map(|&i| center_xs[i].saturating_sub(box_widths[i] / 2))
-                    .min()
-                    .unwrap_or(0);
-                let max_x = participants
-                    .iter()
-                    .filter_map(|id| participant_index.get(id))
-                    .map(|&i| center_xs[i] + box_widths[i] / 2)
-                    .max()
-                    .unwrap_or(min_x + text.len() + 4);
-                let width = (max_x - min_x).max(text.len() + 4);
+            Event::Note { position, participants, text } => {
+                let note_width = text.len() + 4;
+
+                let (note_x, width) = match position {
+                    super::NotePosition::RightOf => {
+                        // Place note to the right of the rightmost named participant
+                        let right_edge = participants
+                            .iter()
+                            .filter_map(|id| participant_index.get(id))
+                            .map(|&i| center_xs[i] + (box_widths[i] + 1) / 2)
+                            .max()
+                            .unwrap_or(0);
+                        (right_edge + 1, note_width)
+                    }
+                    super::NotePosition::LeftOf => {
+                        // Place note to the left of the leftmost named participant
+                        let left_edge = participants
+                            .iter()
+                            .filter_map(|id| participant_index.get(id))
+                            .map(|&i| center_xs[i].saturating_sub(box_widths[i] / 2))
+                            .min()
+                            .unwrap_or(note_width + 1);
+                        let x = left_edge.saturating_sub(note_width + 1);
+                        (x, note_width)
+                    }
+                    super::NotePosition::Over => {
+                        // Span between leftmost and rightmost participant boxes
+                        let min_x = participants
+                            .iter()
+                            .filter_map(|id| participant_index.get(id))
+                            .map(|&i| center_xs[i].saturating_sub(box_widths[i] / 2))
+                            .min()
+                            .unwrap_or(0);
+                        let max_x = participants
+                            .iter()
+                            .filter_map(|id| participant_index.get(id))
+                            .map(|&i| center_xs[i] + (box_widths[i] + 1) / 2)
+                            .max()
+                            .unwrap_or(min_x + note_width);
+                        let width = (max_x - min_x).max(note_width);
+                        (min_x, width)
+                    }
+                };
 
                 notes.push(PositionedNote {
-                    x: min_x,
+                    x: note_x,
                     y: *current_y,
                     width,
                     height: NOTE_HEIGHT,
@@ -299,7 +327,10 @@ fn process_events(
             }
             Event::Activate { participant } => {
                 if let Some(&idx) = participant_index.get(participant) {
-                    activation_stacks[idx].push(*current_y);
+                    // Start activation at the arrow row of the preceding message
+                    // (one row back), so the activation box spans the response message.
+                    let y_start = current_y.saturating_sub(1);
+                    activation_stacks[idx].push(y_start);
                 }
                 // 0 rows consumed
             }
@@ -348,9 +379,10 @@ fn process_events(
                         activation_stacks,
                     );
 
-                    // If not the last section, add a divider row
+                    // If not the last section, add a divider row labeled with the NEXT section's label
                     if sec_idx < sections.len() - 1 {
-                        section_dividers.push((*current_y, section.label.clone()));
+                        let next_label = sections[sec_idx + 1].label.clone();
+                        section_dividers.push((*current_y, next_label));
                         *current_y += 1;
                     }
                 }
@@ -359,7 +391,25 @@ fn process_events(
                 *current_y += 1;
 
                 let frag_height = *current_y - frag_y;
-                let frag_width = frag_right_x - frag_left_x;
+
+                // Minimum width: header text "─ {kind} [{label}] ─┐" needs space
+                let kind_str_len = match kind {
+                    super::FragmentKind::Loop => 4,
+                    super::FragmentKind::Alt => 3,
+                    super::FragmentKind::Opt => 3,
+                    super::FragmentKind::Par => 3,
+                };
+                let header_min = if label.is_empty() {
+                    kind_str_len + 4 // "─ kind ─┐" plus "┌" = kind + 5 chars min
+                } else {
+                    kind_str_len + label.len() + 7 // "─ kind [label] ─┐"
+                };
+                // Also consider section divider labels
+                let divider_min = section_dividers.iter().filter_map(|(_, lbl)| lbl.as_ref())
+                    .map(|lbl| lbl.len() + 7) // "─ [label] ─┤"
+                    .max()
+                    .unwrap_or(0);
+                let frag_width = (frag_right_x - frag_left_x).max(header_min).max(divider_min);
 
                 fragments.push(PositionedFragment {
                     x: frag_left_x,

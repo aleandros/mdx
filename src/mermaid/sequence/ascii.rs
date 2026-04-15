@@ -20,20 +20,31 @@ pub fn render(layout: &SequenceLayout) -> Vec<String> {
         .max()
         .unwrap_or(0);
 
-    let canvas_width = layout.width + 4 + self_msg_extra;
+    // Extra width to accommodate notes that extend past the diagram width
+    let note_extra: usize = layout
+        .notes
+        .iter()
+        .map(|n| {
+            let right_edge = n.x + n.width;
+            right_edge.saturating_sub(layout.width)
+        })
+        .max()
+        .unwrap_or(0);
+
+    let canvas_width = layout.width + 4 + self_msg_extra.max(note_extra);
     let mut canvas = Canvas::new(canvas_width, layout.height + 2);
 
     // 1. Draw lifelines (dashed vertical under each participant box)
     draw_lifelines(&mut canvas, layout);
 
-    // 2. Draw activations
-    draw_activations(&mut canvas, layout);
-
-    // 3. Draw fragment boxes
+    // 2. Draw fragment boxes (before messages so messages appear on top)
     draw_fragments(&mut canvas, layout);
 
-    // 4. Draw messages
+    // 3. Draw messages
     draw_messages(&mut canvas, layout);
+
+    // 4. Draw activations (after messages so activation borders appear on top of arrows)
+    draw_activations(&mut canvas, layout);
 
     // 5. Draw notes
     draw_notes(&mut canvas, layout);
@@ -117,7 +128,9 @@ fn draw_activations(canvas: &mut Canvas, layout: &SequenceLayout) {
 // ---------------------------------------------------------------------------
 
 fn draw_fragments(canvas: &mut Canvas, layout: &SequenceLayout) {
-    for frag in &layout.fragments {
+    // Draw in reverse order so that inner (nested) fragments, which appear earlier
+    // in the list, are drawn last (on top of outer fragment borders).
+    for frag in layout.fragments.iter().rev() {
         draw_fragment(canvas, frag);
     }
 }
@@ -240,10 +253,15 @@ fn draw_message(canvas: &mut Canvas, msg: &super::layout::PositionedMessage) {
         canvas.draw_text(label_x, label_row, &msg.label);
     }
 
-    // Arrow line: from from_x+1 to to_x-1
+    // Arrow line: between the two participants
     let going_right = msg.from_x < msg.to_x;
-    let arrow_start = msg.from_x + 1;
-    let arrow_end = msg.to_x.saturating_sub(1);
+    // For left-to-right: line goes from from_x+1 to to_x-1
+    // For right-to-left: line goes from to_x+1 to from_x-1
+    let (arrow_start, arrow_end) = if going_right {
+        (msg.from_x + 1, msg.to_x.saturating_sub(1))
+    } else {
+        (msg.to_x + 1, msg.from_x.saturating_sub(1))
+    };
 
     if arrow_start > arrow_end {
         return;
