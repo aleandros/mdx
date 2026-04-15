@@ -136,7 +136,11 @@ fn render_inline_elements(content: &[InlineElement]) -> StyledLine {
     }
 }
 
-fn render_code_block_lines(language: &Option<String>, content: &str) -> Vec<StyledLine> {
+fn render_code_block_lines(
+    language: &Option<String>,
+    content: &str,
+    highlighter: &crate::highlight::Highlighter,
+) -> Vec<StyledLine> {
     let mut lines = Vec::new();
 
     // Optional language label
@@ -153,17 +157,27 @@ fn render_code_block_lines(language: &Option<String>, content: &str) -> Vec<Styl
         });
     }
 
-    for line in content.lines() {
-        lines.push(StyledLine {
-            spans: vec![StyledSpan {
-                text: format!("  {}", line),
-                style: SpanStyle {
-                    dim: true,
-                    fg: Some(Color::DarkGray),
-                    ..Default::default()
-                },
-            }],
-        });
+    // Try syntax highlighting
+    if let Some(highlighted) = highlighter.highlight_code(content, language.as_deref()) {
+        for spans in highlighted {
+            let mut indented = vec![StyledSpan::plain("  ")];
+            indented.extend(spans);
+            lines.push(StyledLine { spans: indented });
+        }
+    } else {
+        // Fallback: dim monochrome
+        for line in content.lines() {
+            lines.push(StyledLine {
+                spans: vec![StyledSpan {
+                    text: format!("  {}", line),
+                    style: SpanStyle {
+                        dim: true,
+                        fg: Some(Color::DarkGray),
+                        ..Default::default()
+                    },
+                }],
+            });
+        }
     }
 
     lines
@@ -171,7 +185,7 @@ fn render_code_block_lines(language: &Option<String>, content: &str) -> Vec<Styl
 
 // ─── Main rendering entry point ────────────────────────────────────────────
 
-pub fn render_blocks(blocks: &[Block], width: u16) -> Vec<RenderedBlock> {
+pub fn render_blocks(blocks: &[Block], width: u16, highlighter: &crate::highlight::Highlighter) -> Vec<RenderedBlock> {
     let mut out = Vec::new();
 
     for block in blocks {
@@ -211,7 +225,7 @@ pub fn render_blocks(blocks: &[Block], width: u16) -> Vec<RenderedBlock> {
             }
 
             Block::CodeBlock { language, content } => {
-                let lines = render_code_block_lines(language, content);
+                let lines = render_code_block_lines(language, content, highlighter);
                 let mut all_lines = lines;
                 all_lines.push(StyledLine::empty());
                 out.push(RenderedBlock::Lines(all_lines));
@@ -237,7 +251,7 @@ pub fn render_blocks(blocks: &[Block], width: u16) -> Vec<RenderedBlock> {
                                 },
                             }],
                         };
-                        let code_lines = render_code_block_lines(&None, content);
+                        let code_lines = render_code_block_lines(&None, content, highlighter);
                         let mut all_lines = vec![warning_line];
                         all_lines.extend(code_lines);
                         all_lines.push(StyledLine::empty());
@@ -329,11 +343,12 @@ mod tests {
 
     #[test]
     fn test_render_header() {
+        let highlighter = crate::highlight::Highlighter::new(None);
         let blocks = vec![Block::Header {
             level: 1,
             content: vec![InlineElement::Text("Title".to_string())],
         }];
-        let rendered = render_blocks(&blocks, 80);
+        let rendered = render_blocks(&blocks, 80, &highlighter);
         assert_eq!(rendered.len(), 1);
         if let RenderedBlock::Lines(lines) = &rendered[0] {
             let first_line = &lines[0];
@@ -348,13 +363,14 @@ mod tests {
 
     #[test]
     fn test_render_paragraph_with_bold() {
+        let highlighter = crate::highlight::Highlighter::new(None);
         let blocks = vec![Block::Paragraph {
             content: vec![
                 InlineElement::Text("Hello ".to_string()),
                 InlineElement::Bold("world".to_string()),
             ],
         }];
-        let rendered = render_blocks(&blocks, 80);
+        let rendered = render_blocks(&blocks, 80, &highlighter);
         assert_eq!(rendered.len(), 1);
         if let RenderedBlock::Lines(lines) = &rendered[0] {
             let first_line = &lines[0];
@@ -368,19 +384,18 @@ mod tests {
 
     #[test]
     fn test_render_code_block() {
+        let highlighter = crate::highlight::Highlighter::new(None);
         let blocks = vec![Block::CodeBlock {
             language: Some("rust".to_string()),
             content: "fn main() {}".to_string(),
         }];
-        let rendered = render_blocks(&blocks, 80);
+        let rendered = render_blocks(&blocks, 80, &highlighter);
         assert_eq!(rendered.len(), 1);
         if let RenderedBlock::Lines(lines) = &rendered[0] {
             let code_line = lines.iter().find(|l| {
-                l.spans
-                    .iter()
-                    .any(|s| s.text.contains("fn main()") && s.style.dim)
+                l.spans.iter().any(|s| s.text.contains("fn") || s.text.contains("main"))
             });
-            assert!(code_line.is_some(), "Should have dim code line with text");
+            assert!(code_line.is_some(), "Should have code line with text");
         } else {
             panic!("Expected Lines variant");
         }
@@ -388,8 +403,9 @@ mod tests {
 
     #[test]
     fn test_render_horizontal_rule() {
+        let highlighter = crate::highlight::Highlighter::new(None);
         let blocks = vec![Block::HorizontalRule];
-        let rendered = render_blocks(&blocks, 40);
+        let rendered = render_blocks(&blocks, 40, &highlighter);
         assert_eq!(rendered.len(), 1);
         if let RenderedBlock::Lines(lines) = &rendered[0] {
             let rule_line = &lines[0];
@@ -405,6 +421,7 @@ mod tests {
 
     #[test]
     fn test_render_list() {
+        let highlighter = crate::highlight::Highlighter::new(None);
         let blocks = vec![Block::List {
             ordered: false,
             items: vec![
@@ -412,7 +429,7 @@ mod tests {
                 vec![InlineElement::Text("Beta".to_string())],
             ],
         }];
-        let rendered = render_blocks(&blocks, 80);
+        let rendered = render_blocks(&blocks, 80, &highlighter);
         assert_eq!(rendered.len(), 1);
         if let RenderedBlock::Lines(lines) = &rendered[0] {
             // First two lines are the items, last is blank
@@ -435,10 +452,11 @@ mod tests {
 
     #[test]
     fn test_render_mermaid_block() {
+        let highlighter = crate::highlight::Highlighter::new(None);
         let blocks = vec![Block::MermaidBlock {
             content: "graph TD\n    A --> B\n".to_string(),
         }];
-        let rendered = render_blocks(&blocks, 80);
+        let rendered = render_blocks(&blocks, 80, &highlighter);
         assert_eq!(rendered.len(), 1);
         if let RenderedBlock::Diagram {
             node_count,
@@ -455,10 +473,11 @@ mod tests {
 
     #[test]
     fn test_render_malformed_mermaid_falls_back() {
+        let highlighter = crate::highlight::Highlighter::new(None);
         let blocks = vec![Block::MermaidBlock {
             content: "THIS IS NOT VALID MERMAID @@@@".to_string(),
         }];
-        let rendered = render_blocks(&blocks, 80);
+        let rendered = render_blocks(&blocks, 80, &highlighter);
         assert_eq!(rendered.len(), 1);
         assert!(
             matches!(rendered[0], RenderedBlock::Lines(_)),
@@ -471,6 +490,35 @@ mod tests {
                     .any(|s| s.text.contains("mermaid") && s.style.fg == Some(Color::Red))
             });
             assert!(has_error, "Should have error warning span");
+        }
+    }
+
+    #[test]
+    fn test_render_code_block_with_highlighting() {
+        use crate::highlight::Highlighter;
+
+        let highlighter = Highlighter::new(None);
+        let blocks = vec![Block::CodeBlock {
+            language: Some("rust".to_string()),
+            content: "fn main() {}\n".to_string(),
+        }];
+        let rendered = render_blocks(&blocks, 80, &highlighter);
+        assert_eq!(rendered.len(), 1);
+        if let RenderedBlock::Lines(lines) = &rendered[0] {
+            // Should have language label + code line(s) + blank line
+            // The code lines should have some colored spans (not all DarkGray dim)
+            let code_lines: Vec<_> = lines.iter().filter(|l| {
+                l.spans.iter().any(|s| s.text.contains("fn") || s.text.contains("main"))
+            }).collect();
+            assert!(!code_lines.is_empty(), "Should have code lines");
+            let has_non_gray_color = code_lines.iter().any(|line| {
+                line.spans.iter().any(|s| {
+                    matches!(s.style.fg, Some(ref c) if *c != Color::DarkGray)
+                })
+            });
+            assert!(has_non_gray_color, "Highlighted Rust code should have colors beyond DarkGray");
+        } else {
+            panic!("Expected Lines variant");
         }
     }
 

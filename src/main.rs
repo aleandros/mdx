@@ -93,7 +93,8 @@ fn main() -> Result<()> {
     let width = get_width(&args);
     let no_color = std::env::var("NO_COLOR").is_ok();
     let blocks = parser::parse_markdown(&input);
-    let rendered = render::render_blocks(&blocks, width);
+    let highlighter = highlight::Highlighter::new(None);
+    let rendered = render::render_blocks(&blocks, width, &highlighter);
     if use_pager(&args) {
         let original_hook = std::panic::take_hook();
         std::panic::set_hook(Box::new(move |info| {
