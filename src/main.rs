@@ -93,20 +93,21 @@ fn pipe_output(blocks: &[render::RenderedBlock], no_color: bool) -> Result<()> {
 
 fn main() -> Result<()> {
     let args = Args::parse();
-    let input = read_input(&args)?;
-    let width = get_width(&args);
-    let no_color = std::env::var("NO_COLOR").is_ok();
 
-    // Handle --theme=list
+    // Handle --theme=list before reading input
     if args.theme.as_deref() == Some("list") {
-        let h = highlight::Highlighter::new(None);
+        let h = highlight::Highlighter::new(None).map_err(|e| anyhow::anyhow!(e))?;
         for name in h.available_themes() {
             println!("{}", name);
         }
         return Ok(());
     }
 
-    let highlighter = highlight::Highlighter::new(args.theme.clone());
+    let input = read_input(&args)?;
+    let width = get_width(&args);
+    let no_color = std::env::var("NO_COLOR").is_ok();
+    let highlighter = highlight::Highlighter::new(args.theme.clone())
+        .map_err(|e| anyhow::anyhow!(e))?;
     let blocks = parser::parse_markdown(&input);
     let rendered = render::render_blocks(&blocks, width, &highlighter);
     if use_pager(&args) {

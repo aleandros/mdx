@@ -343,7 +343,7 @@ mod tests {
 
     #[test]
     fn test_render_header() {
-        let highlighter = crate::highlight::Highlighter::new(None);
+        let highlighter = crate::highlight::Highlighter::new(None).unwrap();
         let blocks = vec![Block::Header {
             level: 1,
             content: vec![InlineElement::Text("Title".to_string())],
@@ -363,7 +363,7 @@ mod tests {
 
     #[test]
     fn test_render_paragraph_with_bold() {
-        let highlighter = crate::highlight::Highlighter::new(None);
+        let highlighter = crate::highlight::Highlighter::new(None).unwrap();
         let blocks = vec![Block::Paragraph {
             content: vec![
                 InlineElement::Text("Hello ".to_string()),
@@ -384,7 +384,7 @@ mod tests {
 
     #[test]
     fn test_render_code_block() {
-        let highlighter = crate::highlight::Highlighter::new(None);
+        let highlighter = crate::highlight::Highlighter::new(None).unwrap();
         let blocks = vec![Block::CodeBlock {
             language: Some("rust".to_string()),
             content: "fn main() {}".to_string(),
@@ -403,7 +403,7 @@ mod tests {
 
     #[test]
     fn test_render_horizontal_rule() {
-        let highlighter = crate::highlight::Highlighter::new(None);
+        let highlighter = crate::highlight::Highlighter::new(None).unwrap();
         let blocks = vec![Block::HorizontalRule];
         let rendered = render_blocks(&blocks, 40, &highlighter);
         assert_eq!(rendered.len(), 1);
@@ -421,7 +421,7 @@ mod tests {
 
     #[test]
     fn test_render_list() {
-        let highlighter = crate::highlight::Highlighter::new(None);
+        let highlighter = crate::highlight::Highlighter::new(None).unwrap();
         let blocks = vec![Block::List {
             ordered: false,
             items: vec![
@@ -452,7 +452,7 @@ mod tests {
 
     #[test]
     fn test_render_mermaid_block() {
-        let highlighter = crate::highlight::Highlighter::new(None);
+        let highlighter = crate::highlight::Highlighter::new(None).unwrap();
         let blocks = vec![Block::MermaidBlock {
             content: "graph TD\n    A --> B\n".to_string(),
         }];
@@ -473,7 +473,7 @@ mod tests {
 
     #[test]
     fn test_render_malformed_mermaid_falls_back() {
-        let highlighter = crate::highlight::Highlighter::new(None);
+        let highlighter = crate::highlight::Highlighter::new(None).unwrap();
         let blocks = vec![Block::MermaidBlock {
             content: "THIS IS NOT VALID MERMAID @@@@".to_string(),
         }];
@@ -497,7 +497,7 @@ mod tests {
     fn test_render_code_block_with_highlighting() {
         use crate::highlight::Highlighter;
 
-        let highlighter = Highlighter::new(None);
+        let highlighter = Highlighter::new(None).unwrap();
         let blocks = vec![Block::CodeBlock {
             language: Some("rust".to_string()),
             content: "fn main() {}\n".to_string(),

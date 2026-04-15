@@ -3,19 +3,33 @@ use syntect::easy::HighlightLines;
 use syntect::highlighting::ThemeSet;
 use syntect::parsing::SyntaxSet;
 
+#[derive(Debug)]
 pub struct Highlighter {
     syntax_set: SyntaxSet,
     theme_set: ThemeSet,
-    pub(crate) theme_name: Option<String>,
+    theme_name: Option<String>,
 }
 
 impl Highlighter {
-    pub fn new(theme_name: Option<String>) -> Self {
-        Highlighter {
-            syntax_set: SyntaxSet::load_defaults_newlines(),
-            theme_set: ThemeSet::load_defaults(),
-            theme_name,
+    pub fn new(theme_name: Option<String>) -> Result<Self, String> {
+        let theme_set = ThemeSet::load_defaults();
+        if let Some(ref name) = theme_name
+            && !theme_set.themes.contains_key(name.as_str())
+        {
+            let mut available: Vec<&str> =
+                theme_set.themes.keys().map(|s| s.as_str()).collect();
+            available.sort();
+            return Err(format!(
+                "Unknown theme '{}'. Available themes:\n  {}",
+                name,
+                available.join("\n  ")
+            ));
         }
+        Ok(Highlighter {
+            syntax_set: SyntaxSet::load_defaults_newlines(),
+            theme_set,
+            theme_name,
+        })
     }
 
     pub fn available_themes(&self) -> Vec<&str> {
@@ -146,14 +160,22 @@ mod tests {
 
     #[test]
     fn test_highlighter_new_default() {
-        let h = Highlighter::new(None);
+        let h = Highlighter::new(None).unwrap();
         // Should not panic, should construct successfully
         assert!(h.theme_name.is_none());
     }
 
     #[test]
+    fn test_highlighter_new_invalid_theme() {
+        let result = Highlighter::new(Some("nonexistent_theme_xyz".to_string()));
+        assert!(result.is_err(), "Invalid theme should return Err");
+        let err = result.unwrap_err();
+        assert!(err.contains("Unknown theme"), "Error should mention unknown theme: {}", err);
+    }
+
+    #[test]
     fn test_highlight_rust_code() {
-        let h = Highlighter::new(None);
+        let h = Highlighter::new(None).unwrap();
         let code = "fn main() {\n    println!(\"hello\");\n}\n";
         let result = h.highlight_code(code, Some("rust"));
         assert!(result.is_some(), "Rust should be a recognized language");
@@ -168,21 +190,21 @@ mod tests {
 
     #[test]
     fn test_highlight_unknown_language_returns_none() {
-        let h = Highlighter::new(None);
+        let h = Highlighter::new(None).unwrap();
         let result = h.highlight_code("some text", Some("not_a_real_language_xyz"));
         assert!(result.is_none(), "Unknown language should return None");
     }
 
     #[test]
     fn test_highlight_no_language_returns_none() {
-        let h = Highlighter::new(None);
+        let h = Highlighter::new(None).unwrap();
         let result = h.highlight_code("some text", None);
         assert!(result.is_none(), "No language should return None");
     }
 
     #[test]
     fn test_highlight_with_named_theme() {
-        let h = Highlighter::new(Some("base16-ocean.dark".to_string()));
+        let h = Highlighter::new(Some("base16-ocean.dark".to_string())).unwrap();
         let code = "fn main() {}\n";
         let result = h.highlight_code(code, Some("rust"));
         assert!(result.is_some());
@@ -196,7 +218,7 @@ mod tests {
 
     #[test]
     fn test_highlight_default_theme_uses_ansi_colors() {
-        let h = Highlighter::new(None);
+        let h = Highlighter::new(None).unwrap();
         let code = "fn main() {}\n";
         let result = h.highlight_code(code, Some("rust"));
         assert!(result.is_some());
