@@ -25,8 +25,9 @@ Vendored: 2026-04-16
 - Upstream: https://github.com/Microsoft/TypeScript-Sublime-Plugin
 - License: Apache-2.0 (see LICENSE-APACHE)
 
-## TypeScriptReact.tmLanguage
-- Source: https://github.com/Microsoft/TypeScript-Sublime-Plugin
+## TypeScriptReact.sublime-syntax
+- Source: https://github.com/sharkdp/bat (assets/syntaxes/02_Extra)
+- Upstream: https://github.com/Microsoft/TypeScript-Sublime-Plugin
 - License: Apache-2.0 (see LICENSE-APACHE)
 
 ## Dockerfile.sublime-syntax
@@ -50,28 +51,20 @@ Vendored: 2026-04-16
 - Source: https://github.com/alexlouden/Terraform.tmLanguage
 - License: MIT
 
-## HCL.sublime-syntax
-- Source: https://github.com/alexlouden/Terraform.tmLanguage
-- License: MIT
-
-## Vue.tmLanguage
-- Source: https://github.com/vuejs/vue-syntax-highlight
+## Vue.sublime-syntax
+- Source: https://github.com/vuejs/vue-syntax-highlight (branch: new)
 - License: MIT
 
 ## Svelte.sublime-syntax
-- Source: https://github.com/corneliusio/svelte-sublime
+- Source: https://github.com/NetOpWibby/sveltiest
 - License: MIT
 
 ## SCSS.sublime-syntax
-- Source: https://github.com/braver/SublimeSass
+- Source: https://github.com/P233/Syntax-highlighting-for-Sass
 - License: MIT
+- Note: Regex `[\w-$]` patched to `[\w\-$]` for syntect compatibility
 
 ## Bash.sublime-syntax
 - Source: https://github.com/sublimehq/Packages (ShellScript/)
 - License: Permissive ("Permission to copy, use, modify, sell and distribute is granted")
-- Note: Replaces syntect's weak built-in Bash grammar
-
-## Shell-Unix-Generic.sublime-syntax
-- Source: https://github.com/sublimehq/Packages (ShellScript/)
-- License: Permissive ("Permission to copy, use, modify, sell and distribute is granted")
-- Note: Required dependency of Bash.sublime-syntax
+- Note: Replaces syntect's weak built-in Bash grammar. Also registers `hcl` via Terraform.sublime-syntax.

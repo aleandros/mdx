@@ -24,6 +24,7 @@ version: 2
 #   https://www.terraform.io/docs/language/index.html
 file_extensions:
   - tf
+  - hcl
   - nomad
 
 variables:

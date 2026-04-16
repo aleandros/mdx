@@ -187,11 +187,9 @@ mod tests {
     fn test_bundled_syntax_tokens_resolve() {
         let h = Highlighter::new(None).unwrap();
         // Tokens for all bundled syntaxes that we vendored.
-        // Note: tsx and vue are excluded because their grammars are in
-        // .tmLanguage format, which syntect's add_from_folder doesn't load.
         let tokens = [
-            "toml", "ts", "dockerfile", "kt", "swift",
-            "zig", "tf",
+            "toml", "ts", "tsx", "dockerfile", "kt", "swift",
+            "zig", "tf", "hcl", "scss", "vue", "svelte",
         ];
         for token in &tokens {
             let result = h.highlight_code("x", Some(token));
