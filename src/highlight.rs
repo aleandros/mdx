@@ -3,6 +3,10 @@ use syntect::easy::HighlightLines;
 use syntect::highlighting::ThemeSet;
 use syntect::parsing::SyntaxSet;
 
+/// Combined syntax set compiled at build time by build.rs.
+/// Includes syntect defaults + custom grammars from syntaxes/ directory.
+static SYNTAX_SET_DATA: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/syntaxes.packdump"));
+
 #[derive(Debug)]
 pub struct Highlighter {
     syntax_set: SyntaxSet,
@@ -25,7 +29,8 @@ impl Highlighter {
             ));
         }
         Ok(Highlighter {
-            syntax_set: SyntaxSet::load_defaults_newlines(),
+            syntax_set: syntect::dumps::from_uncompressed_data(SYNTAX_SET_DATA)
+                .expect("Failed to load embedded syntax packdump"),
             theme_set,
             theme_name,
         })
@@ -163,5 +168,61 @@ mod tests {
                 .any(|span| matches!(span.style.fg, Some(Color::Rgb(_, _, _))))
         });
         assert!(has_rgb, "Default theme should produce Rgb colors");
+    }
+
+    #[test]
+    fn test_bundled_syntax_toml() {
+        let h = Highlighter::new(None).unwrap();
+        let code = "[package]\nname = \"test\"\n";
+        let result = h.highlight_code(code, Some("toml"));
+        assert!(result.is_some(), "TOML should be a recognized language");
+        let lines = result.unwrap();
+        let has_color = lines
+            .iter()
+            .any(|line| line.iter().any(|span| span.style.fg.is_some()));
+        assert!(has_color, "TOML code should have colored spans");
+    }
+
+    #[test]
+    fn test_bundled_syntax_tokens_resolve() {
+        let h = Highlighter::new(None).unwrap();
+        // Tokens for all bundled syntaxes that we vendored.
+        // Note: tsx and vue are excluded because their grammars are in
+        // .tmLanguage format, which syntect's add_from_folder doesn't load.
+        let tokens = [
+            "toml", "ts", "dockerfile", "kt", "swift",
+            "zig", "tf",
+        ];
+        for token in &tokens {
+            let result = h.highlight_code("x", Some(token));
+            assert!(
+                result.is_some(),
+                "Token '{}' should resolve to a syntax",
+                token
+            );
+        }
+    }
+
+    #[test]
+    fn test_bash_highlighting_has_multiple_colors() {
+        let h = Highlighter::new(None).unwrap();
+        let code = "#!/bin/bash\necho \"hello $USER\"\nif [[ -f foo ]]; then\n  cat foo\nfi\n";
+        let result = h.highlight_code(code, Some("bash"));
+        assert!(result.is_some(), "Bash should be recognized");
+        let lines = result.unwrap();
+        // Collect all distinct (r,g,b) colors across all spans
+        let mut colors = std::collections::HashSet::new();
+        for line in &lines {
+            for span in line {
+                if let Some(Color::Rgb(r, g, b)) = span.style.fg {
+                    colors.insert((r, g, b));
+                }
+            }
+        }
+        assert!(
+            colors.len() >= 3,
+            "Bash should produce at least 3 distinct colors (got {}), proving the grammar tokenizes properly",
+            colors.len()
+        );
     }
 }
