@@ -148,6 +148,34 @@ fn test_theme_flag_produces_output() {
 }
 
 #[test]
+fn test_toml_syntax_highlighting() {
+    let dir = std::env::temp_dir().join("mdx_integration");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("highlight_toml.md");
+    std::fs::write(
+        &path,
+        "# Config\n\n```toml\n[package]\nname = \"hello\"\nversion = \"0.1.0\"\n```\n",
+    )
+    .unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_mdx"))
+        .arg(&path)
+        .arg("--no-pager")
+        .output()
+        .expect("failed to run mdx");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // TOML should now be highlighted with 24-bit RGB colors
+    assert!(
+        stdout.contains("38;2;"),
+        "TOML code block should have RGB color escapes: {}",
+        stdout
+    );
+    assert!(
+        stdout.contains("package"),
+        "Should contain TOML content"
+    );
+}
+
+#[test]
 fn test_theme_list() {
     let output = Command::new(env!("CARGO_BIN_EXE_mdx"))
         .arg("--theme=list")
