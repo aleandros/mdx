@@ -134,7 +134,7 @@ fn test_theme_flag_produces_output() {
     let output = Command::new(env!("CARGO_BIN_EXE_mdx"))
         .arg(&path)
         .arg("--no-pager")
-        .arg("--theme=base16-ocean.dark")
+        .arg("--theme=base16-eighties.dark")
         .output()
         .expect("failed to run mdx");
     assert!(output.status.success(), "Should succeed with valid theme");

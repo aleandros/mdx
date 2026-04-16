@@ -47,7 +47,6 @@ impl Highlighter {
         let lang = language?;
         let syntax = self.syntax_set.find_syntax_by_token(lang)?;
 
-        let use_rgb = self.theme_name.is_some();
         let theme_key = self.theme_name.as_deref().unwrap_or("base16-ocean.dark");
         let theme = self.theme_set.themes.get(theme_key)?;
 
@@ -61,14 +60,8 @@ impl Highlighter {
                 .map(|(style, text)| {
                     let fg = if style.foreground.a == 0 {
                         None
-                    } else if use_rgb {
-                        Some(Color::Rgb(
-                            style.foreground.r,
-                            style.foreground.g,
-                            style.foreground.b,
-                        ))
                     } else {
-                        Some(rgb_to_ansi_color(
+                        Some(Color::Rgb(
                             style.foreground.r,
                             style.foreground.g,
                             style.foreground.b,
@@ -90,72 +83,9 @@ impl Highlighter {
     }
 }
 
-/// Reference RGB values for the 16 standard ANSI colors.
-const ANSI_COLORS: &[(Color, u8, u8, u8)] = &[
-    (Color::Red, 205, 0, 0),
-    (Color::Green, 0, 205, 0),
-    (Color::Yellow, 205, 205, 0),
-    (Color::Blue, 0, 0, 238),
-    (Color::Magenta, 205, 0, 205),
-    (Color::Cyan, 0, 205, 205),
-    (Color::White, 229, 229, 229),
-    (Color::BrightYellow, 255, 255, 85),
-    (Color::BrightCyan, 85, 255, 255),
-    (Color::BrightMagenta, 255, 85, 255),
-    (Color::DarkGray, 127, 127, 127),
-];
-
-/// Maps an RGB color to the nearest ANSI Color using Euclidean distance in RGB space.
-fn rgb_to_ansi_color(r: u8, g: u8, b: u8) -> Color {
-    let (r, g, b) = (r as i32, g as i32, b as i32);
-    ANSI_COLORS
-        .iter()
-        .map(|(color, cr, cg, cb)| {
-            let dr = r - *cr as i32;
-            let dg = g - *cg as i32;
-            let db = b - *cb as i32;
-            let dist = dr * dr + dg * dg + db * db;
-            (dist, color)
-        })
-        .min_by_key(|(dist, _)| *dist)
-        .unwrap()
-        .1
-        .clone()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_rgb_to_ansi_pure_red() {
-        let color = rgb_to_ansi_color(255, 0, 0);
-        assert_eq!(color, Color::Red);
-    }
-
-    #[test]
-    fn test_rgb_to_ansi_pure_green() {
-        let color = rgb_to_ansi_color(0, 255, 0);
-        assert_eq!(color, Color::Green);
-    }
-
-    #[test]
-    fn test_rgb_to_ansi_pure_blue() {
-        let color = rgb_to_ansi_color(0, 0, 255);
-        assert_eq!(color, Color::Blue);
-    }
-
-    #[test]
-    fn test_rgb_to_ansi_white() {
-        let color = rgb_to_ansi_color(255, 255, 255);
-        assert_eq!(color, Color::White);
-    }
-
-    #[test]
-    fn test_rgb_to_ansi_dark_gray() {
-        let color = rgb_to_ansi_color(100, 100, 100);
-        assert_eq!(color, Color::DarkGray);
-    }
 
     #[test]
     fn test_highlighter_new_default() {
@@ -221,17 +151,17 @@ mod tests {
     }
 
     #[test]
-    fn test_highlight_default_theme_uses_ansi_colors() {
+    fn test_highlight_default_theme_uses_rgb_colors() {
         let h = Highlighter::new(None).unwrap();
         let code = "fn main() {}\n";
         let result = h.highlight_code(code, Some("rust"));
         assert!(result.is_some());
         let lines = result.unwrap();
-        // Default (ANSI) mode should NOT produce Rgb colors
+        // Default theme (base16-ocean.dark) should produce Rgb colors
         let has_rgb = lines.iter().any(|line| {
             line.iter()
                 .any(|span| matches!(span.style.fg, Some(Color::Rgb(_, _, _))))
         });
-        assert!(!has_rgb, "Default ANSI mode should not produce Rgb colors");
+        assert!(has_rgb, "Default theme should produce Rgb colors");
     }
 }

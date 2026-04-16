@@ -31,7 +31,9 @@ struct Args {
     #[arg(short, long)]
     width: Option<u16>,
 
-    /// Syntax highlighting theme (use --theme=list to see available themes)
+    /// Syntax highlighting theme [default: base16-ocean.dark]
+    /// Examples: base16-eighties.dark, base16-mocha.dark, InspiredGitHub.
+    /// Use --theme=list to see all available themes
     #[arg(long)]
     theme: Option<String>,
 }
