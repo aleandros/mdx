@@ -1,0 +1,1235 @@
+%YAML 1.2
+---
+# http://www.sublimetext.com/docs/3/syntax.html
+name: SCSS
+scope: source.scss
+version: 2
+
+extends: Packages/CSS/CSS.sublime-syntax
+
+file_extensions:
+  - scss
+
+###############################################################################
+
+variables:
+
+  # CSS overrides
+
+  ident_start: (?:{{nmstart}}|#{)
+
+  property_or_selector_begin: (?={{ident_begin}}|{{selector_start}})
+  property_end: (?=[;)}])
+
+  selector_start: '[[:alpha:].:#%&*\[{{combinator_char}}]'
+  selector_end: (?=[;{}])
+
+  tag_name_begin: (?=[[:alpha:]]|#{)
+
+  lang_range_begin: (?={{ident_start}}|\*)
+  unquoted_url_begin: (?={{ident_start}}|/)
+
+  # SCSS variables
+
+###############################################################################
+
+contexts:
+
+  main:
+    - meta_include_prototype: false
+    - match: ''
+      set: [stylesheet, frontmatter]
+
+  frontmatter:
+    - meta_include_prototype: false
+    - match: (---).*\n
+      captures:
+        0: meta.frontmatter.jekyll
+        1: punctuation.section.frontmatter.begin.jekyll
+      embed: scope:source.yaml
+      embed_scope: meta.frontmatter.jekyll source.yaml.embedded.jekyll
+      escape: ^(---)\s*\n
+      escape_captures:
+        0: meta.frontmatter.jekyll
+        1: punctuation.section.frontmatter.end.jekyll
+      pop: 1
+    # Ensure to highlight frontmatter if the syntax is embedded, but pop as early as possible
+    - match: ^|(?=\S)
+      pop: 1
+
+###[ CSS ]#####################################################################
+
+  stylesheet:
+    - include: comments
+    - include: properties-or-selectors
+    - include: property-lists
+    - include: scss-declarations
+    - include: at-rules
+    - include: rule-terminators
+    - include: illegal-groups
+
+###[ CSS COMMENTS ]############################################################
+
+  comments:
+    - meta_append: true
+    - include: sassdoc-comments
+    - include: scss-line-comments
+
+  block-comment-body:
+    - meta_append: true
+    - include: scss-string-interpolations
+
+###[ CSS AT-RULES ]############################################################
+
+  at-keyframe-block-body:
+    - meta_append: true
+    - include: scss-at-content
+    - include: scss-at-control
+    - include: scss-at-extend
+    - include: scss-at-forward
+    - include: scss-at-functions
+    - include: scss-at-include
+    - include: scss-at-messages
+    - include: scss-at-mixins
+    - include: scss-at-return
+    - include: scss-at-root
+    - include: scss-at-use
+    - include: scss-declarations
+
+  at-other:
+    - meta_prepend: true
+    - include: scss-at-content
+    - include: scss-at-control
+    - include: scss-at-extend
+    - include: scss-at-forward
+    - include: scss-at-functions
+    - include: scss-at-include
+    - include: scss-at-messages
+    - include: scss-at-mixins
+    - include: scss-at-return
+    - include: scss-at-root
+    - include: scss-at-use
+
+###[ CONTAINER QUERIES ]#######################################################
+
+  container-style-queries:
+    - meta_append: true
+    - include: scss-interpolations
+    - include: scss-value-expressions
+
+###[ CSS MEDIA QUERIES ]#######################################################
+
+  media-query-conditions:
+    - meta_append: true
+    - include: scss-interpolations
+    - include: scss-value-expressions
+
+###[ CSS PROPERTIES OR SELECTORS ]#############################################
+
+  properties-or-selectors:
+    # required for backward compatibility with ST4169
+    - match: '{{property_or_selector_begin}}'
+      branch_point: property-or-selector
+      branch:
+        - maybe-property
+        - maybe-nested-property
+        - selector-body
+
+  maybe-property:
+    # required for backward compatibility with ST4169
+    - meta_include_prototype: false
+    - include: property-end
+    - include: property-identifiers
+    # otherwise it is part of a selector
+    - match: ''
+      fail: property-or-selector
+
+  property-end:
+    # required for backward compatibility with ST4169
+    - match: '{{property_end}}'
+      pop: 1
+
+  maybe-nested-property:
+    # https://sass-lang.com/documentation/style-rules/declarations/#nesting
+    - match: (?:{{vendor_prefix}}|{{generic_ident_begin}})
+      scope: support.type.vendor-prefix.css
+      set:
+        - nested-property-value
+        - other-property-content
+    - match: ''
+      fail: property-or-selector
+
+  nested-property-value:
+    - meta_include_prototype: false
+    - match: :(?=\s)
+      scope: punctuation.separator.key-value.css
+      set: property-value-content
+    - match: (?=\S)
+      fail: property-or-selector
+
+  selector-body:
+    - meta_prepend: true
+    - include: scss-placeholder-selectors
+    - include: scss-bem-selectors
+
+  selector-ids:
+    # replaces CSS context
+    # distinguish id's and html tags beginning with interpolation
+    - match: \#(?!{)
+      scope: entity.other.attribute-name.id.css punctuation.definition.entity.css
+      push: selector-id-identifier
+
+  selector-tag-content:
+    - meta_prepend: true
+    - include: scss-interpolations
+
+###[ CSS SELECTORS / ATTRIBUTE SELECTORS ]#####################################
+
+  attribute-selector-key:
+    - meta_prepend: true
+    - include: scss-interpolations
+
+  attribute-selector-unquoted-value-content:
+    - meta_prepend: true
+    - include: scss-interpolations
+
+###[ CSS SELECTORS / PSEUDO CLASSES ]##########################################
+
+  pseudo-class-anb-arguments-list-body:
+    - meta_append: true
+    - include: scss-interpolations
+
+  pseudo-class-dir-arguments-list-body:
+    - meta_append: true
+    - include: scss-interpolations
+
+###[ CSS PROPERTY LISTS ]######################################################
+
+  maybe-property-list:
+    # required for backward compatibility with ST4169
+    - meta_include_prototype: false
+    - match: \{
+      scope: punctuation.section.block.begin.css
+      set: property-list-body
+    - include: comments
+    - include: else-pop
+
+  property-list-body:
+    # required for backward compatibility with ST4169
+    - meta_include_prototype: false
+    - meta_scope: meta.property-list.css meta.block.css
+    - include: block-end
+    - include: stylesheet
+
+###[ CSS VALUE EXPRESSIONS ]###################################################
+
+  value-prototype:
+    - meta_append: true
+    - include: scss-default-operators
+    - include: scss-global-operators
+    - include: scss-value-expressions
+
+  generic-font-names:
+    # inject scss function calls to font property related contexts
+    # without rewriting them all.
+    - meta_prepend: true
+    - include: scss-unqualified-functions
+
+###[ CSS FUNCTION ARGUMENTS ]##################################################
+
+  function-arguments-prototype:
+    - meta_append: true
+    - include: scss-value-expressions
+
+  counter-function-arguments-list-body:
+    - meta_append: true
+    - include: scss-identifiers-or-functions
+
+  font-format-function-arguments-list-body:
+    - meta_append: true
+    - include: scss-identifiers-or-functions
+
+  format-function-arguments-list-body:
+    - meta_append: true
+    - include: scss-identifiers-or-functions
+
+  layer-function-arguments-list-body:
+    - meta_append: true
+    - include: scss-identifiers-or-functions
+
+  supports-function-arguments-list-body:
+    - meta_append: true
+    - include: scss-identifiers-or-functions
+
+  symbols-function-arguments-list-body:
+    - meta_append: true
+    - include: scss-identifiers-or-functions
+
+  color-color-function-arguments-list-body:
+    - meta_append: true
+    - include: scss-identifiers-or-functions
+
+  hsl-color-function-arguments-list-body:
+    - meta_content_scope: meta.function-call.arguments.css meta.group.css
+    - include: alpha-delimiters
+    - include: other-function-arguments-list-body
+
+  rgb-color-function-arguments-list-body:
+    - meta_content_scope: meta.function-call.arguments.css meta.group.css
+    - include: alpha-delimiters
+    - include: other-function-arguments-list-body
+
+  blend-adjust-function-arguments-list-body:
+    - meta_append: true
+    - include: scss-identifiers-or-functions
+
+  hue-adjust-function-arguments-list-body:
+    - meta_append: true
+    - include: scss-identifiers-or-functions
+
+  rgba-adjust-function-arguments-list-body:
+    - meta_append: true
+    - include: scss-identifiers-or-functions
+
+  saturation-adjust-function-arguments-list-body:
+    - meta_append: true
+    - include: scss-identifiers-or-functions
+
+  tint-adjust-function-arguments-list-body:
+    - meta_append: true
+    - include: scss-identifiers-or-functions
+
+  filter-function-arguments-list-body:
+    - meta_append: true
+    - include: scss-identifiers-or-functions
+
+  blur-function-arguments-list-body:
+    - meta_append: true
+    - include: scss-identifiers-or-functions
+
+  brightness-function-arguments-list-body:
+    - meta_append: true
+    - include: scss-identifiers-or-functions
+
+  drop-shadow-function-arguments-list-body:
+    - meta_append: true
+    - include: scss-identifiers-or-functions
+
+  hue-rotate-function-arguments-list-body:
+    - meta_append: true
+    - include: scss-identifiers-or-functions
+
+  minmax-function-arguments-list-body:
+    - meta_append: true
+    - include: scss-identifiers-or-functions
+
+  repeat-function-arguments-list-body:
+    - meta_append: true
+    - include: scss-identifiers-or-functions
+
+  cross-fade-function-arguments-list-body:
+    - meta_append: true
+    - include: scss-identifiers-or-functions
+
+  image-function-arguments-list-body:
+    - meta_append: true
+    - include: scss-identifiers-or-functions
+
+  image-set-function-arguments-list-body:
+    - meta_append: true
+    - include: scss-identifiers-or-functions
+
+  conic-gradient-function-arguments-list-body:
+    - meta_append: true
+    - include: scss-identifiers-or-functions
+
+  radial-gradient-function-arguments-list-body:
+    - meta_append: true
+    - include: scss-identifiers-or-functions
+
+  circle-function-arguments-list-body:
+    - meta_append: true
+    - include: scss-identifiers-or-functions
+
+  inset-function-arguments-list-body:
+    - meta_append: true
+    - include: scss-identifiers-or-functions
+
+  polygon-function-arguments-list-body:
+    - meta_append: true
+    - include: scss-identifiers-or-functions
+
+  rect-function-arguments-list-body:
+    - meta_append: true
+    - include: scss-identifiers-or-functions
+
+  cubic-bezier-timing-function-arguments-list-body:
+    - meta_append: true
+    - include: scss-identifiers-or-functions
+
+  step-timing-function-arguments-list-body:
+    - meta_append: true
+    - include: scss-identifiers-or-functions
+
+  transform-function-angles-arguments-list-body:
+    - meta_append: true
+    - include: scss-identifiers-or-functions
+
+  transform-function-angles-scalars-arguments-list-body:
+    - meta_append: true
+    - include: scss-identifiers-or-functions
+
+  transform-function-lengths-percentage-arguments-list-body:
+    - meta_append: true
+    - include: scss-identifiers-or-functions
+
+  transform-function-scalars-percentage-arguments-list-body:
+    - meta_append: true
+    - include: scss-identifiers-or-functions
+
+  transform-function-scalars-arguments-list-body:
+    - meta_append: true
+    - include: scss-identifiers-or-functions
+
+  transform-function-angle-arguments-list-body:
+    - meta_append: true
+    - include: scss-identifiers-or-functions
+
+  transform-function-length-arguments-list-body:
+    - meta_append: true
+    - include: scss-identifiers-or-functions
+
+  transform-function-length-percentage-arguments-list-body:
+    - meta_append: true
+    - include: scss-identifiers-or-functions
+
+  transform-function-scalar-arguments-list-body:
+    - meta_append: true
+    - include: scss-identifiers-or-functions
+
+  url-function-arguments-list-body:
+    - meta_content_scope: meta.function-call.arguments.css meta.group.css
+    - include: function-arguments-prototype
+    - include: scss-unqualified-functions
+    - include: quoted-urls
+    - include: unquoted-urls
+
+  url-regexp-function-arguments-list-body:
+    - meta_content_scope: meta.function-call.arguments.css meta.group.css
+    - include: function-arguments-prototype
+    - include: scss-unqualified-functions
+    - include: quoted-strings
+
+  calc-function-arguments-list-body:
+    - meta_append: true
+    - include: scss-identifiers-or-functions
+
+  toggle-function-arguments-list-body:
+    - meta_append: true
+    - include: scss-identifiers-or-functions
+
+###[ CSS IDENTIFIERS ]#########################################################
+
+  identifier-content:
+    - meta_prepend: true
+    - include: scss-interpolations
+
+###[ CSS STRINGS ]#############################################################
+
+  font-family-names:
+    # replace CSS context to add interpolation support
+    - match: '{{ident_begin}}'
+      push: font-family-name-body
+
+  font-family-name-body:
+    - meta_include_prototype: false
+    - meta_scope: meta.string.css string.unquoted.css
+    - include: scss-string-interpolations
+    # allow unquoted space separated font names
+    - match: (?!\s+{{ident_start}}){{break}}
+      pop: 1
+    # function call ahead, skip font name
+    - match: (?=\s+{{ident}}\()
+      pop: 1
+    - match: '{{unicode}}'
+
+  language-ranges:
+    # replace CSS context to add interpolation support
+    - match: '{{lang_range_begin}}'
+      push: language-range-content
+
+  line-name-content:
+    - meta_prepend: true
+    - include: scss-string-interpolations
+
+  string-content:
+    - meta_prepend: true
+    - include: scss-string-interpolations
+
+###[ CSS URL STRINGS ]#########################################################
+
+  quoted-url:
+    # does not yet exist in CSS but is not unlikely
+    - match: \"
+      scope:
+        meta.string.css string.quoted.double.css
+        punctuation.definition.string.begin.css
+      set: double-quoted-url-body
+    - match: \'
+      scope:
+        meta.string.css string.quoted.single.css
+        punctuation.definition.string.begin.css
+      set: single-quoted-url-body
+
+  unquoted-urls:
+    # replace CSS context to add interpolation support
+    - match: '{{unquoted_url_begin}}'
+      push: unquoted-url-body
+
+  unquoted-url-body:
+    - meta_prepend: true
+    - include: scss-string-interpolations
+
+###[ SassDoc COMMENTS ]########################################################
+
+  sassdoc-comments:
+    - match: /{3}
+      scope: punctuation.definition.comment.sassdoc.scss
+      push: sassdoc-comments-body
+
+  sassdoc-comments-body:
+    - meta_scope: comment.line.double-slash.scss comment.line.documentation.sassdoc.scss
+    - include: Packages/Markdown/Markdown.sublime-syntax#bold
+    - include: Packages/Markdown/Markdown.sublime-syntax#italic
+    - include: Packages/Markdown/Markdown.sublime-syntax#code-spans
+    # @TODO maybe consider markdown inline links, images
+    - match: \@\w+(?=\s|$)
+      scope: entity.name.tag.documentation.sassdoc.scss
+    - match: \n
+      pop: 1
+
+###[ SCSS COMMENTS ]###########################################################
+
+  scss-line-comments:
+    - match: /{2}
+      scope: punctuation.definition.comment.scss
+      push: scss-line-comments-body
+
+  scss-line-comments-body:
+    - meta_scope: comment.line.double-slash.scss
+    - match: \n
+      pop: 1
+
+###[ SCSS CONTENT AT-RULE ]####################################################
+
+  scss-at-content:
+    # https://sass-lang.com/documentation/at-rules/mixin/#content-blocks
+    - match: (@)content{{break}}
+      scope: meta.placeholder.scss keyword.control.directive.content.scss
+      captures:
+        1: punctuation.definition.keyword.scss
+      push:
+        - scss-at-content-meta
+        - scss-at-content-argument-list
+
+  scss-at-content-meta:
+    - meta_include_prototype: false
+    - meta_scope: meta.at-rule.content.scss
+    - include: immediately-pop
+
+  scss-at-content-argument-list:
+    - meta_include_prototype: false
+    - meta_content_scope: meta.placeholder.scss
+    - match: \(
+      scope: punctuation.section.group.begin.scss
+      set: scss-at-content-argument-list-body
+    - include: else-pop
+
+  scss-at-content-argument-list-body:
+    - meta_scope: meta.placeholder.arguments.scss meta.group.scss
+    - include: scss-group-end
+    - include: scss-arguments
+    - include: values
+
+###[ SCSS CONTROL FLOW AT-RULE ]###############################################
+
+  scss-at-control:
+    # conditional
+    - match: (@)if{{break}}
+      scope: keyword.control.conditional.if.scss
+      captures:
+        1: punctuation.definition.keyword.scss
+      push: scss-at-coditional-body
+    - match: (@)else if{{break}}
+      scope: keyword.control.conditional.elseif.scss
+      captures:
+        1: punctuation.definition.keyword.scss
+      push: scss-at-coditional-body
+    - match: (@)else{{break}}
+      scope: keyword.control.conditional.else.scss
+      captures:
+        1: punctuation.definition.keyword.scss
+      push: scss-at-coditional-body
+    # loops
+    - match: (@)each{{break}}
+      scope: keyword.control.loop.each.scss
+      captures:
+        1: punctuation.definition.keyword.scss
+      push: scss-at-each-body
+    - match: (@)for{{break}}
+      scope: keyword.control.loop.for.scss
+      captures:
+        1: punctuation.definition.keyword.scss
+      push: scss-at-for-body
+    - match: (@)while{{break}}
+      scope: keyword.control.loop.while.scss
+      captures:
+        1: punctuation.definition.keyword.scss
+      push: scss-at-while-body
+
+  scss-at-coditional-body:
+    - meta_scope: meta.at-rule.conditional.scss
+    - include: values
+
+  scss-at-each-body:
+    - meta_scope: meta.at-rule.each.scss
+    - match: in{{break}}
+      scope: keyword.operator.iteration.scss
+      push: scss-at-each-in-body
+    - include: comma-delimiters
+    - include: scss-interpolations
+    - include: scss-variables
+    - include: terminator-pop
+
+  scss-at-each-in-body:
+    - include: scss-expressions
+    - include: terminator-pop
+
+  scss-at-for-body:
+    - meta_scope: meta.at-rule.for.scss
+    - match: (?:from|to|through){{break}}
+      scope: keyword.operator.iteration.scss
+    - include: values
+
+  scss-at-while-body:
+    - meta_scope: meta.at-rule.while.scss
+    - include: scss-expressions
+    - include: terminator-pop
+
+  scss-at-return:
+    - match: (@)return{{break}}
+      scope: keyword.control.flow.return.scss
+      captures:
+        1: punctuation.definition.keyword.scss
+      push: scss-at-return-value
+
+  scss-at-return-value:
+    - meta_scope: meta.at-rule.return.scss
+    - include: values
+
+###[ SCSS DEBUG/ERROR/WARN AT-RULE ]###########################################
+
+  scss-at-messages:
+    - match: (@)debug{{break}}
+      scope: keyword.control.at-rule.debug.scss
+      captures:
+        1: punctuation.definition.keyword.scss
+      push: scss-at-message-body
+    - match: (@)error{{break}}
+      scope: keyword.control.at-rule.error.scss
+      captures:
+        1: punctuation.definition.keyword.scss
+      push: scss-at-message-body
+    - match: (@)warn{{break}}
+      scope: keyword.control.at-rule.warn.scss
+      captures:
+        1: punctuation.definition.keyword.scss
+      push: scss-at-message-body
+
+  scss-at-message-body:
+    - meta_scope: meta.at-rule.message.scss
+    - include: values
+
+###[ SCSS EXTEND AT-RULE ]#####################################################
+
+  scss-at-extend:
+    - match: (@)extend{{break}}
+      scope: keyword.control.directive.extend.scss
+      captures:
+        1: punctuation.definition.keyword.scss
+      push: scss-at-extend-body
+
+  scss-at-extend-body:
+    - meta_scope: meta.at-rule.extend.scss
+    - meta_content_scope: meta.selector.css
+    - include: selector-body
+
+###[ SCSS FORWARD/USE AT-RULE ]################################################
+
+  scss-at-forward:
+    # https://sass-lang.com/documentation/at-rules/forward/
+    - match: (@)forward{{break}}
+      scope: keyword.control.directive.forward.scss
+      captures:
+        1: punctuation.definition.keyword.scss
+      push:
+        - scss-at-forward-meta
+        - scss-module-with
+        - scss-module-visibility
+        - scss-module-as
+        - scss-module-url
+
+  scss-at-forward-meta:
+    - meta_include_prototype: false
+    - meta_scope: meta.at-rule.forward.scss
+    - meta_content_scope: meta.module.scss
+    - include: immediately-pop
+
+  scss-at-use:
+    # https://sass-lang.com/documentation/at-rules/use/
+    - match: (@)use{{break}}
+      scope: keyword.control.directive.use.scss
+      captures:
+        1: punctuation.definition.keyword.scss
+      push:
+        - scss-at-use-meta
+        - scss-module-with
+        - scss-module-as
+        - scss-module-url
+
+  scss-at-use-meta:
+    - meta_include_prototype: false
+    - meta_scope: meta.at-rule.use.scss
+    - meta_content_scope: meta.module.scss
+    - include: immediately-pop
+
+  scss-module-url:
+    - meta_include_prototype: false
+    - include: quoted-url
+    - include: comments
+    - include: else-pop
+
+  scss-module-as:
+    - meta_include_prototype: false
+    - match: as{{break}}
+      scope: keyword.operator.assignment.as.scss
+      set: scss-module-as-value
+    - include: comments
+    - include: else-pop
+
+  scss-module-as-value:
+    - clear_scopes: 1
+    - meta_scope: meta.module.alias.scss
+    - match: '{{ident}}(\*)?'
+      scope: meta.generic-name.scss
+      captures:
+        1: constant.other.wildcard.asterisk.scss
+      pop: 1
+    - match: \*
+      scope: constant.other.wildcard.asterisk.scss
+      pop: 1
+    - include: comments
+    - include: else-pop
+
+  scss-module-visibility:
+    - meta_include_prototype: false
+    - match: hide{{break}}
+      scope: keyword.control.visibility.hide.scss
+      push: scss-module-visibility-value
+    - match: show{{break}}
+      scope: keyword.control.visibility.show.scss
+      push: scss-module-visibility-value
+    - include: comments
+    - include: else-pop
+
+  scss-module-visibility-value:
+    - clear_scopes: 1
+    - meta_scope: meta.module.visibility.scss
+    - match: (?=(?:hide|show|with){{break}})
+      pop: 1
+    - include: scss-expressions
+    - include: else-pop
+
+  scss-module-with:
+    - meta_include_prototype: false
+    - match: with{{break}}
+      scope: keyword.control.with.scss
+      set: scss-module-arguments-list
+    - include: comments
+    - include: else-pop
+
+  scss-module-arguments-list:
+    - meta_include_prototype: false
+    - match: \(
+      scope: punctuation.section.group.begin.scss
+      set: scss-module-arguments-list-body
+    - include: comments
+    - include: else-pop
+
+  scss-module-arguments-list-body:
+    - clear_scopes: 1
+    - meta_scope: meta.module.arguments.scss meta.group.scss
+    - include: scss-group-end
+    - include: scss-arguments
+    - include: values
+
+###[ SCSS FUNCTION AT-RULE ]###################################################
+
+  scss-at-functions:
+    - match: (@)function{{break}}
+      scope: meta.function.scss keyword.control.directive.function.scss
+      captures:
+        1: punctuation.definition.keyword.scss
+      push:
+        - scss-at-function-meta
+        - maybe-property-list
+        - scss-at-function-name
+
+  scss-at-function-meta:
+    - meta_include_prototype: false
+    - meta_scope: meta.at-rule.function.scss
+    - include: immediately-pop
+
+  scss-at-function-name:
+    - meta_content_scope: meta.function.scss
+    - match: '{{ident}}'
+      scope: meta.function.identifier.scss entity.name.function.scss
+      set: scss-at-function-parameter-list
+    - include: comments
+    - include: else-pop
+
+  scss-at-function-parameter-list:
+    - meta_include_prototype: false
+    - meta_content_scope: meta.function.identifier.scss
+    - match: \(
+      scope: punctuation.section.group.begin.scss
+      set: scss-at-function-parameter-list-body
+    - include: comments
+    - include: else-pop
+
+  scss-at-function-parameter-list-body:
+    - meta_scope: meta.function.parameters.scss meta.group.scss
+    - include: scss-group-end
+    - include: comments
+    - include: comma-delimiters
+    - include: scss-variadics
+    - include: scss-parameters
+
+###[ SCSS MIXIN AT-RULE ]######################################################
+
+  scss-at-mixins:
+    - match: (@)mixin{{break}}
+      scope: meta.mixin.scss keyword.control.directive.mixin.scss
+      captures:
+        1: punctuation.definition.keyword.scss
+      push:
+        - scss-at-mixin-meta
+        - maybe-property-list
+        - scss-at-mixin-name
+
+  scss-at-mixin-meta:
+    - meta_include_prototype: false
+    - meta_scope: meta.at-rule.mixin.scss
+    - include: immediately-pop
+
+  scss-at-mixin-name:
+    - meta_content_scope: meta.mixin.scss
+    - match: '{{ident}}'
+      scope: meta.mixin.identifier.scss entity.name.mixin.scss
+      set: scss-at-mixin-parameter-list
+    - include: comments
+    - include: else-pop
+
+  scss-at-mixin-parameter-list:
+    - meta_include_prototype: false
+    - meta_content_scope: meta.mixin.identifier.scss
+    - match: \(
+      scope: punctuation.section.group.begin.scss
+      set: scss-at-mixin-parameter-list-body
+    - include: comments
+    - include: else-pop
+
+  scss-at-mixin-parameter-list-body:
+    - meta_scope: meta.mixin.parameters.scss meta.group.scss
+    - include: scss-group-end
+    - include: comments
+    - include: comma-delimiters
+    - include: scss-variadics
+    - include: scss-parameters
+
+###[ SCSS INCLUDE AT-RULE ]####################################################
+
+  scss-at-include:
+    # https://sass-lang.com/documentation/at-rules/mixin/
+    - match: (@)include{{break}}
+      scope: keyword.control.directive.include.scss
+      captures:
+        1: punctuation.definition.keyword.scss
+      push:
+        - scss-at-include-meta
+        - maybe-property-list
+        - scss-at-include-using
+        - scss-at-include-mixin
+
+  scss-at-include-meta:
+    - meta_include_prototype: false
+    - meta_scope: meta.at-rule.include.scss
+    - include: immediately-pop
+
+  scss-at-include-mixin:
+    - match: ({{ident}})(\.)
+      scope: meta.mixin.scss
+      captures:
+        1: variable.namespace.scss
+        2: punctuation.accessor.dot.scss
+    - match: '{{ident}}'
+      scope: meta.mixin.scss variable.other.mixin.scss
+      set: scss-mixin-argument-list
+    - include: comments
+    - include: else-pop
+
+  scss-mixin-argument-list:
+    - meta_include_prototype: false
+    - meta_content_scope: meta.mixin.scss
+    - match: \(
+      scope: punctuation.section.group.begin.scss
+      set: scss-mixin-argument-list-body
+    - include: else-pop
+
+  scss-mixin-argument-list-body:
+    - meta_scope: meta.mixin.arguments.scss meta.group.scss
+    - include: scss-group-end
+    - include: scss-arguments
+    - include: values
+
+  scss-at-include-using:
+    # https://sass-lang.com/documentation/at-rules/mixin/#passing-arguments-to-content-blocks
+    - match: using{{break}}
+      scope: meta.using.scss keyword.control.using.scss
+      set: scss-at-include-using-parameter-list
+    - include: comments
+    - include: else-pop
+
+  scss-at-include-using-parameter-list:
+    - meta_include_prototype: false
+    - meta_content_scope: meta.using.scss
+    - match: \(
+      scope: punctuation.section.group.begin.scss
+      set: scss-at-include-using-parameter-list-body
+    - include: comments
+    - include: else-pop
+
+  scss-at-include-using-parameter-list-body:
+    - meta_scope: meta.using.parameters.scss meta.group.scss
+    - include: scss-group-end
+    - include: comments
+    - include: comma-delimiters
+    - include: scss-variadics
+    - include: scss-parameters
+
+###[ SCSS ROOT AT-RULE ]#######################################################
+
+  scss-at-root:
+    - match: (@)at-root{{break}}
+      scope: keyword.control.directive.root.scss
+      captures:
+        1: punctuation.definition.keyword.scss
+      push: scss-at-root-body
+
+  scss-at-root-body:
+    - meta_scope: meta.at-rule.root.scss
+    - meta_content_scope: meta.selector.css
+    - match: \(
+      scope: punctuation.section.group.begin.scss
+      push: scss-at-root-group-body
+    - include: selector-body
+
+  scss-at-root-group-body:
+    - meta_scope: meta.group.scss
+    - include: scss-group-end
+    - match: (with|without)\s*(:)
+      captures:
+        1: keyword.control.scss
+        2: punctuation.separator.key-value.css
+    - include: values
+
+###[ SCSS SELECTORS ]##########################################################
+
+  scss-bem-selectors:
+    # &--bem_ish selectors
+    # https://sass-lang.com/documentation/style-rules/parent-selector/#adding-suffixes
+    - match: \&(?=[-_])
+      scope: variable.language.parent.css
+      push: scss-bem-selector-content
+
+  scss-bem-selector-content:
+    - meta_content_scope: entity.other.attribute-name.css
+    - include: identifier-content
+
+  scss-placeholder-selectors:
+    # https://sass-lang.com/documentation/style-rules/placeholder-selectors/
+    - match: \%
+      scope: punctuation.definition.entity.placeholder.scss
+      # has same basic properties as a classname
+      push: selector-class-identifier-content
+
+###[ SCSS EXPRESSIONS ]########################################################
+
+  scss-value-expressions:
+    # for use in CSS contexts
+    - include: scss-declarations
+    - include: scss-constants
+    - include: scss-variables
+    - include: scss-operators
+    - include: scss-variadics
+    - include: scss-groups-or-maps
+    - include: scss-qualified-functions
+
+  scss-expressions:
+    # for use in SCSS contexts where we try to "guess" more types of values
+    - include: comments
+    - include: comma-delimiters
+    - include: builtin-functions
+    - include: color-values
+    - include: unicode-ranges
+    - include: none-constants
+    - include: numeric-constants
+    - include: quoted-strings
+    - include: scss-constants
+    - include: scss-variables
+    - include: scss-operators
+    - include: scss-variadics
+    - include: scss-groups-or-maps
+    - include: scss-qualified-functions
+    - include: scss-identifiers-or-functions
+
+###[ SCSS INTERPOLATION ]######################################################
+
+  scss-interpolations:
+    - match: (#)({)
+      captures:
+        1: punctuation.definition.variable.scss
+        2: punctuation.section.interpolation.begin.scss
+      push: scss-interpolation-body
+
+  scss-interpolation-body:
+    - meta_scope: meta.interpolation.scss
+    - match: \}
+      scope: punctuation.section.interpolation.end.scss
+      pop: 1
+    - include: scss-expressions
+
+  scss-string-interpolations:
+    - match: (#)({)
+      captures:
+        1: punctuation.definition.variable.scss
+        2: punctuation.section.interpolation.begin.scss
+      push: scss-string-interpolation-body
+
+  scss-string-interpolation-body:
+    - clear_scopes: 1
+    - meta_scope: meta.interpolation.scss
+    - match: \}
+      scope: punctuation.section.interpolation.end.scss
+      pop: 1
+    - include: scss-expressions
+
+###[ SCSS GROUPS OR MAPS ]#####################################################
+
+  scss-groups-or-maps:
+    - match: (?=\()
+      branch_point: group-or-map
+      branch:
+        - scss-group
+        - scss-mapping
+
+  scss-group:
+    - meta_include_prototype: false
+    - match: \(
+      scope: punctuation.section.group.begin.scss
+      set:
+        - scss-group-body
+        - scss-maybe-operator
+
+  scss-group-body:
+    - meta_scope: meta.group.scss
+    - include: scss-group-end
+    - match: ':'
+      fail: group-or-map
+    - include: scss-expressions
+
+  scss-group-end:
+    - match: \)
+      scope: punctuation.section.group.end.scss
+      pop: 1
+
+  scss-mapping:
+    - meta_include_prototype: false
+    - match: \(
+      scope: punctuation.section.mapping.begin.scss
+      set: scss-mapping-body
+
+  scss-mapping-body:
+    - meta_include_prototype: false
+    - meta_scope: meta.mapping.scss
+    - match: \)
+      scope: punctuation.section.mapping.end.scss
+      pop: 1
+    - include: comments
+    - include: comma-delimiters
+    - match: ':'
+      scope: meta.mapping.scss punctuation.separator.key-value.css
+      push: scss-mapping-value
+    - match: (?=\S)
+      push: scss-mapping-key
+
+  scss-mapping-key:
+    - clear_scopes: 1
+    - meta_content_scope: meta.mapping.key.scss
+    - include: scss-interpolations
+    - include: scss-variables
+    - include: quoted-strings
+    - include: immediately-pop
+
+  scss-mapping-value:
+    - clear_scopes: 1
+    - meta_content_scope: meta.mapping.value.scss
+    - match: (?=,)
+      pop: 1
+    - include: values
+
+###[ SCSS FUNCTION CALLS ]#####################################################
+
+  scss-qualified-functions:
+    # qualified functions always belong to SCSS
+    - match: ({{ident}})(\.)({{ident}})(?=\()
+      scope: meta.function-call.identifier.css
+      captures:
+        1: variable.namespace.scss
+        2: punctuation.accessor.dot.scss
+        3: support.function.scss
+      push:
+        - other-function-arguments-list-body
+        - function-arguments-list-begin
+
+  scss-unqualified-functions:
+    # unqualified functions may belong to SCSS or CSS
+    - match: (?={{ident}}\()
+      push: other-function
+
+  scss-identifiers-or-functions:
+    - match: '{{ident_begin}}'
+      branch_point: scss-identifier-or-function
+      branch:
+        - scss-identifier
+        - other-function
+
+  scss-identifier:
+    - meta_content_scope: meta.generic-name.scss
+    - match: (?=\()
+      fail: scss-identifier-or-function
+    - include: identifier-content
+
+###[ SCSS CONSTANTS ]##########################################################
+
+  scss-constants:
+    - match: true{{break}}
+      scope: constant.language.boolean.true.scss
+    - match: false{{break}}
+      scope: constant.language.boolean.false.scss
+    - match: null{{break}}
+      scope: constant.language.null.scss
+
+###[ SCSS OPERATORS ]##########################################################
+
+  scss-default-operators:
+    - match: \!\s*(?i:default){{break}}
+      scope: keyword.other.default.scss
+
+  scss-global-operators:
+    - match: \!\s*(?i:global){{break}}
+      scope: keyword.other.global.scss
+
+  scss-maybe-operator:
+    - meta_include_prototype: false
+    # maybe unary operator
+    - match: '[-+]'
+      scope: keyword.operator.arithmetic.scss
+      pop: 1
+    - include: comments
+    - include: else-pop
+
+  scss-operators:
+    - match: '[-+*/%](?=[\s$(])'
+      scope: keyword.operator.arithmetic.scss
+    - match: (?:[=!<>]=|<|>)
+      scope: keyword.operator.comparison.scss
+    - match: (?:and|not|or|when){{break}}
+      scope: keyword.operator.logical.scss
+
+  scss-variadics:
+    - match: \.{3}
+      scope: keyword.operator.variadic.scss
+
+###[ SCSS ARGUMENTS ]##########################################################
+
+  scss-arguments:
+    # mixin argument assignments
+    - match: (((\$){{ident}})\s*)(:)
+      captures:
+        1: meta.argument.identifier.scss
+        2: variable.parameter.scss
+        3: punctuation.definition.variable.scss
+        4: meta.argument.scss punctuation.separator.key-value.css
+      push: scss-argument-value
+
+  scss-argument-value:
+    - meta_content_scope: meta.argument.value.scss
+    - match: ','
+      scope: punctuation.separator.sequence.css
+      pop: 1
+    - include: values
+
+###[ SCSS DECLARATIONS ]#######################################################
+
+  scss-declarations:
+    - match: (((\$){{ident}})\s*)(:)
+      captures:
+        1: meta.declaration.identifier.scss
+        2: variable.other.scss
+        3: punctuation.definition.variable.scss
+        4: meta.declaration.scss punctuation.separator.key-value.css
+      push: scss-declaration-value
+
+  scss-declaration-value:
+    - meta_content_scope: meta.declaration.value.scss
+    - include: values
+
+###[ SCSS PARAMETERS ]#########################################################
+
+  scss-parameters:
+    # mixin parameter declarations
+    - match: (\$){{ident}}
+      scope: meta.parameter.identifier.scss variable.parameter.scss
+      captures:
+        1: punctuation.definition.variable.scss
+    - match: ':'
+      scope: meta.parameter.scss punctuation.separator.key-value.css
+      push: scss-parameter-value
+
+  scss-parameter-value:
+    - meta_content_scope: meta.parameter.value.scss
+    - match: ','
+      scope: punctuation.separator.sequence.css
+      pop: 1
+    - include: values
+
+###[ SCSS VARIABLES ]##########################################################
+
+  scss-variables:
+    - match: (?:({{ident}})(\.))?((\$){{ident}})
+      captures:
+        1: variable.namespace.scss
+        2: punctuation.accessor.dot.scss
+        3: variable.other.scss
+        4: punctuation.definition.variable.scss
