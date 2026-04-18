@@ -19,6 +19,28 @@ use ratatui::{
 
 use crate::render::{Color, RenderedBlock, StyledLine, StyledSpan};
 
+fn detect_opener() -> Option<&'static str> {
+    if std::process::Command::new("open")
+        .arg("--help")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok()
+    {
+        return Some("open");
+    }
+    if std::process::Command::new("xdg-open")
+        .arg("--help")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok()
+    {
+        return Some("xdg-open");
+    }
+    None
+}
+
 // ─── Style conversion ──────────────────────────────────────────────────────
 
 fn span_to_ratatui(span: &StyledSpan) -> Span<'static> {
@@ -71,6 +93,11 @@ enum FlatLine {
         node_count: usize,
         edge_count: usize,
     },
+    ImagePlaceholder {
+        alt: String,
+        url: String,
+        block_index: usize,
+    },
 }
 
 // ─── PagerState ────────────────────────────────────────────────────────────
@@ -81,6 +108,7 @@ struct PagerState {
     scroll: usize,
     expanded: HashSet<usize>,
     terminal_height: u16,
+    opener: Option<&'static str>,
 }
 
 impl PagerState {
@@ -91,6 +119,7 @@ impl PagerState {
             scroll: 0,
             expanded: HashSet::new(),
             terminal_height,
+            opener: detect_opener(),
         };
         state.rebuild_flat_lines();
         state
@@ -126,12 +155,11 @@ impl PagerState {
                     }
                 }
                 RenderedBlock::Image { alt, url } => {
-                    let text = if alt.is_empty() {
-                        format!("[Image]({})", url)
-                    } else {
-                        format!("[Image: {}]({})", alt, url)
-                    };
-                    self.flat_lines.push(FlatLine::DiagramAscii(text));
+                    self.flat_lines.push(FlatLine::ImagePlaceholder {
+                        alt: alt.clone(),
+                        url: url.clone(),
+                        block_index,
+                    });
                 }
             }
         }
@@ -154,6 +182,20 @@ impl PagerState {
         let height = self.terminal_height as usize;
         let start = self.scroll;
         let end = (self.scroll + height).min(self.flat_lines.len());
+
+        // Check for image placeholder first
+        for i in start..end {
+            if let FlatLine::ImagePlaceholder { url, .. } = &self.flat_lines[i] {
+                if let Some(opener) = self.opener.as_ref() {
+                    let _ = std::process::Command::new(opener)
+                        .arg(url)
+                        .stdout(std::process::Stdio::null())
+                        .stderr(std::process::Stdio::null())
+                        .spawn();
+                }
+                return;
+            }
+        }
 
         // Find the first DiagramCollapsed in the viewport
         let mut found_index: Option<usize> = None;
@@ -207,6 +249,19 @@ impl PagerState {
                     "  [Flowchart: {} nodes, {} edges — Tab to expand]",
                     node_count, edge_count
                 );
+                Line::from(Span::styled(
+                    text,
+                    Style::default()
+                        .fg(RColor::Cyan)
+                        .add_modifier(Modifier::DIM),
+                ))
+            }
+            FlatLine::ImagePlaceholder { alt, .. } => {
+                let text = if alt.is_empty() {
+                    "  [Image — Tab to open]".to_string()
+                } else {
+                    format!("  [Image: {} — Tab to open]", alt)
+                };
                 Line::from(Span::styled(
                     text,
                     Style::default()
