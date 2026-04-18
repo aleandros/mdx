@@ -102,6 +102,13 @@ fn pipe_output(blocks: &[render::RenderedBlock], no_color: bool) -> Result<()> {
                 }
                 writeln!(stdout)?;
             }
+            render::RenderedBlock::Image { alt, url } => {
+                if alt.is_empty() {
+                    writeln!(stdout, "[Image]({})", url)?;
+                } else {
+                    writeln!(stdout, "[Image: {}]({})", alt, url)?;
+                }
+            }
         }
     }
     Ok(())

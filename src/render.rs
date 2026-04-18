@@ -62,6 +62,10 @@ pub enum RenderedBlock {
         node_count: usize,
         edge_count: usize,
     },
+    Image {
+        alt: String,
+        url: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -349,21 +353,10 @@ pub fn render_blocks(
             }
 
             Block::Image { alt, url } => {
-                let display = if alt.is_empty() {
-                    format!("[image: {}]", url)
-                } else {
-                    format!("[image: {}]({})", alt, url)
-                };
-                let line = StyledLine {
-                    spans: vec![StyledSpan {
-                        text: display,
-                        style: SpanStyle {
-                            dim: true,
-                            ..Default::default()
-                        },
-                    }],
-                };
-                out.push(RenderedBlock::Lines(vec![line]));
+                out.push(RenderedBlock::Image {
+                    alt: alt.clone(),
+                    url: url.clone(),
+                });
             }
         }
     }
@@ -709,5 +702,22 @@ mod tests {
         let rendered = render_blocks(&blocks, 80, &highlighter, test_theme(), MermaidMode::Render);
         assert_eq!(rendered.len(), 1);
         assert!(matches!(rendered[0], RenderedBlock::Diagram { .. }));
+    }
+
+    #[test]
+    fn test_render_image_block() {
+        let highlighter = crate::highlight::Highlighter::new(None).unwrap();
+        let blocks = vec![Block::Image {
+            alt: "A photo".to_string(),
+            url: "photo.png".to_string(),
+        }];
+        let rendered = render_blocks(&blocks, 80, &highlighter, test_theme(), MermaidMode::Render);
+        assert_eq!(rendered.len(), 1);
+        if let RenderedBlock::Image { alt, url } = &rendered[0] {
+            assert_eq!(alt, "A photo");
+            assert_eq!(url, "photo.png");
+        } else {
+            panic!("Expected Image variant, got {:?}", rendered[0]);
+        }
     }
 }

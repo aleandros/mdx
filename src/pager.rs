@@ -125,6 +125,14 @@ impl PagerState {
                         }
                     }
                 }
+                RenderedBlock::Image { alt, url } => {
+                    let text = if alt.is_empty() {
+                        format!("[Image]({})", url)
+                    } else {
+                        format!("[Image: {}]({})", alt, url)
+                    };
+                    self.flat_lines.push(FlatLine::DiagramAscii(text));
+                }
             }
         }
     }
