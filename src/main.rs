@@ -169,7 +169,7 @@ fn main() -> Result<()> {
             );
             original_hook(info);
         }));
-        pager::run_pager(rendered)?;
+        pager::run_pager(rendered, ui_theme)?;
     } else {
         pipe_output(&rendered, no_color)?;
     }

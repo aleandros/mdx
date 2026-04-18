@@ -110,10 +110,15 @@ struct PagerState {
     expanded: HashSet<usize>,
     terminal_height: u16,
     opener: Option<&'static str>,
+    theme: &'static crate::theme::Theme,
 }
 
 impl PagerState {
-    fn new(content: Vec<RenderedBlock>, terminal_height: u16) -> Self {
+    fn new(
+        content: Vec<RenderedBlock>,
+        terminal_height: u16,
+        theme: &'static crate::theme::Theme,
+    ) -> Self {
         let mut state = PagerState {
             content,
             flat_lines: Vec::new(),
@@ -121,6 +126,7 @@ impl PagerState {
             expanded: HashSet::new(),
             terminal_height,
             opener: detect_opener(),
+            theme,
         };
         state.rebuild_flat_lines();
         state
@@ -237,7 +243,7 @@ impl PagerState {
         }
     }
 
-    fn flat_line_to_ratatui(flat: &FlatLine) -> Line<'static> {
+    fn flat_line_to_ratatui(&self, flat: &FlatLine) -> Line<'static> {
         match flat {
             FlatLine::Styled(line) => styled_line_to_ratatui(line),
             FlatLine::DiagramAscii(text) => Line::raw(text.clone()),
@@ -253,7 +259,7 @@ impl PagerState {
                 Line::from(Span::styled(
                     text,
                     Style::default()
-                        .fg(RColor::Cyan)
+                        .fg(color_to_ratatui(&self.theme.diagram_collapsed))
                         .add_modifier(Modifier::DIM),
                 ))
             }
@@ -266,7 +272,7 @@ impl PagerState {
                 Line::from(Span::styled(
                     text,
                     Style::default()
-                        .fg(RColor::Cyan)
+                        .fg(color_to_ratatui(&self.theme.diagram_collapsed))
                         .add_modifier(Modifier::DIM),
                 ))
             }
@@ -276,7 +282,7 @@ impl PagerState {
 
 // ─── Public entry point ────────────────────────────────────────────────────
 
-pub fn run_pager(content: Vec<RenderedBlock>) -> Result<()> {
+pub fn run_pager(content: Vec<RenderedBlock>, theme: &'static crate::theme::Theme) -> Result<()> {
     enable_raw_mode()?;
     let mut stdout = stdout();
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
@@ -285,7 +291,7 @@ pub fn run_pager(content: Vec<RenderedBlock>) -> Result<()> {
     let mut terminal = Terminal::new(backend)?;
 
     let term_height = terminal.size()?.height;
-    let mut state = PagerState::new(content, term_height);
+    let mut state = PagerState::new(content, term_height, theme);
 
     loop {
         terminal.draw(|f| {
@@ -296,7 +302,7 @@ pub fn run_pager(content: Vec<RenderedBlock>) -> Result<()> {
                 .iter()
                 .skip(state.scroll)
                 .take(height)
-                .map(PagerState::flat_line_to_ratatui)
+                .map(|fl| state.flat_line_to_ratatui(fl))
                 .collect();
             let paragraph = Paragraph::new(lines);
             f.render_widget(paragraph, area);
