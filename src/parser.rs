@@ -161,15 +161,14 @@ pub fn parse_markdown(input: &str) -> Vec<Block> {
                 list_item_buf.clear();
                 style_stack.clear();
             }
-            Event::End(TagEnd::Item) => {
-                if in_list_item {
-                    let item = std::mem::take(&mut list_item_buf);
-                    in_list_item = false;
-                    if let Some(Container::List { items, .. }) = container_stack.last_mut() {
-                        items.push(item);
-                    }
+            Event::End(TagEnd::Item) if in_list_item => {
+                let item = std::mem::take(&mut list_item_buf);
+                in_list_item = false;
+                if let Some(Container::List { items, .. }) = container_stack.last_mut() {
+                    items.push(item);
                 }
             }
+            Event::End(TagEnd::Item) => {}
 
             Event::Start(Tag::Strong) => {
                 style_stack.push(Style::Bold);
