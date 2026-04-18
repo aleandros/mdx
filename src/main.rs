@@ -111,8 +111,9 @@ fn main() -> Result<()> {
     let no_color = std::env::var("NO_COLOR").is_ok();
     let highlighter =
         highlight::Highlighter::new(args.theme.clone()).map_err(|e| anyhow::anyhow!(e))?;
+    let ui_theme = theme::Theme::default_theme();
     let blocks = parser::parse_markdown(&input);
-    let rendered = render::render_blocks(&blocks, width, &highlighter);
+    let rendered = render::render_blocks(&blocks, width, &highlighter, ui_theme);
     if use_pager(&args) {
         let original_hook = std::panic::take_hook();
         std::panic::set_hook(Box::new(move |info| {

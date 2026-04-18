@@ -83,23 +83,19 @@ fn color_ansi_code(color: &Color) -> &'static str {
     }
 }
 
-fn header_color(level: u8) -> Color {
-    match level {
-        1 => Color::BrightYellow,
-        2 => Color::BrightCyan,
-        3 => Color::BrightMagenta,
-        4 => Color::Green,
-        5 => Color::Blue,
-        _ => Color::White,
-    }
-}
-
-fn render_inline(elem: &InlineElement) -> StyledSpan {
+fn render_inline(elem: &InlineElement, theme: &crate::theme::Theme) -> StyledSpan {
     match elem {
-        InlineElement::Text(t) => StyledSpan::plain(t.clone()),
+        InlineElement::Text(t) => StyledSpan {
+            text: t.clone(),
+            style: SpanStyle {
+                fg: Some(theme.body.clone()),
+                ..Default::default()
+            },
+        },
         InlineElement::Bold(t) => StyledSpan {
             text: t.clone(),
             style: SpanStyle {
+                fg: Some(theme.bold.clone()),
                 bold: true,
                 ..Default::default()
             },
@@ -107,6 +103,7 @@ fn render_inline(elem: &InlineElement) -> StyledSpan {
         InlineElement::Italic(t) => StyledSpan {
             text: t.clone(),
             style: SpanStyle {
+                fg: Some(theme.italic.clone()),
                 italic: true,
                 ..Default::default()
             },
@@ -114,7 +111,7 @@ fn render_inline(elem: &InlineElement) -> StyledSpan {
         InlineElement::Code(t) => StyledSpan {
             text: t.clone(),
             style: SpanStyle {
-                fg: Some(Color::Cyan),
+                fg: Some(theme.inline_code.clone()),
                 dim: true,
                 ..Default::default()
             },
@@ -122,7 +119,7 @@ fn render_inline(elem: &InlineElement) -> StyledSpan {
         InlineElement::Link { text, url } => StyledSpan {
             text: format!("{} ({})", text, url),
             style: SpanStyle {
-                fg: Some(Color::Blue),
+                fg: Some(theme.link.clone()),
                 ..Default::default()
             },
         },
@@ -130,9 +127,9 @@ fn render_inline(elem: &InlineElement) -> StyledSpan {
     }
 }
 
-fn render_inline_elements(content: &[InlineElement]) -> StyledLine {
+fn render_inline_elements(content: &[InlineElement], theme: &crate::theme::Theme) -> StyledLine {
     StyledLine {
-        spans: content.iter().map(render_inline).collect(),
+        spans: content.iter().map(|e| render_inline(e, theme)).collect(),
     }
 }
 
@@ -189,13 +186,14 @@ pub fn render_blocks(
     blocks: &[Block],
     width: u16,
     highlighter: &crate::highlight::Highlighter,
+    theme: &crate::theme::Theme,
 ) -> Vec<RenderedBlock> {
     let mut out = Vec::new();
 
     for block in blocks {
         match block {
             Block::Header { level, content } => {
-                let color = header_color(*level);
+                let color = theme.heading[(*level as usize - 1).min(5)].clone();
                 let prefix = "#".repeat(*level as usize);
                 // Build the header text from inline elements (plain text)
                 let text: String = content
@@ -224,7 +222,7 @@ pub fn render_blocks(
             }
 
             Block::Paragraph { content } => {
-                let line = render_inline_elements(content);
+                let line = render_inline_elements(content, theme);
                 out.push(RenderedBlock::Lines(vec![line, StyledLine::empty()]));
             }
 
@@ -273,7 +271,7 @@ pub fn render_blocks(
                         "  * ".to_string()
                     };
                     let mut spans = vec![StyledSpan::plain(prefix)];
-                    spans.extend(item.iter().map(render_inline));
+                    spans.extend(item.iter().map(|e| render_inline(e, theme)));
                     lines.push(StyledLine { spans });
                 }
                 lines.push(StyledLine::empty());
@@ -287,6 +285,7 @@ pub fn render_blocks(
                     spans: vec![StyledSpan {
                         text: rule_text,
                         style: SpanStyle {
+                            fg: Some(theme.horizontal_rule.clone()),
                             dim: true,
                             ..Default::default()
                         },
@@ -345,6 +344,10 @@ mod tests {
     use super::*;
     use crate::parser::Block;
 
+    fn test_theme() -> &'static crate::theme::Theme {
+        crate::theme::Theme::default_theme()
+    }
+
     #[test]
     fn test_render_header() {
         let highlighter = crate::highlight::Highlighter::new(None).unwrap();
@@ -352,7 +355,7 @@ mod tests {
             level: 1,
             content: vec![InlineElement::Text("Title".to_string())],
         }];
-        let rendered = render_blocks(&blocks, 80, &highlighter);
+        let rendered = render_blocks(&blocks, 80, &highlighter, test_theme());
         assert_eq!(rendered.len(), 1);
         if let RenderedBlock::Lines(lines) = &rendered[0] {
             let first_line = &lines[0];
@@ -374,7 +377,7 @@ mod tests {
                 InlineElement::Bold("world".to_string()),
             ],
         }];
-        let rendered = render_blocks(&blocks, 80, &highlighter);
+        let rendered = render_blocks(&blocks, 80, &highlighter, test_theme());
         assert_eq!(rendered.len(), 1);
         if let RenderedBlock::Lines(lines) = &rendered[0] {
             let first_line = &lines[0];
@@ -393,7 +396,7 @@ mod tests {
             language: Some("rust".to_string()),
             content: "fn main() {}".to_string(),
         }];
-        let rendered = render_blocks(&blocks, 80, &highlighter);
+        let rendered = render_blocks(&blocks, 80, &highlighter, test_theme());
         assert_eq!(rendered.len(), 1);
         if let RenderedBlock::Lines(lines) = &rendered[0] {
             let code_line = lines.iter().find(|l| {
@@ -411,7 +414,7 @@ mod tests {
     fn test_render_horizontal_rule() {
         let highlighter = crate::highlight::Highlighter::new(None).unwrap();
         let blocks = vec![Block::HorizontalRule];
-        let rendered = render_blocks(&blocks, 40, &highlighter);
+        let rendered = render_blocks(&blocks, 40, &highlighter, test_theme());
         assert_eq!(rendered.len(), 1);
         if let RenderedBlock::Lines(lines) = &rendered[0] {
             let rule_line = &lines[0];
@@ -435,7 +438,7 @@ mod tests {
                 vec![InlineElement::Text("Beta".to_string())],
             ],
         }];
-        let rendered = render_blocks(&blocks, 80, &highlighter);
+        let rendered = render_blocks(&blocks, 80, &highlighter, test_theme());
         assert_eq!(rendered.len(), 1);
         if let RenderedBlock::Lines(lines) = &rendered[0] {
             // First two lines are the items, last is blank
@@ -462,7 +465,7 @@ mod tests {
         let blocks = vec![Block::MermaidBlock {
             content: "graph TD\n    A --> B\n".to_string(),
         }];
-        let rendered = render_blocks(&blocks, 80, &highlighter);
+        let rendered = render_blocks(&blocks, 80, &highlighter, test_theme());
         assert_eq!(rendered.len(), 1);
         if let RenderedBlock::Diagram {
             node_count,
@@ -483,7 +486,7 @@ mod tests {
         let blocks = vec![Block::MermaidBlock {
             content: "THIS IS NOT VALID MERMAID @@@@".to_string(),
         }];
-        let rendered = render_blocks(&blocks, 80, &highlighter);
+        let rendered = render_blocks(&blocks, 80, &highlighter, test_theme());
         assert_eq!(rendered.len(), 1);
         assert!(
             matches!(rendered[0], RenderedBlock::Lines(_)),
@@ -508,7 +511,7 @@ mod tests {
             language: Some("rust".to_string()),
             content: "fn main() {}\n".to_string(),
         }];
-        let rendered = render_blocks(&blocks, 80, &highlighter);
+        let rendered = render_blocks(&blocks, 80, &highlighter, test_theme());
         assert_eq!(rendered.len(), 1);
         if let RenderedBlock::Lines(lines) = &rendered[0] {
             // Should have language label + code line(s) + blank line
