@@ -169,10 +169,7 @@ fn test_toml_syntax_highlighting() {
         "TOML code block should have RGB color escapes: {}",
         stdout
     );
-    assert!(
-        stdout.contains("package"),
-        "Should contain TOML content"
-    );
+    assert!(stdout.contains("package"), "Should contain TOML content");
 }
 
 #[test]

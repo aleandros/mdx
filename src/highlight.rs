@@ -188,8 +188,18 @@ mod tests {
         let h = Highlighter::new(None).unwrap();
         // Tokens for all bundled syntaxes that we vendored.
         let tokens = [
-            "toml", "ts", "tsx", "dockerfile", "kt", "swift",
-            "zig", "tf", "hcl", "scss", "vue", "svelte",
+            "toml",
+            "ts",
+            "tsx",
+            "dockerfile",
+            "kt",
+            "swift",
+            "zig",
+            "tf",
+            "hcl",
+            "scss",
+            "vue",
+            "svelte",
         ];
         for token in &tokens {
             let result = h.highlight_code("x", Some(token));
