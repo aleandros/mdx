@@ -42,6 +42,14 @@ struct Args {
     /// Use --ui-theme=list to see available themes
     #[arg(long)]
     ui_theme: Option<String>,
+
+    /// Show raw mermaid source without rendering
+    #[arg(long)]
+    no_mermaid_rendering: bool,
+
+    /// Show mermaid source followed by rendered diagram
+    #[arg(long)]
+    split_mermaid_rendering: bool,
 }
 
 fn read_input(args: &Args) -> Result<String> {
@@ -135,7 +143,14 @@ fn main() -> Result<()> {
         None => theme::Theme::default_theme(),
     };
     let blocks = parser::parse_markdown(&input);
-    let rendered = render::render_blocks(&blocks, width, &highlighter, ui_theme, render::MermaidMode::Render);
+    let mermaid_mode = if args.no_mermaid_rendering {
+        render::MermaidMode::Raw
+    } else if args.split_mermaid_rendering {
+        render::MermaidMode::Split
+    } else {
+        render::MermaidMode::Render
+    };
+    let rendered = render::render_blocks(&blocks, width, &highlighter, ui_theme, mermaid_mode);
     if use_pager(&args) {
         let original_hook = std::panic::take_hook();
         std::panic::set_hook(Box::new(move |info| {
@@ -187,6 +202,8 @@ mod tests {
             width: None,
             theme: None,
             ui_theme: None,
+            no_mermaid_rendering: false,
+            split_mermaid_rendering: false,
         };
         let input = read_input(&args).unwrap();
         assert_eq!(input, "# Hello");
@@ -201,6 +218,8 @@ mod tests {
             width: None,
             theme: None,
             ui_theme: None,
+            no_mermaid_rendering: false,
+            split_mermaid_rendering: false,
         };
         // Simulate TTY context: stdin is a terminal, no file provided → must error
         assert!(read_input_with_tty_check(&args, true).is_err());
@@ -216,5 +235,19 @@ mod tests {
     fn test_args_ui_theme_default_is_none() {
         let args = Args::parse_from(["mdx", "test.md"]);
         assert_eq!(args.ui_theme, None);
+    }
+
+    #[test]
+    fn test_args_no_mermaid_rendering() {
+        let args = Args::parse_from(["mdx", "--no-mermaid-rendering", "test.md"]);
+        assert!(args.no_mermaid_rendering);
+        assert!(!args.split_mermaid_rendering);
+    }
+
+    #[test]
+    fn test_args_split_mermaid_rendering() {
+        let args = Args::parse_from(["mdx", "--split-mermaid-rendering", "test.md"]);
+        assert!(args.split_mermaid_rendering);
+        assert!(!args.no_mermaid_rendering);
     }
 }
