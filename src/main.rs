@@ -37,6 +37,11 @@ struct Args {
     /// Use --theme=list to see all available themes
     #[arg(long)]
     theme: Option<String>,
+
+    /// UI color theme for headers, text, and chrome [default: clay]
+    /// Use --ui-theme=list to see available themes
+    #[arg(long)]
+    ui_theme: Option<String>,
 }
 
 fn read_input(args: &Args) -> Result<String> {
@@ -106,12 +111,29 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
+    // Handle --ui-theme=list before reading input
+    if args.ui_theme.as_deref() == Some("list") {
+        for name in theme::Theme::available_names() {
+            println!("{}", name);
+        }
+        return Ok(());
+    }
+
     let input = read_input(&args)?;
     let width = get_width(&args);
     let no_color = std::env::var("NO_COLOR").is_ok();
     let highlighter =
         highlight::Highlighter::new(args.theme.clone()).map_err(|e| anyhow::anyhow!(e))?;
-    let ui_theme = theme::Theme::default_theme();
+    let ui_theme = match args.ui_theme.as_deref() {
+        Some(name) => theme::Theme::by_name(name).ok_or_else(|| {
+            anyhow::anyhow!(
+                "Unknown UI theme '{}'. Available: {}",
+                name,
+                theme::Theme::available_names().join(", ")
+            )
+        })?,
+        None => theme::Theme::default_theme(),
+    };
     let blocks = parser::parse_markdown(&input);
     let rendered = render::render_blocks(&blocks, width, &highlighter, ui_theme);
     if use_pager(&args) {
@@ -164,6 +186,7 @@ mod tests {
             no_pager: false,
             width: None,
             theme: None,
+            ui_theme: None,
         };
         let input = read_input(&args).unwrap();
         assert_eq!(input, "# Hello");
@@ -177,8 +200,21 @@ mod tests {
             no_pager: false,
             width: None,
             theme: None,
+            ui_theme: None,
         };
         // Simulate TTY context: stdin is a terminal, no file provided → must error
         assert!(read_input_with_tty_check(&args, true).is_err());
+    }
+
+    #[test]
+    fn test_args_parse_ui_theme() {
+        let args = Args::parse_from(["mdx", "--ui-theme", "hearth", "test.md"]);
+        assert_eq!(args.ui_theme, Some("hearth".to_string()));
+    }
+
+    #[test]
+    fn test_args_ui_theme_default_is_none() {
+        let args = Args::parse_from(["mdx", "test.md"]);
+        assert_eq!(args.ui_theme, None);
     }
 }
