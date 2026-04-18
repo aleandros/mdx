@@ -32,6 +32,10 @@ pub enum Block {
         items: Vec<Vec<InlineElement>>,
     },
     HorizontalRule,
+    Image {
+        alt: String,
+        url: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -64,6 +68,10 @@ pub fn parse_markdown(input: &str) -> Vec<Block> {
     let mut in_code_block: Option<(Option<String>, bool)> = None; // (language, is_mermaid)
     let mut code_buf = String::new();
 
+    // Image tracking state
+    let mut in_image: Option<String> = None; // stores the URL while collecting alt text
+    let mut image_alt_buf = String::new();
+
     // For list item accumulation
     let mut list_item_buf: Vec<InlineElement> = Vec::new();
     let mut in_list_item = false;
@@ -92,9 +100,10 @@ pub fn parse_markdown(input: &str) -> Vec<Block> {
             }
             Event::End(TagEnd::Paragraph) => {
                 if let Some(Container::Paragraph) = container_stack.pop() {
-                    blocks.push(Block::Paragraph {
-                        content: std::mem::take(&mut inline_buf),
-                    });
+                    let content = std::mem::take(&mut inline_buf);
+                    if !content.is_empty() {
+                        blocks.push(Block::Paragraph { content });
+                    }
                 }
             }
 
@@ -224,20 +233,21 @@ pub fn parse_markdown(input: &str) -> Vec<Block> {
 
             Event::Text(text) => {
                 let text_str = text.to_string();
-                let target_buf = if in_list_item {
-                    &mut list_item_buf
-                } else {
-                    &mut inline_buf
-                };
 
-                if in_code_block.is_some() {
+                if in_image.is_some() {
+                    image_alt_buf.push_str(&text_str);
+                } else if in_code_block.is_some() {
                     code_buf.push_str(&text_str);
                 } else {
-                    // Determine the style to apply based on style_stack (innermost wins)
+                    let target_buf = if in_list_item {
+                        &mut list_item_buf
+                    } else {
+                        &mut inline_buf
+                    };
                     let elem = match style_stack.last() {
                         Some(Style::Bold) => InlineElement::Bold(text_str),
                         Some(Style::Italic) => InlineElement::Italic(text_str),
-                        Some(Style::Link(_)) => InlineElement::Text(text_str), // will be converted at End(Link)
+                        Some(Style::Link(_)) => InlineElement::Text(text_str),
                         None => InlineElement::Text(text_str),
                     };
                     target_buf.push(elem);
@@ -266,6 +276,19 @@ pub fn parse_markdown(input: &str) -> Vec<Block> {
 
             Event::Rule => {
                 blocks.push(Block::HorizontalRule);
+            }
+
+            Event::Start(Tag::Image { dest_url, .. }) => {
+                in_image = Some(dest_url.to_string());
+                image_alt_buf.clear();
+            }
+            Event::End(TagEnd::Image) => {
+                if let Some(url) = in_image.take() {
+                    blocks.push(Block::Image {
+                        alt: std::mem::take(&mut image_alt_buf),
+                        url,
+                    });
+                }
             }
 
             _ => {}
@@ -400,5 +423,42 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn test_parse_image() {
+        let blocks = parse_markdown("![Alt text](image.png)");
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(
+            blocks[0],
+            Block::Image {
+                alt: "Alt text".to_string(),
+                url: "image.png".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn test_parse_image_with_url() {
+        let blocks = parse_markdown("![Logo](https://example.com/logo.png)");
+        assert_eq!(blocks.len(), 1);
+        if let Block::Image { alt, url } = &blocks[0] {
+            assert_eq!(alt, "Logo");
+            assert_eq!(url, "https://example.com/logo.png");
+        } else {
+            panic!("Expected Image block");
+        }
+    }
+
+    #[test]
+    fn test_parse_image_empty_alt() {
+        let blocks = parse_markdown("![](photo.jpg)");
+        assert_eq!(blocks.len(), 1);
+        if let Block::Image { alt, url } = &blocks[0] {
+            assert_eq!(alt, "");
+            assert_eq!(url, "photo.jpg");
+        } else {
+            panic!("Expected Image block");
+        }
     }
 }

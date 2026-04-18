@@ -347,6 +347,24 @@ pub fn render_blocks(
                 };
                 out.push(RenderedBlock::Lines(vec![rule_line]));
             }
+
+            Block::Image { alt, url } => {
+                let display = if alt.is_empty() {
+                    format!("[image: {}]", url)
+                } else {
+                    format!("[image: {}]({})", alt, url)
+                };
+                let line = StyledLine {
+                    spans: vec![StyledSpan {
+                        text: display,
+                        style: SpanStyle {
+                            dim: true,
+                            ..Default::default()
+                        },
+                    }],
+                };
+                out.push(RenderedBlock::Lines(vec![line]));
+            }
         }
     }
 
