@@ -93,6 +93,7 @@ enum FlatLine {
         node_count: usize,
         edge_count: usize,
     },
+    #[allow(dead_code)]
     ImagePlaceholder {
         alt: String,
         url: String,

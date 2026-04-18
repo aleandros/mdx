@@ -1,5 +1,6 @@
 use crate::render::Color;
 
+#[allow(dead_code)]
 pub struct Theme {
     pub name: &'static str,
     pub heading: [Color; 6],
