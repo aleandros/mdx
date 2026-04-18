@@ -1,0 +1,14 @@
+---
+source: tests/snapshots.rs
+expression: output
+---
+[1;38;2;210;140;40m# Test: Basic Sequence[0m
+
+┌───────┐               ┌─────┐
+│ Alice │               │ Bob │
+└───────┘               └─────┘
+    │                      │
+    ╎      Hello Bob       ╎
+    │────────────────────>>│
+    ╎      Hi Alice        ╎
+    <<─────────────────────│
