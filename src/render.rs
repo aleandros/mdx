@@ -64,6 +64,13 @@ pub enum RenderedBlock {
     },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MermaidMode {
+    Render,
+    Raw,
+    Split,
+}
+
 // ─── Rendering helpers ─────────────────────────────────────────────────────
 
 fn color_ansi_code(color: &Color) -> &'static str {
@@ -187,6 +194,7 @@ pub fn render_blocks(
     width: u16,
     highlighter: &crate::highlight::Highlighter,
     theme: &crate::theme::Theme,
+    mermaid_mode: MermaidMode,
 ) -> Vec<RenderedBlock> {
     let mut out = Vec::new();
 
@@ -234,30 +242,76 @@ pub fn render_blocks(
             }
 
             Block::MermaidBlock { content } => {
-                match mermaid::render_mermaid(content) {
-                    Ok((lines, node_count, edge_count)) => {
-                        out.push(RenderedBlock::Diagram {
-                            lines,
-                            node_count,
-                            edge_count,
-                        });
+                let render_as_code = || {
+                    RenderedBlock::Lines({
+                        let mut lines = render_code_block_lines(
+                            &Some("mermaid".to_string()),
+                            content,
+                            highlighter,
+                        );
+                        lines.push(StyledLine::empty());
+                        lines
+                    })
+                };
+
+                match mermaid_mode {
+                    MermaidMode::Raw => {
+                        out.push(render_as_code());
                     }
-                    Err(_) => {
-                        // Fall back to code block with error warning
-                        let warning_line = StyledLine {
-                            spans: vec![StyledSpan {
-                                text: "[mermaid: parse error]".to_string(),
-                                style: SpanStyle {
-                                    fg: Some(Color::Red),
-                                    ..Default::default()
-                                },
-                            }],
-                        };
-                        let code_lines = render_code_block_lines(&None, content, highlighter);
-                        let mut all_lines = vec![warning_line];
-                        all_lines.extend(code_lines);
-                        all_lines.push(StyledLine::empty());
-                        out.push(RenderedBlock::Lines(all_lines));
+                    MermaidMode::Render => {
+                        match mermaid::render_mermaid(content) {
+                            Ok((lines, node_count, edge_count)) => {
+                                out.push(RenderedBlock::Diagram {
+                                    lines,
+                                    node_count,
+                                    edge_count,
+                                });
+                            }
+                            Err(_) => {
+                                let warning_line = StyledLine {
+                                    spans: vec![StyledSpan {
+                                        text: "[mermaid: parse error]".to_string(),
+                                        style: SpanStyle {
+                                            fg: Some(Color::Red),
+                                            ..Default::default()
+                                        },
+                                    }],
+                                };
+                                let code_lines =
+                                    render_code_block_lines(&None, content, highlighter);
+                                let mut all_lines = vec![warning_line];
+                                all_lines.extend(code_lines);
+                                all_lines.push(StyledLine::empty());
+                                out.push(RenderedBlock::Lines(all_lines));
+                            }
+                        }
+                    }
+                    MermaidMode::Split => {
+                        out.push(render_as_code());
+                        match mermaid::render_mermaid(content) {
+                            Ok((lines, node_count, edge_count)) => {
+                                out.push(RenderedBlock::Diagram {
+                                    lines,
+                                    node_count,
+                                    edge_count,
+                                });
+                            }
+                            Err(_) => {
+                                let warning_line = StyledLine {
+                                    spans: vec![StyledSpan {
+                                        text: "[mermaid: parse error]".to_string(),
+                                        style: SpanStyle {
+                                            fg: Some(Color::Red),
+                                            ..Default::default()
+                                        },
+                                    }],
+                                };
+                                out.push(RenderedBlock::Lines(vec![
+                                    warning_line,
+                                    StyledLine::empty(),
+                                ]));
+                            }
+                        }
                     }
                 }
             }
@@ -355,7 +409,7 @@ mod tests {
             level: 1,
             content: vec![InlineElement::Text("Title".to_string())],
         }];
-        let rendered = render_blocks(&blocks, 80, &highlighter, test_theme());
+        let rendered = render_blocks(&blocks, 80, &highlighter, test_theme(), MermaidMode::Render);
         assert_eq!(rendered.len(), 1);
         if let RenderedBlock::Lines(lines) = &rendered[0] {
             let first_line = &lines[0];
@@ -377,7 +431,7 @@ mod tests {
                 InlineElement::Bold("world".to_string()),
             ],
         }];
-        let rendered = render_blocks(&blocks, 80, &highlighter, test_theme());
+        let rendered = render_blocks(&blocks, 80, &highlighter, test_theme(), MermaidMode::Render);
         assert_eq!(rendered.len(), 1);
         if let RenderedBlock::Lines(lines) = &rendered[0] {
             let first_line = &lines[0];
@@ -396,7 +450,7 @@ mod tests {
             language: Some("rust".to_string()),
             content: "fn main() {}".to_string(),
         }];
-        let rendered = render_blocks(&blocks, 80, &highlighter, test_theme());
+        let rendered = render_blocks(&blocks, 80, &highlighter, test_theme(), MermaidMode::Render);
         assert_eq!(rendered.len(), 1);
         if let RenderedBlock::Lines(lines) = &rendered[0] {
             let code_line = lines.iter().find(|l| {
@@ -414,7 +468,7 @@ mod tests {
     fn test_render_horizontal_rule() {
         let highlighter = crate::highlight::Highlighter::new(None).unwrap();
         let blocks = vec![Block::HorizontalRule];
-        let rendered = render_blocks(&blocks, 40, &highlighter, test_theme());
+        let rendered = render_blocks(&blocks, 40, &highlighter, test_theme(), MermaidMode::Render);
         assert_eq!(rendered.len(), 1);
         if let RenderedBlock::Lines(lines) = &rendered[0] {
             let rule_line = &lines[0];
@@ -438,7 +492,7 @@ mod tests {
                 vec![InlineElement::Text("Beta".to_string())],
             ],
         }];
-        let rendered = render_blocks(&blocks, 80, &highlighter, test_theme());
+        let rendered = render_blocks(&blocks, 80, &highlighter, test_theme(), MermaidMode::Render);
         assert_eq!(rendered.len(), 1);
         if let RenderedBlock::Lines(lines) = &rendered[0] {
             // First two lines are the items, last is blank
@@ -465,7 +519,7 @@ mod tests {
         let blocks = vec![Block::MermaidBlock {
             content: "graph TD\n    A --> B\n".to_string(),
         }];
-        let rendered = render_blocks(&blocks, 80, &highlighter, test_theme());
+        let rendered = render_blocks(&blocks, 80, &highlighter, test_theme(), MermaidMode::Render);
         assert_eq!(rendered.len(), 1);
         if let RenderedBlock::Diagram {
             node_count,
@@ -486,7 +540,7 @@ mod tests {
         let blocks = vec![Block::MermaidBlock {
             content: "THIS IS NOT VALID MERMAID @@@@".to_string(),
         }];
-        let rendered = render_blocks(&blocks, 80, &highlighter, test_theme());
+        let rendered = render_blocks(&blocks, 80, &highlighter, test_theme(), MermaidMode::Render);
         assert_eq!(rendered.len(), 1);
         assert!(
             matches!(rendered[0], RenderedBlock::Lines(_)),
@@ -511,7 +565,7 @@ mod tests {
             language: Some("rust".to_string()),
             content: "fn main() {}\n".to_string(),
         }];
-        let rendered = render_blocks(&blocks, 80, &highlighter, test_theme());
+        let rendered = render_blocks(&blocks, 80, &highlighter, test_theme(), MermaidMode::Render);
         assert_eq!(rendered.len(), 1);
         if let RenderedBlock::Lines(lines) = &rendered[0] {
             // Should have language label + code line(s) + blank line
@@ -594,5 +648,48 @@ mod tests {
         let output = styled_line_to_ansi(&line, false);
         assert!(output.contains('\x1b'), "Should contain escape codes");
         assert!(output.contains("Bold"), "Should contain the text");
+    }
+
+    #[test]
+    fn test_mermaid_raw_mode_produces_code_block() {
+        let highlighter = crate::highlight::Highlighter::new(None).unwrap();
+        let blocks = vec![Block::MermaidBlock {
+            content: "graph TD\n    A --> B\n".to_string(),
+        }];
+        let rendered = render_blocks(&blocks, 80, &highlighter, test_theme(), MermaidMode::Raw);
+        assert_eq!(rendered.len(), 1);
+        assert!(
+            matches!(rendered[0], RenderedBlock::Lines(_)),
+            "Raw mode should produce Lines, not Diagram"
+        );
+    }
+
+    #[test]
+    fn test_mermaid_split_mode_produces_both() {
+        let highlighter = crate::highlight::Highlighter::new(None).unwrap();
+        let blocks = vec![Block::MermaidBlock {
+            content: "graph TD\n    A --> B\n".to_string(),
+        }];
+        let rendered = render_blocks(&blocks, 80, &highlighter, test_theme(), MermaidMode::Split);
+        assert_eq!(rendered.len(), 2, "Split mode should produce 2 blocks");
+        assert!(
+            matches!(rendered[0], RenderedBlock::Lines(_)),
+            "First block should be code (Lines)"
+        );
+        assert!(
+            matches!(rendered[1], RenderedBlock::Diagram { .. }),
+            "Second block should be Diagram"
+        );
+    }
+
+    #[test]
+    fn test_mermaid_render_mode_is_default_behavior() {
+        let highlighter = crate::highlight::Highlighter::new(None).unwrap();
+        let blocks = vec![Block::MermaidBlock {
+            content: "graph TD\n    A --> B\n".to_string(),
+        }];
+        let rendered = render_blocks(&blocks, 80, &highlighter, test_theme(), MermaidMode::Render);
+        assert_eq!(rendered.len(), 1);
+        assert!(matches!(rendered[0], RenderedBlock::Diagram { .. }));
     }
 }

@@ -135,7 +135,7 @@ fn main() -> Result<()> {
         None => theme::Theme::default_theme(),
     };
     let blocks = parser::parse_markdown(&input);
-    let rendered = render::render_blocks(&blocks, width, &highlighter, ui_theme);
+    let rendered = render::render_blocks(&blocks, width, &highlighter, ui_theme, render::MermaidMode::Render);
     if use_pager(&args) {
         let original_hook = std::panic::take_hook();
         std::panic::set_hook(Box::new(move |info| {
