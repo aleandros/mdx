@@ -79,6 +79,8 @@ fn diff_and_render(
     mermaid_mode: MermaidMode,
     mermaid_cache: &mut HashMap<String, MermaidCacheEntry>,
 ) -> Vec<Vec<crate::render::RenderedBlock>> {
+    debug_assert_eq!(old_blocks.len(), old_groups.len());
+
     use crate::parser::Block;
     use crate::render::{Color, RenderedBlock, SpanStyle, StyledLine, StyledSpan};
 
@@ -393,5 +395,55 @@ mod tests {
         let h1 = content_hash("");
         let h2 = content_hash("x");
         assert_ne!(h1, h2);
+    }
+
+    #[test]
+    fn test_diff_mermaid_cache_fallback_on_error() {
+        let h = test_highlighter();
+        let theme = test_theme();
+        let mut cache = HashMap::new();
+
+        // Pre-populate cache with a known entry
+        let content = "INVALID MERMAID CONTENT";
+        cache.insert(
+            content.to_string(),
+            MermaidCacheEntry {
+                lines: vec!["cached line".to_string()],
+                node_count: 2,
+                edge_count: 1,
+            },
+        );
+
+        // Render block with content that fails to parse but has cache entry
+        let blocks = vec![Block::MermaidBlock {
+            content: content.into(),
+        }];
+        let result = diff_and_render(
+            &[],
+            &[],
+            &blocks,
+            80,
+            &h,
+            theme,
+            MermaidMode::Render,
+            &mut cache,
+        );
+
+        // Should fall back to cached diagram + error indicator
+        let group = &result[0];
+        let has_error = group.iter().any(|rb| {
+            if let RenderedBlock::Lines(lines) = rb {
+                lines
+                    .iter()
+                    .any(|l| l.spans.iter().any(|s| s.text.contains("last good render")))
+            } else {
+                false
+            }
+        });
+        let has_diagram = group
+            .iter()
+            .any(|rb| matches!(rb, RenderedBlock::Diagram { .. }));
+        assert!(has_error, "Should have error indicator line");
+        assert!(has_diagram, "Should have cached diagram fallback");
     }
 }
