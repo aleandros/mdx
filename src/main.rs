@@ -29,6 +29,10 @@ struct Args {
     #[arg(long)]
     no_pager: bool,
 
+    /// Watch file for changes and re-render live
+    #[arg(short = 'W', long)]
+    watch: bool,
+
     /// Override terminal width for wrapping
     #[arg(short, long)]
     width: Option<u16>,
@@ -115,6 +119,32 @@ fn pipe_output(blocks: &[render::RenderedBlock], no_color: bool) -> Result<()> {
     Ok(())
 }
 
+fn validate_watch_args(args: &Args) -> Result<()> {
+    if !args.watch {
+        return Ok(());
+    }
+    if args.file.is_none() {
+        anyhow::bail!("--watch requires a file argument (cannot watch stdin)");
+    }
+    if args.no_pager {
+        anyhow::bail!("--watch and --no-pager are incompatible");
+    }
+    Ok(())
+}
+
+fn setup_panic_hook() {
+    let original_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let _ = crossterm::terminal::disable_raw_mode();
+        let _ = crossterm::execute!(
+            std::io::stdout(),
+            crossterm::terminal::LeaveAlternateScreen,
+            crossterm::event::DisableMouseCapture
+        );
+        original_hook(info);
+    }));
+}
+
 fn main() -> Result<()> {
     let args = Args::parse();
 
@@ -135,7 +165,9 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
-    let input = read_input(&args)?;
+    // Validate watch args early
+    validate_watch_args(&args)?;
+
     let width = get_width(&args);
     let no_color = std::env::var("NO_COLOR").is_ok();
     let highlighter =
@@ -150,7 +182,6 @@ fn main() -> Result<()> {
         })?,
         None => theme::Theme::default_theme(),
     };
-    let blocks = parser::parse_markdown(&input);
     let mermaid_mode = if args.no_mermaid_rendering {
         render::MermaidMode::Raw
     } else if args.split_mermaid_rendering {
@@ -158,18 +189,19 @@ fn main() -> Result<()> {
     } else {
         render::MermaidMode::Render
     };
+
+    // Watch mode — dispatch before reading input
+    if args.watch {
+        let path = args.file.as_ref().unwrap();
+        setup_panic_hook();
+        return watch::run_watch(path, width, &highlighter, ui_theme, mermaid_mode);
+    }
+
+    let input = read_input(&args)?;
+    let blocks = parser::parse_markdown(&input);
     let rendered = render::render_blocks(&blocks, width, &highlighter, ui_theme, mermaid_mode);
     if use_pager(&args) {
-        let original_hook = std::panic::take_hook();
-        std::panic::set_hook(Box::new(move |info| {
-            let _ = crossterm::terminal::disable_raw_mode();
-            let _ = crossterm::execute!(
-                std::io::stdout(),
-                crossterm::terminal::LeaveAlternateScreen,
-                crossterm::event::DisableMouseCapture
-            );
-            original_hook(info);
-        }));
+        setup_panic_hook();
         pager::run_pager(rendered, ui_theme)?;
     } else {
         pipe_output(&rendered, no_color)?;
@@ -207,6 +239,7 @@ mod tests {
             file: Some(path),
             pager: false,
             no_pager: false,
+            watch: false,
             width: None,
             theme: None,
             ui_theme: None,
@@ -223,6 +256,7 @@ mod tests {
             file: None,
             pager: false,
             no_pager: false,
+            watch: false,
             width: None,
             theme: None,
             ui_theme: None,
@@ -257,5 +291,76 @@ mod tests {
         let args = Args::parse_from(["mdx", "--split-mermaid-rendering", "test.md"]);
         assert!(args.split_mermaid_rendering);
         assert!(!args.no_mermaid_rendering);
+    }
+
+    #[test]
+    fn test_args_watch_flag() {
+        let args = Args::parse_from(["mdx", "--watch", "file.md"]);
+        assert!(args.watch);
+    }
+
+    #[test]
+    fn test_args_watch_short_flag() {
+        let args = Args::parse_from(["mdx", "-W", "file.md"]);
+        assert!(args.watch);
+    }
+
+    #[test]
+    fn test_args_watch_default_false() {
+        let args = Args::parse_from(["mdx", "file.md"]);
+        assert!(!args.watch);
+    }
+
+    #[test]
+    fn test_watch_requires_file() {
+        let args = Args {
+            file: None,
+            pager: false,
+            no_pager: false,
+            watch: true,
+            width: None,
+            theme: None,
+            ui_theme: None,
+            no_mermaid_rendering: false,
+            split_mermaid_rendering: false,
+        };
+        let result = validate_watch_args(&args);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("requires a file"));
+    }
+
+    #[test]
+    fn test_watch_conflicts_with_no_pager() {
+        let args = Args {
+            file: Some(PathBuf::from("test.md")),
+            pager: false,
+            no_pager: true,
+            watch: true,
+            width: None,
+            theme: None,
+            ui_theme: None,
+            no_mermaid_rendering: false,
+            split_mermaid_rendering: false,
+        };
+        let result = validate_watch_args(&args);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("incompatible"));
+    }
+
+    #[test]
+    fn test_watch_valid_args() {
+        let args = Args {
+            file: Some(PathBuf::from("test.md")),
+            pager: false,
+            no_pager: false,
+            watch: true,
+            width: None,
+            theme: None,
+            ui_theme: None,
+            no_mermaid_rendering: false,
+            split_mermaid_rendering: false,
+        };
+        let result = validate_watch_args(&args);
+        assert!(result.is_ok());
     }
 }
