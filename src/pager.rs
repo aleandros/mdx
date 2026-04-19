@@ -85,7 +85,7 @@ fn styled_line_to_ratatui(line: &StyledLine) -> Line<'static> {
 
 // ─── FlatLine ──────────────────────────────────────────────────────────────
 
-enum FlatLine {
+pub(crate) enum FlatLine {
     Styled(StyledLine),
     DiagramAscii(String),
     DiagramCollapsed {
@@ -103,18 +103,18 @@ enum FlatLine {
 
 // ─── PagerState ────────────────────────────────────────────────────────────
 
-struct PagerState {
-    content: Vec<RenderedBlock>,
-    flat_lines: Vec<FlatLine>,
-    scroll: usize,
-    expanded: HashSet<usize>,
-    terminal_height: u16,
+pub(crate) struct PagerState {
+    pub(crate) content: Vec<RenderedBlock>,
+    pub(crate) flat_lines: Vec<FlatLine>,
+    pub(crate) scroll: usize,
+    pub(crate) expanded: HashSet<usize>,
+    pub(crate) terminal_height: u16,
     opener: Option<&'static str>,
     theme: &'static crate::theme::Theme,
 }
 
 impl PagerState {
-    fn new(
+    pub(crate) fn new(
         content: Vec<RenderedBlock>,
         terminal_height: u16,
         theme: &'static crate::theme::Theme,
@@ -132,7 +132,7 @@ impl PagerState {
         state
     }
 
-    fn rebuild_flat_lines(&mut self) {
+    pub(crate) fn rebuild_flat_lines(&mut self) {
         self.flat_lines.clear();
         let threshold = (self.terminal_height as usize) / 2;
 
@@ -172,20 +172,20 @@ impl PagerState {
         }
     }
 
-    fn max_scroll(&self) -> usize {
+    pub(crate) fn max_scroll(&self) -> usize {
         let total = self.flat_lines.len();
         let height = self.terminal_height as usize;
         total.saturating_sub(height)
     }
 
-    fn clamp_scroll(&mut self) {
+    pub(crate) fn clamp_scroll(&mut self) {
         let max = self.max_scroll();
         if self.scroll > max {
             self.scroll = max;
         }
     }
 
-    fn toggle_diagram_at_scroll(&mut self) {
+    pub(crate) fn toggle_diagram_at_scroll(&mut self) {
         let height = self.terminal_height as usize;
         let start = self.scroll;
         let end = (self.scroll + height).min(self.flat_lines.len());
@@ -243,7 +243,7 @@ impl PagerState {
         }
     }
 
-    fn flat_line_to_ratatui(&self, flat: &FlatLine) -> Line<'static> {
+    pub(crate) fn flat_line_to_ratatui(&self, flat: &FlatLine) -> Line<'static> {
         match flat {
             FlatLine::Styled(line) => styled_line_to_ratatui(line),
             FlatLine::DiagramAscii(text) => Line::raw(text.clone()),
@@ -278,6 +278,19 @@ impl PagerState {
             }
         }
     }
+
+    pub(crate) fn draw_content(&self, f: &mut ratatui::Frame, area: ratatui::layout::Rect) {
+        let height = area.height as usize;
+        let lines: Vec<Line> = self
+            .flat_lines
+            .iter()
+            .skip(self.scroll)
+            .take(height)
+            .map(|fl| self.flat_line_to_ratatui(fl))
+            .collect();
+        let paragraph = Paragraph::new(lines);
+        f.render_widget(paragraph, area);
+    }
 }
 
 // ─── Public entry point ────────────────────────────────────────────────────
@@ -295,17 +308,7 @@ pub fn run_pager(content: Vec<RenderedBlock>, theme: &'static crate::theme::Them
 
     loop {
         terminal.draw(|f| {
-            let area = f.area();
-            let height = area.height as usize;
-            let lines: Vec<Line> = state
-                .flat_lines
-                .iter()
-                .skip(state.scroll)
-                .take(height)
-                .map(|fl| state.flat_line_to_ratatui(fl))
-                .collect();
-            let paragraph = Paragraph::new(lines);
-            f.render_widget(paragraph, area);
+            state.draw_content(f, f.area());
         })?;
 
         match event::read()? {

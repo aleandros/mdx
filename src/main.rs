@@ -4,6 +4,7 @@ mod pager;
 mod parser;
 mod render;
 mod theme;
+mod watch;
 
 use anyhow::Result;
 use clap::Parser;

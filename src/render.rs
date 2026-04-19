@@ -54,7 +54,7 @@ impl StyledLine {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum RenderedBlock {
     Lines(Vec<StyledLine>),
     Diagram {
