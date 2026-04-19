@@ -321,7 +321,7 @@ pub fn run_watch(
         if event::poll(Duration::from_millis(50))? {
             match event::read()? {
                 Event::Key(key) if key.kind == KeyEventKind::Press => {
-                    let page = (content_height as usize).saturating_sub(1).max(1);
+                    let page = (pager.terminal_height as usize).saturating_sub(1).max(1);
                     match key.code {
                         KeyCode::Char('q') | KeyCode::Esc => break,
                         KeyCode::Down | KeyCode::Char('j') => {
