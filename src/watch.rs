@@ -1,22 +1,37 @@
 use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
+use std::io::stdout;
 use std::path::Path;
 use std::sync::mpsc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
+use crossterm::{
+    event::{
+        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, MouseEventKind,
+    },
+    execute,
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
+};
 use notify::{Config, PollWatcher, RecommendedWatcher, RecursiveMode, Watcher};
+use ratatui::{
+    Terminal,
+    backend::CrosstermBackend,
+    layout::{Constraint, Direction, Layout},
+    style::{Color as RColor, Modifier, Style},
+    text::{Line, Span},
+    widgets::Paragraph,
+};
 
-use crate::render::MermaidMode;
+use crate::pager::PagerState;
+use crate::render::{self, MermaidMode, RenderedBlock};
 
-#[allow(dead_code)]
 pub fn content_hash(content: &str) -> u64 {
     let mut hasher = DefaultHasher::new();
     content.hash(&mut hasher);
     hasher.finish()
 }
 
-#[allow(dead_code)]
 fn start_watcher(path: &Path) -> Result<(Box<dyn Watcher + Send>, mpsc::Receiver<()>)> {
     let (tx, rx) = mpsc::channel();
 
@@ -49,7 +64,6 @@ fn start_watcher(path: &Path) -> Result<(Box<dyn Watcher + Send>, mpsc::Receiver
     Ok((watcher, rx))
 }
 
-#[allow(dead_code)]
 fn read_file_with_retry(path: &Path) -> Option<String> {
     match std::fs::read_to_string(path) {
         Ok(content) => Some(content),
@@ -60,14 +74,12 @@ fn read_file_with_retry(path: &Path) -> Option<String> {
     }
 }
 
-#[allow(dead_code)]
 struct MermaidCacheEntry {
     lines: Vec<String>,
     node_count: usize,
     edge_count: usize,
 }
 
-#[allow(dead_code)]
 #[allow(clippy::too_many_arguments)]
 fn diff_and_render(
     old_blocks: &[crate::parser::Block],
@@ -155,21 +167,301 @@ fn diff_and_render(
     result
 }
 
-#[allow(dead_code)]
 fn flatten_groups(
     groups: &[Vec<crate::render::RenderedBlock>],
 ) -> Vec<crate::render::RenderedBlock> {
     groups.iter().flat_map(|g| g.iter().cloned()).collect()
 }
 
+struct StatusState {
+    filename: String,
+    message: Option<String>,
+    message_time: Option<Instant>,
+}
+
+impl StatusState {
+    fn new(filename: &str) -> Self {
+        StatusState {
+            filename: filename.to_string(),
+            message: None,
+            message_time: None,
+        }
+    }
+
+    fn set_message(&mut self, msg: &str) {
+        self.message = Some(msg.to_string());
+        self.message_time = Some(Instant::now());
+    }
+
+    fn render(&self) -> Line<'static> {
+        let mut spans = vec![
+            Span::styled(
+                format!(" {} ", self.filename),
+                Style::default()
+                    .fg(RColor::DarkGray)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled("│ watching ", Style::default().fg(RColor::DarkGray)),
+        ];
+
+        if let Some(ref msg) = self.message {
+            let age = self.message_time.map(|t| t.elapsed()).unwrap_or_default();
+            if age < Duration::from_secs(3) {
+                spans.push(Span::styled(
+                    format!("│ {} ", msg),
+                    Style::default().fg(RColor::Yellow),
+                ));
+            }
+        }
+
+        Line::from(spans)
+    }
+
+    fn tick(&mut self) -> bool {
+        if let Some(t) = self.message_time
+            && t.elapsed() >= Duration::from_secs(3)
+            && self.message.is_some()
+        {
+            self.message = None;
+            self.message_time = None;
+            return true;
+        }
+        false
+    }
+}
+
 pub fn run_watch(
-    _path: &Path,
-    _width: u16,
-    _highlighter: &crate::highlight::Highlighter,
-    _theme: &'static crate::theme::Theme,
-    _mermaid_mode: MermaidMode,
+    path: &Path,
+    width: u16,
+    highlighter: &crate::highlight::Highlighter,
+    theme: &'static crate::theme::Theme,
+    mermaid_mode: MermaidMode,
 ) -> Result<()> {
-    anyhow::bail!("watch mode not yet implemented")
+    // Initial read and render
+    let input = std::fs::read_to_string(path)?;
+    let mut last_hash = content_hash(&input);
+    let mut blocks = crate::parser::parse_markdown(&input);
+    let mut rendered_groups: Vec<Vec<RenderedBlock>> = blocks
+        .iter()
+        .map(|b| {
+            render::render_blocks(
+                std::slice::from_ref(b),
+                width,
+                highlighter,
+                theme,
+                mermaid_mode,
+            )
+        })
+        .collect();
+    let flat_rendered = flatten_groups(&rendered_groups);
+    let mut mermaid_cache: HashMap<String, MermaidCacheEntry> = HashMap::new();
+
+    // Populate initial mermaid cache
+    for (block, group) in blocks.iter().zip(rendered_groups.iter()) {
+        if let crate::parser::Block::MermaidBlock { content } = block {
+            for rb in group {
+                if let RenderedBlock::Diagram {
+                    lines,
+                    node_count,
+                    edge_count,
+                } = rb
+                {
+                    mermaid_cache.insert(
+                        content.clone(),
+                        MermaidCacheEntry {
+                            lines: lines.clone(),
+                            node_count: *node_count,
+                            edge_count: *edge_count,
+                        },
+                    );
+                }
+            }
+        }
+    }
+
+    // Set up terminal
+    enable_raw_mode()?;
+    let mut stdout = stdout();
+    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+    let backend = CrosstermBackend::new(stdout);
+    let mut terminal = Terminal::new(backend)?;
+
+    let term_height = terminal.size()?.height;
+    let content_height = term_height.saturating_sub(1);
+    let mut pager = PagerState::new(flat_rendered, content_height, theme);
+
+    // Start file watcher
+    let (_watcher, rx) = start_watcher(path)?;
+    let filename = path.file_name().unwrap_or_default().to_str().unwrap_or("?");
+    let mut status = StatusState::new(filename);
+
+    // Event loop state
+    let mut pending_change = false;
+    let mut last_event_time: Option<Instant> = None;
+    let mut needs_redraw = true;
+
+    loop {
+        // 1. Draw if needed
+        if needs_redraw {
+            terminal.draw(|f| {
+                let chunks = Layout::default()
+                    .direction(Direction::Vertical)
+                    .constraints([Constraint::Min(0), Constraint::Length(1)])
+                    .split(f.area());
+
+                pager.draw_content(f, chunks[0]);
+
+                let status_widget = Paragraph::new(status.render());
+                f.render_widget(status_widget, chunks[1]);
+            })?;
+            needs_redraw = false;
+        }
+
+        // 2. Poll for keyboard/mouse events (50ms timeout)
+        if event::poll(Duration::from_millis(50))? {
+            match event::read()? {
+                Event::Key(key) if key.kind == KeyEventKind::Press => {
+                    let page = (content_height as usize).saturating_sub(1).max(1);
+                    match key.code {
+                        KeyCode::Char('q') | KeyCode::Esc => break,
+                        KeyCode::Down | KeyCode::Char('j') => {
+                            let max = pager.max_scroll();
+                            if pager.scroll < max {
+                                pager.scroll += 1;
+                                needs_redraw = true;
+                            }
+                        }
+                        KeyCode::Up | KeyCode::Char('k') => {
+                            if pager.scroll > 0 {
+                                pager.scroll = pager.scroll.saturating_sub(1);
+                                needs_redraw = true;
+                            }
+                        }
+                        KeyCode::PageDown | KeyCode::Char(' ') => {
+                            let max = pager.max_scroll();
+                            let new_scroll = (pager.scroll + page).min(max);
+                            if new_scroll != pager.scroll {
+                                pager.scroll = new_scroll;
+                                needs_redraw = true;
+                            }
+                        }
+                        KeyCode::PageUp => {
+                            let new_scroll = pager.scroll.saturating_sub(page);
+                            if new_scroll != pager.scroll {
+                                pager.scroll = new_scroll;
+                                needs_redraw = true;
+                            }
+                        }
+                        KeyCode::Home | KeyCode::Char('g') => {
+                            if pager.scroll != 0 {
+                                pager.scroll = 0;
+                                needs_redraw = true;
+                            }
+                        }
+                        KeyCode::End | KeyCode::Char('G') => {
+                            let max = pager.max_scroll();
+                            if pager.scroll != max {
+                                pager.scroll = max;
+                                needs_redraw = true;
+                            }
+                        }
+                        KeyCode::Tab => {
+                            pager.toggle_diagram_at_scroll();
+                            needs_redraw = true;
+                        }
+                        _ => {}
+                    }
+                }
+                Event::Mouse(mouse) => match mouse.kind {
+                    MouseEventKind::ScrollDown => {
+                        let max = pager.max_scroll();
+                        pager.scroll = (pager.scroll + 3).min(max);
+                        needs_redraw = true;
+                    }
+                    MouseEventKind::ScrollUp => {
+                        pager.scroll = pager.scroll.saturating_sub(3);
+                        needs_redraw = true;
+                    }
+                    _ => {}
+                },
+                Event::Resize(_, h) => {
+                    let new_content_height = h.saturating_sub(1);
+                    pager.terminal_height = new_content_height;
+                    pager.rebuild_flat_lines();
+                    pager.clamp_scroll();
+                    needs_redraw = true;
+                }
+                _ => {}
+            }
+        }
+
+        // 3. Drain file change events
+        while rx.try_recv().is_ok() {
+            last_event_time = Some(Instant::now());
+            pending_change = true;
+        }
+
+        // 4. Debounce check
+        if pending_change
+            && let Some(t) = last_event_time
+            && t.elapsed() >= Duration::from_millis(100)
+        {
+            pending_change = false;
+            last_event_time = None;
+
+            if let Some(content) = read_file_with_retry(path) {
+                let new_hash = content_hash(&content);
+                if new_hash != last_hash {
+                    let new_blocks = crate::parser::parse_markdown(&content);
+                    let new_groups = diff_and_render(
+                        &blocks,
+                        &rendered_groups,
+                        &new_blocks,
+                        width,
+                        highlighter,
+                        theme,
+                        mermaid_mode,
+                        &mut mermaid_cache,
+                    );
+                    let flat = flatten_groups(&new_groups);
+
+                    if new_blocks.len() != blocks.len() {
+                        pager.expanded.clear();
+                    }
+
+                    pager.content = flat;
+                    pager.rebuild_flat_lines();
+                    pager.clamp_scroll();
+
+                    blocks = new_blocks;
+                    rendered_groups = new_groups;
+                    last_hash = new_hash;
+
+                    status.set_message("updated");
+                    needs_redraw = true;
+                }
+            } else {
+                status.set_message("file unreadable");
+                needs_redraw = true;
+            }
+        }
+
+        // 5. Clear expired status messages
+        if status.tick() {
+            needs_redraw = true;
+        }
+    }
+
+    // Cleanup
+    disable_raw_mode()?;
+    execute!(
+        terminal.backend_mut(),
+        LeaveAlternateScreen,
+        DisableMouseCapture
+    )?;
+    terminal.show_cursor()?;
+
+    Ok(())
 }
 
 #[cfg(test)]
