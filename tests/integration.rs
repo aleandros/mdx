@@ -186,3 +186,69 @@ fn test_theme_list() {
         stdout
     );
 }
+
+#[test]
+fn test_watch_requires_file() {
+    let output = Command::new(env!("CARGO_BIN_EXE_mdx"))
+        .arg("--watch")
+        .output()
+        .expect("failed to run mdx");
+    assert!(
+        !output.status.success(),
+        "Should fail without file argument"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("requires a file"), "stderr: {}", stderr);
+}
+
+#[test]
+fn test_watch_conflicts_with_no_pager() {
+    let dir = std::env::temp_dir().join("mdx_integration");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("watch_conflict.md");
+    std::fs::write(&path, "# Test").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_mdx"))
+        .arg("--watch")
+        .arg("--no-pager")
+        .arg(&path)
+        .output()
+        .expect("failed to run mdx");
+    assert!(!output.status.success(), "Should fail with --no-pager");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("incompatible"), "stderr: {}", stderr);
+}
+
+#[test]
+fn test_watch_short_flag_accepted() {
+    let dir = std::env::temp_dir().join("mdx_integration");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("watch_short.md");
+    std::fs::write(&path, "# Test").unwrap();
+    // Watch mode blocks, so spawn and kill after a brief delay
+    let child = std::process::Command::new(env!("CARGO_BIN_EXE_mdx"))
+        .arg("-W")
+        .arg(&path)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("failed to start mdx");
+
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    let mut child = child;
+    let _ = child.kill();
+    let output = child.wait_with_output().unwrap();
+
+    // If it had a validation error, stderr would contain it
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("requires a file"),
+        "Should not have file error: {}",
+        stderr
+    );
+    assert!(
+        !stderr.contains("incompatible"),
+        "Should not have conflict error: {}",
+        stderr
+    );
+}
