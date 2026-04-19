@@ -89,7 +89,7 @@ fn diff_and_render(
     highlighter: &crate::highlight::Highlighter,
     theme: &'static crate::theme::Theme,
     mermaid_mode: MermaidMode,
-    mermaid_cache: &mut HashMap<String, MermaidCacheEntry>,
+    mermaid_cache: &mut HashMap<usize, MermaidCacheEntry>,
 ) -> Vec<Vec<crate::render::RenderedBlock>> {
     debug_assert_eq!(old_blocks.len(), old_groups.len());
 
@@ -115,7 +115,7 @@ fn diff_and_render(
         );
 
         // Mermaid cache logic
-        if let Block::MermaidBlock { content } = new_block {
+        if let Block::MermaidBlock { .. } = new_block {
             let has_diagram = group
                 .iter()
                 .any(|rb| matches!(rb, RenderedBlock::Diagram { .. }));
@@ -130,7 +130,7 @@ fn diff_and_render(
                     } = rb
                     {
                         mermaid_cache.insert(
-                            content.clone(),
+                            i,
                             MermaidCacheEntry {
                                 lines: lines.clone(),
                                 node_count: *node_count,
@@ -139,7 +139,7 @@ fn diff_and_render(
                         );
                     }
                 }
-            } else if let Some(cached) = mermaid_cache.get(content.as_str()) {
+            } else if let Some(cached) = mermaid_cache.get(&i) {
                 // Render failed — use cached diagram with error indicator
                 group = vec![
                     RenderedBlock::Lines(vec![StyledLine {
@@ -254,11 +254,11 @@ pub fn run_watch(
         })
         .collect();
     let flat_rendered = flatten_groups(&rendered_groups);
-    let mut mermaid_cache: HashMap<String, MermaidCacheEntry> = HashMap::new();
+    let mut mermaid_cache: HashMap<usize, MermaidCacheEntry> = HashMap::new();
 
     // Populate initial mermaid cache
-    for (block, group) in blocks.iter().zip(rendered_groups.iter()) {
-        if let crate::parser::Block::MermaidBlock { content } = block {
+    for (i, (block, group)) in blocks.iter().zip(rendered_groups.iter()).enumerate() {
+        if let crate::parser::Block::MermaidBlock { .. } = block {
             for rb in group {
                 if let RenderedBlock::Diagram {
                     lines,
@@ -267,7 +267,7 @@ pub fn run_watch(
                 } = rb
                 {
                     mermaid_cache.insert(
-                        content.clone(),
+                        i,
                         MermaidCacheEntry {
                             lines: lines.clone(),
                             node_count: *node_count,
@@ -427,6 +427,7 @@ pub fn run_watch(
 
                     if new_blocks.len() != blocks.len() {
                         pager.expanded.clear();
+                        mermaid_cache.clear();
                     }
 
                     pager.content = flat;
@@ -646,7 +647,7 @@ mod tests {
             &mut cache,
         );
 
-        assert!(cache.contains_key("graph TD\n    A --> B\n"));
+        assert!(cache.contains_key(&0));
     }
 
     #[test]
@@ -696,9 +697,8 @@ mod tests {
         let mut cache = HashMap::new();
 
         // Pre-populate cache with a known entry
-        let content = "INVALID MERMAID CONTENT";
         cache.insert(
-            content.to_string(),
+            0, // position-based key
             MermaidCacheEntry {
                 lines: vec!["cached line".to_string()],
                 node_count: 2,
@@ -708,7 +708,7 @@ mod tests {
 
         // Render block with content that fails to parse but has cache entry
         let blocks = vec![Block::MermaidBlock {
-            content: content.into(),
+            content: "INVALID MERMAID CONTENT".into(),
         }];
         let result = diff_and_render(
             &[],
