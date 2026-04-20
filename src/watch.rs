@@ -331,11 +331,9 @@ pub fn run_watch(
                                 needs_redraw = true;
                             }
                         }
-                        KeyCode::Up | KeyCode::Char('k') => {
-                            if pager.scroll > 0 {
-                                pager.scroll = pager.scroll.saturating_sub(1);
-                                needs_redraw = true;
-                            }
+                        KeyCode::Up | KeyCode::Char('k') if pager.scroll > 0 => {
+                            pager.scroll = pager.scroll.saturating_sub(1);
+                            needs_redraw = true;
                         }
                         KeyCode::PageDown | KeyCode::Char(' ') => {
                             let max = pager.max_scroll();
@@ -352,11 +350,9 @@ pub fn run_watch(
                                 needs_redraw = true;
                             }
                         }
-                        KeyCode::Home | KeyCode::Char('g') => {
-                            if pager.scroll != 0 {
-                                pager.scroll = 0;
-                                needs_redraw = true;
-                            }
+                        KeyCode::Home | KeyCode::Char('g') if pager.scroll != 0 => {
+                            pager.scroll = 0;
+                            needs_redraw = true;
                         }
                         KeyCode::End | KeyCode::Char('G') => {
                             let max = pager.max_scroll();
