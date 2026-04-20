@@ -19,6 +19,23 @@ use ratatui::{
 
 use crate::render::{Color, RenderedBlock, StyledLine, StyledSpan};
 
+/// Ensures terminal cleanup runs on all exit paths (error propagation, panic, normal return).
+/// Without this, an I/O error from `terminal.draw()` or `event::read()` would skip cleanup
+/// and leave the terminal in raw mode with the alternate screen still active.
+pub(crate) struct TerminalGuard;
+
+impl Drop for TerminalGuard {
+    fn drop(&mut self) {
+        let _ = disable_raw_mode();
+        let _ = execute!(
+            std::io::stdout(),
+            crossterm::cursor::Show,
+            LeaveAlternateScreen,
+            DisableMouseCapture
+        );
+    }
+}
+
 fn detect_opener() -> Option<&'static str> {
     if std::process::Command::new("open")
         .arg("--help")
@@ -299,6 +316,7 @@ pub fn run_pager(content: Vec<RenderedBlock>, theme: &'static crate::theme::Them
     enable_raw_mode()?;
     let mut stdout = stdout();
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+    let _guard = TerminalGuard;
 
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
@@ -362,15 +380,6 @@ pub fn run_pager(content: Vec<RenderedBlock>, theme: &'static crate::theme::Them
             _ => {}
         }
     }
-
-    // Cleanup
-    disable_raw_mode()?;
-    execute!(
-        terminal.backend_mut(),
-        LeaveAlternateScreen,
-        DisableMouseCapture
-    )?;
-    terminal.show_cursor()?;
 
     Ok(())
 }

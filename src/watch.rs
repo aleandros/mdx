@@ -7,11 +7,9 @@ use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use crossterm::{
-    event::{
-        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, MouseEventKind,
-    },
+    event::{self, EnableMouseCapture, Event, KeyCode, KeyEventKind, MouseEventKind},
     execute,
-    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
+    terminal::{EnterAlternateScreen, enable_raw_mode},
 };
 use notify::{Config, PollWatcher, RecommendedWatcher, RecursiveMode, Watcher};
 use ratatui::{
@@ -23,7 +21,7 @@ use ratatui::{
     widgets::Paragraph,
 };
 
-use crate::pager::PagerState;
+use crate::pager::{PagerState, TerminalGuard};
 use crate::render::{self, MermaidMode, RenderedBlock};
 
 pub fn content_hash(content: &str) -> u64 {
@@ -283,6 +281,7 @@ pub fn run_watch(
     enable_raw_mode()?;
     let mut stdout = stdout();
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+    let _guard = TerminalGuard;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
@@ -448,15 +447,6 @@ pub fn run_watch(
             needs_redraw = true;
         }
     }
-
-    // Cleanup
-    disable_raw_mode()?;
-    execute!(
-        terminal.backend_mut(),
-        LeaveAlternateScreen,
-        DisableMouseCapture
-    )?;
-    terminal.show_cursor()?;
 
     Ok(())
 }
