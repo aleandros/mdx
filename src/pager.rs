@@ -124,8 +124,10 @@ pub(crate) struct PagerState {
     pub(crate) content: Vec<RenderedBlock>,
     pub(crate) flat_lines: Vec<FlatLine>,
     pub(crate) scroll: usize,
+    pub(crate) h_scroll: usize,
     pub(crate) expanded: HashSet<usize>,
     pub(crate) terminal_height: u16,
+    pub(crate) terminal_width: u16,
     opener: Option<&'static str>,
     theme: &'static crate::theme::Theme,
 }
@@ -134,14 +136,17 @@ impl PagerState {
     pub(crate) fn new(
         content: Vec<RenderedBlock>,
         terminal_height: u16,
+        terminal_width: u16,
         theme: &'static crate::theme::Theme,
     ) -> Self {
         let mut state = PagerState {
             content,
             flat_lines: Vec::new(),
             scroll: 0,
+            h_scroll: 0,
             expanded: HashSet::new(),
             terminal_height,
+            terminal_width,
             opener: detect_opener(),
             theme,
         };
@@ -151,7 +156,8 @@ impl PagerState {
 
     pub(crate) fn rebuild_flat_lines(&mut self) {
         self.flat_lines.clear();
-        let threshold = (self.terminal_height as usize) / 2;
+        let height_threshold = (self.terminal_height as usize) / 2;
+        let width_limit = self.terminal_width as usize;
 
         for (block_index, block) in self.content.iter().enumerate() {
             match block {
@@ -165,7 +171,9 @@ impl PagerState {
                     node_count,
                     edge_count,
                 } => {
-                    let is_large = lines.len() > threshold;
+                    let is_tall = lines.len() > height_threshold;
+                    let is_wide = lines.iter().any(|l| l.len() > width_limit);
+                    let is_large = is_tall || is_wide;
                     if is_large && !self.expanded.contains(&block_index) {
                         self.flat_lines.push(FlatLine::DiagramCollapsed {
                             block_index,
@@ -305,7 +313,7 @@ impl PagerState {
             .take(height)
             .map(|fl| self.flat_line_to_ratatui(fl))
             .collect();
-        let paragraph = Paragraph::new(lines);
+        let paragraph = Paragraph::new(lines).scroll((0, self.h_scroll as u16));
         f.render_widget(paragraph, area);
     }
 }
@@ -321,8 +329,8 @@ pub fn run_pager(content: Vec<RenderedBlock>, theme: &'static crate::theme::Them
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    let term_height = terminal.size()?.height;
-    let mut state = PagerState::new(content, term_height, theme);
+    let size = terminal.size()?;
+    let mut state = PagerState::new(content, size.height, size.width, theme);
 
     loop {
         terminal.draw(|f| {
@@ -356,6 +364,12 @@ pub fn run_pager(content: Vec<RenderedBlock>, theme: &'static crate::theme::Them
                     KeyCode::End | KeyCode::Char('G') => {
                         state.scroll = state.max_scroll();
                     }
+                    KeyCode::Right | KeyCode::Char('l') => {
+                        state.h_scroll = state.h_scroll.saturating_add(4);
+                    }
+                    KeyCode::Left | KeyCode::Char('h') => {
+                        state.h_scroll = state.h_scroll.saturating_sub(4);
+                    }
                     KeyCode::Tab => {
                         state.toggle_diagram_at_scroll();
                     }
@@ -372,8 +386,9 @@ pub fn run_pager(content: Vec<RenderedBlock>, theme: &'static crate::theme::Them
                 }
                 _ => {}
             },
-            Event::Resize(_, h) => {
+            Event::Resize(w, h) => {
                 state.terminal_height = h;
+                state.terminal_width = w;
                 state.rebuild_flat_lines();
                 state.clamp_scroll();
             }

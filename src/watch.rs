@@ -285,9 +285,9 @@ pub fn run_watch(
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    let term_height = terminal.size()?.height;
-    let content_height = term_height.saturating_sub(1);
-    let mut pager = PagerState::new(flat_rendered, content_height, theme);
+    let term_size = terminal.size()?;
+    let content_height = term_size.height.saturating_sub(1);
+    let mut pager = PagerState::new(flat_rendered, content_height, term_size.width, theme);
 
     // Start file watcher
     let (_watcher, rx) = start_watcher(path)?;
@@ -360,6 +360,14 @@ pub fn run_watch(
                                 needs_redraw = true;
                             }
                         }
+                        KeyCode::Right | KeyCode::Char('l') => {
+                            pager.h_scroll = pager.h_scroll.saturating_add(4);
+                            needs_redraw = true;
+                        }
+                        KeyCode::Left | KeyCode::Char('h') => {
+                            pager.h_scroll = pager.h_scroll.saturating_sub(4);
+                            needs_redraw = true;
+                        }
                         KeyCode::Tab => {
                             pager.toggle_diagram_at_scroll();
                             needs_redraw = true;
@@ -379,9 +387,10 @@ pub fn run_watch(
                     }
                     _ => {}
                 },
-                Event::Resize(_, h) => {
+                Event::Resize(w, h) => {
                     let new_content_height = h.saturating_sub(1);
                     pager.terminal_height = new_content_height;
+                    pager.terminal_width = w;
                     pager.rebuild_flat_lines();
                     pager.clamp_scroll();
                     needs_redraw = true;
