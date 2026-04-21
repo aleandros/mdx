@@ -1,5 +1,5 @@
 [package]
-name = "mdx"
+name = "mermd"
 version = "0.1.4"
 edition = "2024"
 description = "Terminal Markdown renderer with Mermaid flowcharts drawn as ASCII art"
@@ -18,6 +18,10 @@ include = [
     "LICENSE.txt",
     "CHANGELOG.md",
 ]
+
+[[bin]]
+name = "mdx"
+path = "src/main.rs"
 
 [dependencies]
 anyhow = "1"
