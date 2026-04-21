@@ -34,6 +34,9 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
+      - name: Ensure target is installed
+        run: rustup target add ${{ matrix.target }}
+
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.target }}
