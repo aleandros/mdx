@@ -2,6 +2,22 @@
 name = "mdx"
 version = "0.1.4"
 edition = "2024"
+description = "Terminal Markdown renderer with Mermaid flowcharts drawn as ASCII art"
+license = "MIT"
+repository = "https://github.com/aleandros/mdx"
+homepage = "https://github.com/aleandros/mdx"
+readme = "README.md"
+keywords = ["markdown", "terminal", "mermaid", "cli", "tui"]
+categories = ["command-line-utilities", "text-processing"]
+include = [
+    "src/**/*",
+    "syntaxes/**/*",
+    "build.rs",
+    "Cargo.toml",
+    "README.md",
+    "LICENSE.txt",
+    "CHANGELOG.md",
+]
 
 [dependencies]
 anyhow = "1"
