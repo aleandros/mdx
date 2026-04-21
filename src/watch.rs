@@ -327,11 +327,13 @@ pub fn run_watch(
                             let max = pager.max_scroll();
                             if pager.scroll < max {
                                 pager.scroll += 1;
+                                pager.update_active_from_viewport();
                                 needs_redraw = true;
                             }
                         }
                         KeyCode::Up | KeyCode::Char('k') if pager.scroll > 0 => {
                             pager.scroll = pager.scroll.saturating_sub(1);
+                            pager.update_active_from_viewport();
                             needs_redraw = true;
                         }
                         KeyCode::PageDown | KeyCode::Char(' ') => {
@@ -339,6 +341,7 @@ pub fn run_watch(
                             let new_scroll = (pager.scroll + page).min(max);
                             if new_scroll != pager.scroll {
                                 pager.scroll = new_scroll;
+                                pager.update_active_from_viewport();
                                 needs_redraw = true;
                             }
                         }
@@ -346,17 +349,20 @@ pub fn run_watch(
                             let new_scroll = pager.scroll.saturating_sub(page);
                             if new_scroll != pager.scroll {
                                 pager.scroll = new_scroll;
+                                pager.update_active_from_viewport();
                                 needs_redraw = true;
                             }
                         }
                         KeyCode::Home | KeyCode::Char('g') if pager.scroll != 0 => {
                             pager.scroll = 0;
+                            pager.update_active_from_viewport();
                             needs_redraw = true;
                         }
                         KeyCode::End | KeyCode::Char('G') => {
                             let max = pager.max_scroll();
                             if pager.scroll != max {
                                 pager.scroll = max;
+                                pager.update_active_from_viewport();
                                 needs_redraw = true;
                             }
                         }
@@ -369,7 +375,15 @@ pub fn run_watch(
                             needs_redraw = true;
                         }
                         KeyCode::Tab => {
-                            pager.toggle_diagram_at_scroll();
+                            pager.cycle_active(true);
+                            needs_redraw = true;
+                        }
+                        KeyCode::BackTab => {
+                            pager.cycle_active(false);
+                            needs_redraw = true;
+                        }
+                        KeyCode::Enter => {
+                            pager.activate_current();
                             needs_redraw = true;
                         }
                         _ => {}
@@ -379,10 +393,12 @@ pub fn run_watch(
                     MouseEventKind::ScrollDown => {
                         let max = pager.max_scroll();
                         pager.scroll = (pager.scroll + 3).min(max);
+                        pager.update_active_from_viewport();
                         needs_redraw = true;
                     }
                     MouseEventKind::ScrollUp => {
                         pager.scroll = pager.scroll.saturating_sub(3);
+                        pager.update_active_from_viewport();
                         needs_redraw = true;
                     }
                     _ => {}
@@ -393,6 +409,7 @@ pub fn run_watch(
                     pager.terminal_width = w;
                     pager.rebuild_flat_lines();
                     pager.clamp_scroll();
+                    pager.update_active_from_viewport();
                     needs_redraw = true;
                 }
                 _ => {}
@@ -437,6 +454,7 @@ pub fn run_watch(
                     pager.content = flat;
                     pager.rebuild_flat_lines();
                     pager.clamp_scroll();
+                    pager.update_active_from_viewport();
 
                     blocks = new_blocks;
                     rendered_groups = new_groups;

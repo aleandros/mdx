@@ -106,6 +106,7 @@ pub(crate) enum FlatLine {
     Styled(StyledLine),
     DiagramAscii(String),
     DiagramCollapsed {
+        #[allow(dead_code)]
         block_index: usize,
         node_count: usize,
         edge_count: usize,
@@ -118,6 +119,14 @@ pub(crate) enum FlatLine {
     },
 }
 
+// ─── Interactive block tracking ───────────────────────────────────────────
+
+pub(crate) struct InteractiveEntry {
+    pub(crate) block_index: usize,
+    pub(crate) flat_line_index: usize,
+    pub(crate) flat_line_end: usize, // exclusive
+}
+
 // ─── PagerState ────────────────────────────────────────────────────────────
 
 pub(crate) struct PagerState {
@@ -126,6 +135,8 @@ pub(crate) struct PagerState {
     pub(crate) scroll: usize,
     pub(crate) h_scroll: usize,
     pub(crate) expanded: HashSet<usize>,
+    pub(crate) active: Option<usize>,
+    interactive_blocks: Vec<InteractiveEntry>,
     pub(crate) terminal_height: u16,
     pub(crate) terminal_width: u16,
     opener: Option<&'static str>,
@@ -145,17 +156,23 @@ impl PagerState {
             scroll: 0,
             h_scroll: 0,
             expanded: HashSet::new(),
+            active: None,
+            interactive_blocks: Vec::new(),
             terminal_height,
             terminal_width,
             opener: detect_opener(),
             theme,
         };
         state.rebuild_flat_lines();
+        state.update_active_from_viewport();
         state
     }
 
     pub(crate) fn rebuild_flat_lines(&mut self) {
+        let prev_block_index = self.active.map(|i| self.interactive_blocks[i].block_index);
+
         self.flat_lines.clear();
+        self.interactive_blocks.clear();
         let height_threshold = (self.terminal_height as usize) / 2;
         let width_limit = self.terminal_width as usize;
 
@@ -175,10 +192,26 @@ impl PagerState {
                     let is_wide = lines.iter().any(|l| l.len() > width_limit);
                     let is_large = is_tall || is_wide;
                     if is_large && !self.expanded.contains(&block_index) {
+                        let flat_line_index = self.flat_lines.len();
                         self.flat_lines.push(FlatLine::DiagramCollapsed {
                             block_index,
                             node_count: *node_count,
                             edge_count: *edge_count,
+                        });
+                        self.interactive_blocks.push(InteractiveEntry {
+                            block_index,
+                            flat_line_index,
+                            flat_line_end: flat_line_index + 1,
+                        });
+                    } else if is_large {
+                        let flat_line_index = self.flat_lines.len();
+                        for line in lines {
+                            self.flat_lines.push(FlatLine::DiagramAscii(line.clone()));
+                        }
+                        self.interactive_blocks.push(InteractiveEntry {
+                            block_index,
+                            flat_line_index,
+                            flat_line_end: flat_line_index + lines.len(),
                         });
                     } else {
                         for line in lines {
@@ -187,14 +220,27 @@ impl PagerState {
                     }
                 }
                 RenderedBlock::Image { alt, url } => {
+                    let flat_line_index = self.flat_lines.len();
                     self.flat_lines.push(FlatLine::ImagePlaceholder {
                         alt: alt.clone(),
                         url: url.clone(),
                         block_index,
                     });
+                    self.interactive_blocks.push(InteractiveEntry {
+                        block_index,
+                        flat_line_index,
+                        flat_line_end: flat_line_index + 1,
+                    });
                 }
             }
         }
+
+        // Preserve active selection across rebuilds by matching block_index
+        self.active = prev_block_index.and_then(|bi| {
+            self.interactive_blocks
+                .iter()
+                .position(|e| e.block_index == bi)
+        });
     }
 
     pub(crate) fn max_scroll(&self) -> usize {
@@ -210,95 +256,143 @@ impl PagerState {
         }
     }
 
-    pub(crate) fn toggle_diagram_at_scroll(&mut self) {
-        let height = self.terminal_height as usize;
+    pub(crate) fn update_active_from_viewport(&mut self) {
         let start = self.scroll;
-        let end = (self.scroll + height).min(self.flat_lines.len());
+        let end = (self.scroll + self.terminal_height as usize).min(self.flat_lines.len());
 
-        // Check for image placeholder first
-        for i in start..end {
-            if let FlatLine::ImagePlaceholder { url, .. } = &self.flat_lines[i] {
-                if let Some(opener) = self.opener.as_ref() {
-                    let _ = std::process::Command::new(opener)
-                        .arg(url)
-                        .stdout(std::process::Stdio::null())
-                        .stderr(std::process::Stdio::null())
-                        .spawn();
-                }
-                return;
-            }
-        }
+        self.active = self
+            .interactive_blocks
+            .iter()
+            .position(|entry| entry.flat_line_index >= start && entry.flat_line_index < end);
+    }
 
-        // Find the first DiagramCollapsed in the viewport
-        let mut found_index: Option<usize> = None;
-        for i in start..end {
-            if let FlatLine::DiagramCollapsed { block_index, .. } = &self.flat_lines[i] {
-                found_index = Some(*block_index);
-                break;
-            }
-        }
-
-        if let Some(block_index) = found_index {
-            if self.expanded.contains(&block_index) {
-                self.expanded.remove(&block_index);
-            } else {
-                self.expanded.insert(block_index);
-            }
-            self.rebuild_flat_lines();
-            self.clamp_scroll();
+    pub(crate) fn cycle_active(&mut self, forward: bool) {
+        if self.interactive_blocks.is_empty() {
             return;
         }
 
-        // If no collapsed diagram found, look for expanded DiagramAscii lines to collapse
-        // by scanning block boundaries — find any diagram block visible in viewport
-        // and if it's expanded, collapse it
-        let mut found_expanded: Option<usize> = None;
-        for (block_index, block) in self.content.iter().enumerate() {
-            if matches!(block, RenderedBlock::Diagram { .. })
-                && self.expanded.contains(&block_index)
-            {
-                found_expanded = Some(block_index);
-                break;
+        let len = self.interactive_blocks.len();
+        self.active = Some(match self.active {
+            None => 0,
+            Some(i) if forward => (i + 1) % len,
+            Some(i) => (i + len - 1) % len,
+        });
+
+        // Scroll to make active block visible
+        if let Some(idx) = self.active {
+            let flat_idx = self.interactive_blocks[idx].flat_line_index;
+            let height = self.terminal_height as usize;
+            if flat_idx < self.scroll {
+                self.scroll = flat_idx;
+            } else if flat_idx >= self.scroll + height {
+                self.scroll = flat_idx.saturating_sub(height / 2);
             }
-        }
-        if let Some(block_index) = found_expanded {
-            self.expanded.remove(&block_index);
-            self.rebuild_flat_lines();
             self.clamp_scroll();
         }
     }
 
-    pub(crate) fn flat_line_to_ratatui(&self, flat: &FlatLine) -> Line<'static> {
+    pub(crate) fn activate_current(&mut self) {
+        let block_index = match self.active {
+            Some(idx) => self.interactive_blocks[idx].block_index,
+            None => return,
+        };
+
+        match &self.content[block_index] {
+            RenderedBlock::Diagram { .. } => {
+                if self.expanded.contains(&block_index) {
+                    self.expanded.remove(&block_index);
+                } else {
+                    self.expanded.insert(block_index);
+                }
+                self.rebuild_flat_lines();
+                self.clamp_scroll();
+            }
+            RenderedBlock::Image { url, .. } => {
+                let url = url.clone();
+                if let Some(opener) = self.opener.as_ref() {
+                    let _ = std::process::Command::new(opener)
+                        .arg(&url)
+                        .stdout(std::process::Stdio::null())
+                        .stderr(std::process::Stdio::null())
+                        .spawn();
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn active_entry(&self) -> Option<&InteractiveEntry> {
+        self.active.map(|idx| &self.interactive_blocks[idx])
+    }
+
+    fn is_active_indicator_line(&self, flat_line_index: usize) -> bool {
+        self.active_entry()
+            .is_some_and(|e| e.flat_line_index == flat_line_index)
+    }
+
+    fn is_in_active_block(&self, flat_line_index: usize) -> bool {
+        self.active_entry().is_some_and(|e| {
+            flat_line_index >= e.flat_line_index && flat_line_index < e.flat_line_end
+        })
+    }
+
+    pub(crate) fn flat_line_to_ratatui(
+        &self,
+        flat: &FlatLine,
+        flat_line_index: usize,
+    ) -> Line<'static> {
+        let collapsed_color = color_to_ratatui(&self.theme.diagram_collapsed);
+
         match flat {
             FlatLine::Styled(line) => styled_line_to_ratatui(line),
-            FlatLine::DiagramAscii(text) => Line::raw(text.clone()),
+            FlatLine::DiagramAscii(text) => {
+                if self.is_in_active_block(flat_line_index) {
+                    Line::from(vec![
+                        Span::styled("▎", Style::default().fg(collapsed_color)),
+                        Span::raw(text.clone()),
+                    ])
+                } else {
+                    Line::raw(text.clone())
+                }
+            }
             FlatLine::DiagramCollapsed {
                 node_count,
                 edge_count,
                 ..
             } => {
-                let text = format!(
-                    "  [Flowchart: {} nodes, {} edges — Tab to expand]",
-                    node_count, edge_count
-                );
-                Line::from(Span::styled(
-                    text,
-                    Style::default()
-                        .fg(color_to_ratatui(&self.theme.diagram_collapsed))
-                        .add_modifier(Modifier::DIM),
-                ))
+                if self.is_active_indicator_line(flat_line_index) {
+                    let text = format!(
+                        "▸ [Flowchart: {} nodes, {} edges — Enter to expand]",
+                        node_count, edge_count
+                    );
+                    Line::from(Span::styled(text, Style::default().fg(collapsed_color)))
+                } else {
+                    let text = format!(
+                        "  [Flowchart: {} nodes, {} edges — Enter to expand]",
+                        node_count, edge_count
+                    );
+                    Line::from(Span::styled(
+                        text,
+                        Style::default()
+                            .fg(collapsed_color)
+                            .add_modifier(Modifier::DIM),
+                    ))
+                }
             }
             FlatLine::ImagePlaceholder { alt, .. } => {
-                let text = if alt.is_empty() {
-                    "  [Image — Tab to open]".to_string()
+                let (prefix, modifier) = if self.is_active_indicator_line(flat_line_index) {
+                    ("▸", Modifier::empty())
                 } else {
-                    format!("  [Image: {} — Tab to open]", alt)
+                    (" ", Modifier::DIM)
+                };
+                let text = if alt.is_empty() {
+                    format!("{} [Image — Enter to open]", prefix)
+                } else {
+                    format!("{} [Image: {} — Enter to open]", prefix, alt)
                 };
                 Line::from(Span::styled(
                     text,
-                    Style::default()
-                        .fg(color_to_ratatui(&self.theme.diagram_collapsed))
-                        .add_modifier(Modifier::DIM),
+                    Style::default().fg(collapsed_color).add_modifier(modifier),
                 ))
             }
         }
@@ -309,9 +403,10 @@ impl PagerState {
         let lines: Vec<Line> = self
             .flat_lines
             .iter()
+            .enumerate()
             .skip(self.scroll)
             .take(height)
-            .map(|fl| self.flat_line_to_ratatui(fl))
+            .map(|(idx, fl)| self.flat_line_to_ratatui(fl, idx))
             .collect();
         let paragraph = Paragraph::new(lines).scroll((0, self.h_scroll as u16));
         f.render_widget(paragraph, area);
@@ -346,23 +441,29 @@ pub fn run_pager(content: Vec<RenderedBlock>, theme: &'static crate::theme::Them
                         let max = state.max_scroll();
                         if state.scroll < max {
                             state.scroll += 1;
+                            state.update_active_from_viewport();
                         }
                     }
                     KeyCode::Up | KeyCode::Char('k') => {
                         state.scroll = state.scroll.saturating_sub(1);
+                        state.update_active_from_viewport();
                     }
                     KeyCode::PageDown | KeyCode::Char(' ') => {
                         let max = state.max_scroll();
                         state.scroll = (state.scroll + page).min(max);
+                        state.update_active_from_viewport();
                     }
                     KeyCode::PageUp => {
                         state.scroll = state.scroll.saturating_sub(page);
+                        state.update_active_from_viewport();
                     }
                     KeyCode::Home | KeyCode::Char('g') => {
                         state.scroll = 0;
+                        state.update_active_from_viewport();
                     }
                     KeyCode::End | KeyCode::Char('G') => {
                         state.scroll = state.max_scroll();
+                        state.update_active_from_viewport();
                     }
                     KeyCode::Right | KeyCode::Char('l') => {
                         state.h_scroll = state.h_scroll.saturating_add(4);
@@ -371,7 +472,13 @@ pub fn run_pager(content: Vec<RenderedBlock>, theme: &'static crate::theme::Them
                         state.h_scroll = state.h_scroll.saturating_sub(4);
                     }
                     KeyCode::Tab => {
-                        state.toggle_diagram_at_scroll();
+                        state.cycle_active(true);
+                    }
+                    KeyCode::BackTab => {
+                        state.cycle_active(false);
+                    }
+                    KeyCode::Enter => {
+                        state.activate_current();
                     }
                     _ => {}
                 }
@@ -380,9 +487,11 @@ pub fn run_pager(content: Vec<RenderedBlock>, theme: &'static crate::theme::Them
                 MouseEventKind::ScrollDown => {
                     let max = state.max_scroll();
                     state.scroll = (state.scroll + 3).min(max);
+                    state.update_active_from_viewport();
                 }
                 MouseEventKind::ScrollUp => {
                     state.scroll = state.scroll.saturating_sub(3);
+                    state.update_active_from_viewport();
                 }
                 _ => {}
             },
@@ -391,6 +500,7 @@ pub fn run_pager(content: Vec<RenderedBlock>, theme: &'static crate::theme::Them
                 state.terminal_width = w;
                 state.rebuild_flat_lines();
                 state.clamp_scroll();
+                state.update_active_from_viewport();
             }
             _ => {}
         }
