@@ -3,6 +3,7 @@ mod mermaid;
 mod pager;
 mod parser;
 mod render;
+mod self_update;
 mod theme;
 mod watch;
 
@@ -15,8 +16,24 @@ use std::path::PathBuf;
 #[command(
     name = "mdx",
     version,
-    about = "Terminal markdown renderer with mermaid diagrams"
+    about = "Terminal markdown renderer with mermaid diagrams",
+    args_conflicts_with_subcommands = true
 )]
+struct Cli {
+    #[command(subcommand)]
+    command: Option<Commands>,
+
+    #[command(flatten)]
+    args: Args,
+}
+
+#[derive(clap::Subcommand)]
+enum Commands {
+    /// Update mdx to the latest version
+    Update,
+}
+
+#[derive(clap::Args)]
 struct Args {
     /// Markdown file to render
     file: Option<PathBuf>,
@@ -146,7 +163,13 @@ fn setup_panic_hook() {
 }
 
 fn main() -> Result<()> {
-    let args = Args::parse();
+    let cli = Cli::parse();
+
+    if let Some(Commands::Update) = cli.command {
+        return self_update::run();
+    }
+
+    let args = cli.args;
 
     // Handle --theme=list before reading input
     if args.theme.as_deref() == Some("list") {
@@ -215,18 +238,19 @@ mod tests {
 
     #[test]
     fn test_args_parse_file() {
-        let args = Args::parse_from(["mdx", "README.md"]);
-        assert_eq!(args.file, Some(PathBuf::from("README.md")));
-        assert!(!args.pager);
-        assert!(!args.no_pager);
-        assert_eq!(args.width, None);
+        let cli = Cli::parse_from(["mdx", "README.md"]);
+        assert!(cli.command.is_none());
+        assert_eq!(cli.args.file, Some(PathBuf::from("README.md")));
+        assert!(!cli.args.pager);
+        assert!(!cli.args.no_pager);
+        assert_eq!(cli.args.width, None);
     }
 
     #[test]
     fn test_args_parse_flags() {
-        let args = Args::parse_from(["mdx", "-p", "-w", "80", "test.md"]);
-        assert!(args.pager);
-        assert_eq!(args.width, Some(80));
+        let cli = Cli::parse_from(["mdx", "-p", "-w", "80", "test.md"]);
+        assert!(cli.args.pager);
+        assert_eq!(cli.args.width, Some(80));
     }
 
     #[test]
@@ -269,46 +293,52 @@ mod tests {
 
     #[test]
     fn test_args_parse_ui_theme() {
-        let args = Args::parse_from(["mdx", "--ui-theme", "hearth", "test.md"]);
-        assert_eq!(args.ui_theme, Some("hearth".to_string()));
+        let cli = Cli::parse_from(["mdx", "--ui-theme", "hearth", "test.md"]);
+        assert_eq!(cli.args.ui_theme, Some("hearth".to_string()));
     }
 
     #[test]
     fn test_args_ui_theme_default_is_none() {
-        let args = Args::parse_from(["mdx", "test.md"]);
-        assert_eq!(args.ui_theme, None);
+        let cli = Cli::parse_from(["mdx", "test.md"]);
+        assert_eq!(cli.args.ui_theme, None);
     }
 
     #[test]
     fn test_args_no_mermaid_rendering() {
-        let args = Args::parse_from(["mdx", "--no-mermaid-rendering", "test.md"]);
-        assert!(args.no_mermaid_rendering);
-        assert!(!args.split_mermaid_rendering);
+        let cli = Cli::parse_from(["mdx", "--no-mermaid-rendering", "test.md"]);
+        assert!(cli.args.no_mermaid_rendering);
+        assert!(!cli.args.split_mermaid_rendering);
     }
 
     #[test]
     fn test_args_split_mermaid_rendering() {
-        let args = Args::parse_from(["mdx", "--split-mermaid-rendering", "test.md"]);
-        assert!(args.split_mermaid_rendering);
-        assert!(!args.no_mermaid_rendering);
+        let cli = Cli::parse_from(["mdx", "--split-mermaid-rendering", "test.md"]);
+        assert!(cli.args.split_mermaid_rendering);
+        assert!(!cli.args.no_mermaid_rendering);
     }
 
     #[test]
     fn test_args_watch_flag() {
-        let args = Args::parse_from(["mdx", "--watch", "file.md"]);
-        assert!(args.watch);
+        let cli = Cli::parse_from(["mdx", "--watch", "file.md"]);
+        assert!(cli.args.watch);
     }
 
     #[test]
     fn test_args_watch_short_flag() {
-        let args = Args::parse_from(["mdx", "-W", "file.md"]);
-        assert!(args.watch);
+        let cli = Cli::parse_from(["mdx", "-W", "file.md"]);
+        assert!(cli.args.watch);
     }
 
     #[test]
     fn test_args_watch_default_false() {
-        let args = Args::parse_from(["mdx", "file.md"]);
-        assert!(!args.watch);
+        let cli = Cli::parse_from(["mdx", "file.md"]);
+        assert!(!cli.args.watch);
+    }
+
+    #[test]
+    fn test_update_subcommand() {
+        let cli = Cli::parse_from(["mdx", "update"]);
+        assert!(matches!(cli.command, Some(Commands::Update)));
     }
 
     #[test]

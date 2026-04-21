@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.4] - 2026-04-21
+
+### Added
+- Self-update command: `mdx update` checks GitHub for the latest release and replaces the binary in-place
+- Watch mode (`--watch` / `-W`): live-preview that re-renders on file save with block-level diffing and mermaid diagram caching
+- File watcher with polling fallback and content hashing for reliable change detection
+- Horizontal scrolling for wide diagrams (left/right arrow keys, Home/End)
+- Active block indicator showing which collapsible diagram is selected
+- Automatic collapse for diagrams that exceed terminal width
+- Watch mode status bar with file path, change count, and last-updated timestamp
+- Integration tests for watch mode CLI validation
+
+### Fixed
+- Terminal cleanup on all pager exit paths (no more raw-mode leaks)
+- Rust 1.95.0 toolchain pinned to prevent clippy drift between local and CI
+- CI workflow passes explicit toolchain version
+- Mermaid cache keyed by block position for correct mid-edit fallback
+- Page scroll uses live terminal height after resize
+- Debug assertion and cache fallback for block-level diff rendering
+
 ## [0.1.3] - 2026-04-18
 
 ### Added
