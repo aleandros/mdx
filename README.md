@@ -1,4 +1,14 @@
+<p align="center">
+  <img src="assets/logo.png" alt="mdx logo" width="480">
+</p>
+
 # mdx
+
+[![Crates.io](https://img.shields.io/crates/v/mermd.svg)](https://crates.io/crates/mermd)
+[![Downloads](https://img.shields.io/crates/d/mermd.svg)](https://crates.io/crates/mermd)
+[![CI](https://github.com/aleandros/mdx/actions/workflows/ci.yml/badge.svg)](https://github.com/aleandros/mdx/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/aleandros/mdx)](https://github.com/aleandros/mdx/releases/latest)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE.txt)
 
 A terminal-based Markdown renderer with Mermaid flowchart diagrams as ASCII art. Like `glow`, but with diagram support.
 
