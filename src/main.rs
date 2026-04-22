@@ -1,3 +1,4 @@
+mod embed;
 mod highlight;
 mod mermaid;
 mod pager;
