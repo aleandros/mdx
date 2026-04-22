@@ -28,6 +28,7 @@ pub struct PositionedParticipant {
     pub y: usize,
     pub width: usize,
     pub center_x: usize,
+    pub style: Option<crate::mermaid::NodeStyle>,
 }
 
 #[derive(Debug, Clone)]
@@ -38,6 +39,7 @@ pub struct PositionedMessage {
     pub label: String,
     pub arrow: ArrowStyle,
     pub self_message: bool,
+    pub edge_style: Option<crate::mermaid::MermaidEdgeStyle>,
 }
 
 #[derive(Debug, Clone)]
@@ -128,6 +130,7 @@ pub fn layout(diagram: &SequenceDiagram) -> SequenceLayout {
                 y: 0,
                 width: w,
                 center_x: cx,
+                style: p.style.clone(),
             }
         })
         .collect();
@@ -251,7 +254,7 @@ fn process_events(
                 to,
                 label,
                 arrow,
-                ..
+                edge_style,
             } => {
                 let fi = participant_index.get(from).copied().unwrap_or(0);
                 let ti = participant_index.get(to).copied().unwrap_or(0);
@@ -274,6 +277,7 @@ fn process_events(
                     label: display_label,
                     arrow: arrow.clone(),
                     self_message: self_msg,
+                    edge_style: edge_style.clone(),
                 });
 
                 if self_msg {
