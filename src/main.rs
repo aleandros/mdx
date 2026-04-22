@@ -89,29 +89,46 @@ struct Args {
     split_mermaid_rendering: bool,
 }
 
-fn read_input(args: &Args) -> Result<String> {
-    read_input_with_tty_check(args, std::io::stdin().is_terminal())
-}
-
-fn read_input_with_tty_check(args: &Args, stdin_is_terminal: bool) -> Result<String> {
-    match &args.file {
+fn read_input_from(file: Option<&std::path::Path>, stdin_is_terminal: bool) -> Result<String> {
+    match file {
         Some(path) => Ok(std::fs::read_to_string(path)?),
         None if !stdin_is_terminal => {
             let mut buf = String::new();
             std::io::stdin().read_to_string(&mut buf)?;
             Ok(buf)
         }
-        None => {
-            anyhow::bail!("No input: provide a file argument or pipe markdown to stdin");
-        }
+        None => anyhow::bail!("No input: provide a file argument or pipe markdown to stdin"),
     }
 }
 
-fn get_width(args: &Args) -> u16 {
-    if let Some(w) = args.width {
+fn resolve_width(override_width: Option<u16>) -> u16 {
+    if let Some(w) = override_width {
         return w;
     }
     crossterm::terminal::size().map(|(w, _)| w).unwrap_or(80)
+}
+
+fn resolve_mermaid_mode(no_mermaid: bool, split_mermaid: bool) -> render::MermaidMode {
+    if no_mermaid {
+        render::MermaidMode::Raw
+    } else if split_mermaid {
+        render::MermaidMode::Split
+    } else {
+        render::MermaidMode::Render
+    }
+}
+
+fn resolve_ui_theme(name: Option<&str>) -> Result<&'static theme::Theme> {
+    match name {
+        Some(n) => theme::Theme::by_name(n).ok_or_else(|| {
+            anyhow::anyhow!(
+                "Unknown UI theme '{}'. Available: {}",
+                n,
+                theme::Theme::available_names().join(", ")
+            )
+        }),
+        None => Ok(theme::Theme::default_theme()),
+    }
 }
 
 fn use_pager(args: &Args) -> bool {
@@ -206,27 +223,13 @@ fn main() -> Result<()> {
     // Validate watch args early
     validate_watch_args(&args)?;
 
-    let width = get_width(&args);
+    let width = resolve_width(args.width);
     let no_color = std::env::var("NO_COLOR").is_ok();
     let highlighter =
         highlight::Highlighter::new(args.theme.clone()).map_err(|e| anyhow::anyhow!(e))?;
-    let ui_theme = match args.ui_theme.as_deref() {
-        Some(name) => theme::Theme::by_name(name).ok_or_else(|| {
-            anyhow::anyhow!(
-                "Unknown UI theme '{}'. Available: {}",
-                name,
-                theme::Theme::available_names().join(", ")
-            )
-        })?,
-        None => theme::Theme::default_theme(),
-    };
-    let mermaid_mode = if args.no_mermaid_rendering {
-        render::MermaidMode::Raw
-    } else if args.split_mermaid_rendering {
-        render::MermaidMode::Split
-    } else {
-        render::MermaidMode::Render
-    };
+    let ui_theme = resolve_ui_theme(args.ui_theme.as_deref())?;
+    let mermaid_mode =
+        resolve_mermaid_mode(args.no_mermaid_rendering, args.split_mermaid_rendering);
 
     // Watch mode — dispatch before reading input
     if args.watch {
@@ -235,7 +238,7 @@ fn main() -> Result<()> {
         return watch::run_watch(path, width, &highlighter, ui_theme, mermaid_mode);
     }
 
-    let input = read_input(&args)?;
+    let input = read_input_from(args.file.as_deref(), std::io::stdin().is_terminal())?;
     let blocks = parser::parse_markdown(&input);
     let rendered = render::render_blocks(&blocks, width, &highlighter, ui_theme, mermaid_mode);
     if use_pager(&args) {
@@ -269,41 +272,19 @@ mod tests {
     }
 
     #[test]
-    fn test_read_input_file() {
+    fn test_read_input_from_file() {
         let dir = std::env::temp_dir().join("mdx_test");
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("test.md");
         std::fs::write(&path, "# Hello").unwrap();
-        let args = Args {
-            file: Some(path),
-            pager: false,
-            no_pager: false,
-            watch: false,
-            width: None,
-            theme: None,
-            ui_theme: None,
-            no_mermaid_rendering: false,
-            split_mermaid_rendering: false,
-        };
-        let input = read_input(&args).unwrap();
+        let input = read_input_from(Some(&path), true).unwrap();
         assert_eq!(input, "# Hello");
     }
 
     #[test]
-    fn test_read_input_no_file_no_stdin() {
-        let args = Args {
-            file: None,
-            pager: false,
-            no_pager: false,
-            watch: false,
-            width: None,
-            theme: None,
-            ui_theme: None,
-            no_mermaid_rendering: false,
-            split_mermaid_rendering: false,
-        };
-        // Simulate TTY context: stdin is a terminal, no file provided → must error
-        assert!(read_input_with_tty_check(&args, true).is_err());
+    fn test_read_input_from_no_file_no_stdin_errors() {
+        // TTY stdin with no file → must error
+        assert!(read_input_from(None, true).is_err());
     }
 
     #[test]
