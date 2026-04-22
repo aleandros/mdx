@@ -47,6 +47,8 @@ struct Cli {
 enum Commands {
     /// Update mdx to the latest version
     Update,
+    /// Render markdown into a bounded ANSI stream for embedding in other TUIs
+    Embed(EmbedArgs),
 }
 
 #[derive(clap::Args)]
@@ -78,6 +80,36 @@ struct Args {
 
     /// UI color theme for headers, text, and chrome [default: clay]
     /// Use --ui-theme=list to see available themes
+    #[arg(long)]
+    ui_theme: Option<String>,
+
+    /// Show raw mermaid source without rendering
+    #[arg(long)]
+    no_mermaid_rendering: bool,
+
+    /// Show mermaid source followed by rendered diagram
+    #[arg(long)]
+    split_mermaid_rendering: bool,
+}
+
+#[derive(clap::Args)]
+struct EmbedArgs {
+    /// Markdown file to render (stdin if omitted)
+    file: Option<PathBuf>,
+
+    /// Output width in columns; each line is cropped to fit
+    #[arg(short, long)]
+    width: Option<u16>,
+
+    /// Maximum number of output lines
+    #[arg(long)]
+    height: Option<usize>,
+
+    /// Syntax highlighting theme (use `list` to see options)
+    #[arg(long)]
+    theme: Option<String>,
+
+    /// UI color theme (use `list` to see options)
     #[arg(long)]
     ui_theme: Option<String>,
 
@@ -198,8 +230,10 @@ fn setup_panic_hook() {
 fn main() -> Result<()> {
     let cli = Cli::from_arg_matches(&Cli::command().after_help(PAGER_KEYS_HELP).get_matches())?;
 
-    if let Some(Commands::Update) = cli.command {
-        return self_update::run();
+    match cli.command {
+        Some(Commands::Update) => return self_update::run(),
+        Some(Commands::Embed(eargs)) => return run_embed(eargs),
+        None => {}
     }
 
     let args = cli.args;
@@ -249,6 +283,47 @@ fn main() -> Result<()> {
         pipe_output(&rendered, no_color)?;
     }
     Ok(())
+}
+
+fn run_embed(eargs: EmbedArgs) -> Result<()> {
+    // theme=list / ui-theme=list short-circuits
+    if eargs.theme.as_deref() == Some("list") {
+        let h = highlight::Highlighter::new(None).map_err(|e| anyhow::anyhow!(e))?;
+        for name in h.available_themes() {
+            println!("{}", name);
+        }
+        return Ok(());
+    }
+    if eargs.ui_theme.as_deref() == Some("list") {
+        for name in theme::Theme::available_names() {
+            println!("{}", name);
+        }
+        return Ok(());
+    }
+
+    let width = resolve_width(eargs.width);
+    let no_color = std::env::var("NO_COLOR").is_ok();
+    let highlighter =
+        highlight::Highlighter::new(eargs.theme.clone()).map_err(|e| anyhow::anyhow!(e))?;
+    let ui_theme = resolve_ui_theme(eargs.ui_theme.as_deref())?;
+    let mermaid_mode =
+        resolve_mermaid_mode(eargs.no_mermaid_rendering, eargs.split_mermaid_rendering);
+
+    let input = read_input_from(eargs.file.as_deref(), std::io::stdin().is_terminal())?;
+    let opts = embed::EmbedOptions {
+        width,
+        height: eargs.height,
+        no_color,
+    };
+    let mut stdout = std::io::stdout().lock();
+    embed::run(
+        &input,
+        opts,
+        &highlighter,
+        ui_theme,
+        mermaid_mode,
+        &mut stdout,
+    )
 }
 
 #[cfg(test)]
@@ -389,5 +464,42 @@ mod tests {
         };
         let result = validate_watch_args(&args);
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_embed_subcommand_basic() {
+        let cli = Cli::parse_from(["mdx", "embed", "file.md"]);
+        match cli.command {
+            Some(Commands::Embed(args)) => {
+                assert_eq!(args.file, Some(PathBuf::from("file.md")));
+                assert_eq!(args.width, None);
+                assert_eq!(args.height, None);
+            }
+            _ => panic!("expected Embed subcommand"),
+        }
+    }
+
+    #[test]
+    fn test_embed_subcommand_width_height() {
+        let cli = Cli::parse_from(["mdx", "embed", "--width", "40", "--height", "10", "file.md"]);
+        match cli.command {
+            Some(Commands::Embed(args)) => {
+                assert_eq!(args.width, Some(40));
+                assert_eq!(args.height, Some(10));
+            }
+            _ => panic!("expected Embed subcommand"),
+        }
+    }
+
+    #[test]
+    fn test_embed_subcommand_rejects_pager_flag() {
+        let result = Cli::try_parse_from(["mdx", "embed", "--pager", "file.md"]);
+        assert!(result.is_err(), "embed must not accept --pager");
+    }
+
+    #[test]
+    fn test_embed_subcommand_rejects_watch_flag() {
+        let result = Cli::try_parse_from(["mdx", "embed", "--watch", "file.md"]);
+        assert!(result.is_err(), "embed must not accept --watch");
     }
 }

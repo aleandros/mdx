@@ -1,14 +1,12 @@
 use crate::render::{RenderedBlock, StyledLine, StyledSpan};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-#[allow(dead_code)]
 pub struct EmbedOptions {
     pub width: u16,
     pub height: Option<usize>,
     pub no_color: bool,
 }
 
-#[allow(dead_code)]
 pub fn run<W: std::io::Write>(
     input: &str,
     opts: EmbedOptions,
