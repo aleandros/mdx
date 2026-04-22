@@ -39,6 +39,28 @@ mdx README.md --pager
 mdx README.md --width 120
 ```
 
+### Embedding in other programs
+
+Use `mdx embed` when another program needs the rendered output as a bounded ANSI stream. It never opens a pager, never touches the alternate screen, and always emits ANSI color (set `NO_COLOR` to disable).
+
+```bash
+# Render into a 40-column, 10-row box (caller handles scrolling)
+mdx embed --width 40 --height 10 README.md
+
+# From stdin
+cat README.md | mdx embed --width 60
+
+# Drop color for plain output
+NO_COLOR=1 mdx embed --width 40 README.md
+```
+
+Output contract:
+
+- Every line ends with `\n`; each line's display width ≤ `--width`.
+- Total lines ≤ `--height` when provided.
+- No pager, no alt-screen, no terminal escape sequences other than SGR color/style.
+- Mermaid diagrams wider than `--width` are cropped (not reflowed).
+
 ### Interactive Pager
 
 When output is a TTY, mdx launches an interactive pager with vim-style keybindings:
