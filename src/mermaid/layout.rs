@@ -448,6 +448,7 @@ mod tests {
             id: id.to_string(),
             label: label.to_string(),
             shape: NodeShape::Rect,
+            node_style: None,
         }
     }
 
@@ -457,6 +458,7 @@ mod tests {
             to: to.to_string(),
             label: None,
             style: EdgeStyle::Arrow,
+            edge_style: None,
         }
     }
 
@@ -560,6 +562,7 @@ mod tests {
             id: "D".to_string(),
             label: label.to_string(),
             shape: NodeShape::Diamond,
+            node_style: None,
         };
         let chart = simple_chart(vec![node], vec![]);
         let result = layout(&chart);

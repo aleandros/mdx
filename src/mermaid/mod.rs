@@ -28,11 +28,25 @@ pub enum EdgeStyle {
     Thick,
 }
 
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct NodeStyle {
+    pub fill: Option<crate::render::Color>,
+    pub stroke: Option<crate::render::Color>,
+    pub color: Option<crate::render::Color>,
+}
+
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct MermaidEdgeStyle {
+    pub stroke: Option<crate::render::Color>,
+    pub label_color: Option<crate::render::Color>,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Node {
     pub id: String,
     pub label: String,
     pub shape: NodeShape,
+    pub node_style: Option<NodeStyle>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -41,6 +55,7 @@ pub struct Edge {
     pub to: String,
     pub label: Option<String>,
     pub style: EdgeStyle,
+    pub edge_style: Option<MermaidEdgeStyle>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
