@@ -1,4 +1,5 @@
 pub mod ascii;
+pub mod color;
 pub mod layout;
 pub mod parse;
 pub mod sequence;
