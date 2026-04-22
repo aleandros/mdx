@@ -12,6 +12,11 @@ pub struct Theme {
     pub horizontal_rule: Color,
     pub diagram_border: Color,
     pub diagram_collapsed: Color,
+    pub diagram_node_fill: Color,
+    pub diagram_node_border: Color,
+    pub diagram_node_text: Color,
+    pub diagram_edge_stroke: Color,
+    pub diagram_edge_label: Color,
 }
 
 impl Theme {
@@ -29,6 +34,29 @@ impl Theme {
 
     pub fn available_names() -> &'static [&'static str] {
         &["clay", "hearth"]
+    }
+
+    pub fn all_colors(&self) -> Vec<&Color> {
+        let mut colors: Vec<&Color> = Vec::new();
+        for c in &self.heading {
+            colors.push(c);
+        }
+        colors.extend_from_slice(&[
+            &self.body,
+            &self.bold,
+            &self.italic,
+            &self.link,
+            &self.inline_code,
+            &self.horizontal_rule,
+            &self.diagram_border,
+            &self.diagram_collapsed,
+            &self.diagram_node_fill,
+            &self.diagram_node_border,
+            &self.diagram_node_text,
+            &self.diagram_edge_stroke,
+            &self.diagram_edge_label,
+        ]);
+        colors
     }
 }
 
@@ -50,6 +78,11 @@ static CLAY: Theme = Theme {
     horizontal_rule: Color::Rgb(90, 80, 60),
     diagram_border: Color::Rgb(160, 120, 60),
     diagram_collapsed: Color::Rgb(120, 150, 100),
+    diagram_node_fill: Color::Rgb(160, 120, 60),
+    diagram_node_border: Color::Rgb(180, 90, 60),
+    diagram_node_text: Color::Rgb(190, 180, 160),
+    diagram_edge_stroke: Color::Rgb(120, 160, 80),
+    diagram_edge_label: Color::Rgb(130, 140, 110),
 };
 
 static HEARTH: Theme = Theme {
@@ -70,6 +103,11 @@ static HEARTH: Theme = Theme {
     horizontal_rule: Color::Rgb(110, 100, 80),
     diagram_border: Color::Rgb(170, 130, 70),
     diagram_collapsed: Color::Rgb(100, 170, 90),
+    diagram_node_fill: Color::Rgb(200, 160, 80),
+    diagram_node_border: Color::Rgb(200, 100, 50),
+    diagram_node_text: Color::Rgb(210, 200, 180),
+    diagram_edge_stroke: Color::Rgb(100, 170, 90),
+    diagram_edge_label: Color::Rgb(150, 140, 120),
 };
 
 #[cfg(test)]
