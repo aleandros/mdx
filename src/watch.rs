@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use crossterm::{
-    event::{self, EnableMouseCapture, Event, KeyCode, KeyEventKind, MouseEventKind},
+    event::{self, EnableMouseCapture, Event},
     execute,
     terminal::{EnterAlternateScreen, enable_raw_mode},
 };
@@ -21,7 +21,7 @@ use ratatui::{
     widgets::Paragraph,
 };
 
-use crate::pager::{PagerState, TerminalGuard};
+use crate::pager::{KeyAction, PagerState, TerminalGuard};
 use crate::render::{self, MermaidMode, RenderedBlock};
 
 pub fn content_hash(content: &str) -> u64 {
@@ -310,8 +310,12 @@ pub fn run_watch(
 
                 pager.draw_content(f, chunks[0]);
 
-                let status_widget = Paragraph::new(status.render());
-                f.render_widget(status_widget, chunks[1]);
+                let bottom_line = if let Some(search_line) = pager.search_bar_line() {
+                    search_line
+                } else {
+                    status.render()
+                };
+                f.render_widget(Paragraph::new(bottom_line), chunks[1]);
             })?;
             needs_redraw = false;
         }
@@ -319,90 +323,14 @@ pub fn run_watch(
         // 2. Poll for keyboard/mouse events (50ms timeout)
         if event::poll(Duration::from_millis(50))? {
             match event::read()? {
-                Event::Key(key) if key.kind == KeyEventKind::Press => {
-                    let page = (pager.terminal_height as usize).saturating_sub(1).max(1);
-                    match key.code {
-                        KeyCode::Char('q') | KeyCode::Esc => break,
-                        KeyCode::Down | KeyCode::Char('j') => {
-                            let max = pager.max_scroll();
-                            if pager.scroll < max {
-                                pager.scroll += 1;
-                                pager.update_active_from_viewport();
-                                needs_redraw = true;
-                            }
-                        }
-                        KeyCode::Up | KeyCode::Char('k') if pager.scroll > 0 => {
-                            pager.scroll = pager.scroll.saturating_sub(1);
-                            pager.update_active_from_viewport();
-                            needs_redraw = true;
-                        }
-                        KeyCode::PageDown | KeyCode::Char(' ') => {
-                            let max = pager.max_scroll();
-                            let new_scroll = (pager.scroll + page).min(max);
-                            if new_scroll != pager.scroll {
-                                pager.scroll = new_scroll;
-                                pager.update_active_from_viewport();
-                                needs_redraw = true;
-                            }
-                        }
-                        KeyCode::PageUp => {
-                            let new_scroll = pager.scroll.saturating_sub(page);
-                            if new_scroll != pager.scroll {
-                                pager.scroll = new_scroll;
-                                pager.update_active_from_viewport();
-                                needs_redraw = true;
-                            }
-                        }
-                        KeyCode::Home | KeyCode::Char('g') if pager.scroll != 0 => {
-                            pager.scroll = 0;
-                            pager.update_active_from_viewport();
-                            needs_redraw = true;
-                        }
-                        KeyCode::End | KeyCode::Char('G') => {
-                            let max = pager.max_scroll();
-                            if pager.scroll != max {
-                                pager.scroll = max;
-                                pager.update_active_from_viewport();
-                                needs_redraw = true;
-                            }
-                        }
-                        KeyCode::Right | KeyCode::Char('l') => {
-                            pager.h_scroll = pager.h_scroll.saturating_add(4);
-                            needs_redraw = true;
-                        }
-                        KeyCode::Left | KeyCode::Char('h') => {
-                            pager.h_scroll = pager.h_scroll.saturating_sub(4);
-                            needs_redraw = true;
-                        }
-                        KeyCode::Tab => {
-                            pager.cycle_active(true);
-                            needs_redraw = true;
-                        }
-                        KeyCode::BackTab => {
-                            pager.cycle_active(false);
-                            needs_redraw = true;
-                        }
-                        KeyCode::Enter => {
-                            pager.activate_current();
-                            needs_redraw = true;
-                        }
-                        _ => {}
-                    }
-                }
-                Event::Mouse(mouse) => match mouse.kind {
-                    MouseEventKind::ScrollDown => {
-                        let max = pager.max_scroll();
-                        pager.scroll = (pager.scroll + 3).min(max);
-                        pager.update_active_from_viewport();
-                        needs_redraw = true;
-                    }
-                    MouseEventKind::ScrollUp => {
-                        pager.scroll = pager.scroll.saturating_sub(3);
-                        pager.update_active_from_viewport();
-                        needs_redraw = true;
-                    }
-                    _ => {}
+                Event::Key(key) => match pager.handle_key_event(key) {
+                    KeyAction::Quit => break,
+                    KeyAction::Redraw => needs_redraw = true,
+                    KeyAction::Nothing => {}
                 },
+                Event::Mouse(mouse) if pager.handle_mouse_event(mouse) => {
+                    needs_redraw = true;
+                }
                 Event::Resize(w, h) => {
                     let new_content_height = h.saturating_sub(1);
                     pager.terminal_height = new_content_height;

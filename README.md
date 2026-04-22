@@ -41,12 +41,39 @@ mdx README.md --width 120
 
 ### Interactive Pager
 
-When output is a TTY, mdx launches an interactive pager:
+When output is a TTY, mdx launches an interactive pager with vim-style keybindings:
 
-- `j`/`k`, arrow keys, Page Up/Down: scroll
-- `Tab`: expand/collapse diagrams
-- `q`/`Esc`: quit
-- Mouse scroll supported
+**Scrolling:**
+| Key | Action |
+|-----|--------|
+| `j` / `k` / Arrow keys | Scroll one line |
+| `Space` / `Page Down` | Page down |
+| `Page Up` | Page up |
+| `Ctrl-d` / `Ctrl-u` | Half-page down / up |
+| `Ctrl-f` / `Ctrl-b` | Full page down / up |
+| `g` / `Home` | Go to beginning |
+| `G` / `End` | Go to end |
+| `h` / `l` / Left / Right | Horizontal scroll |
+| Mouse scroll | Scroll (3 lines) |
+
+**Search:**
+| Key | Action |
+|-----|--------|
+| `/` | Forward search |
+| `?` | Backward search |
+| `n` | Next match |
+| `N` | Previous match |
+
+**Diagrams & Images:**
+| Key | Action |
+|-----|--------|
+| `Tab` / `Shift-Tab` | Cycle through diagrams/images |
+| `Enter` | Expand/collapse diagram, open image |
+
+**General:**
+| Key | Action |
+|-----|--------|
+| `q` / `Esc` | Quit |
 
 Large diagrams are collapsed by default and can be expanded with Tab.
 

@@ -8,9 +8,24 @@ mod theme;
 mod watch;
 
 use anyhow::Result;
-use clap::Parser;
+use clap::{CommandFactory, FromArgMatches, Parser};
 use std::io::{IsTerminal, Read, Write};
 use std::path::PathBuf;
+
+const PAGER_KEYS_HELP: &str = "\
+Pager keybindings:
+  j/k, arrows        Scroll one line
+  Space, PgDn/PgUp   Page down / up
+  Ctrl-d / Ctrl-u     Half-page down / up
+  Ctrl-f / Ctrl-b     Full page down / up
+  g / G               Go to beginning / end
+  h/l, Left/Right     Horizontal scroll
+  /                   Forward search
+  ?                   Backward search
+  n / N               Next / previous match
+  Tab / Shift-Tab     Cycle diagrams/images
+  Enter               Expand/collapse diagram, open image
+  q / Esc             Quit";
 
 #[derive(Parser)]
 #[command(
@@ -163,7 +178,7 @@ fn setup_panic_hook() {
 }
 
 fn main() -> Result<()> {
-    let cli = Cli::parse();
+    let cli = Cli::from_arg_matches(&Cli::command().after_help(PAGER_KEYS_HELP).get_matches())?;
 
     if let Some(Commands::Update) = cli.command {
         return self_update::run();

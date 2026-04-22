@@ -4,7 +4,8 @@ use std::io::stdout;
 use anyhow::Result;
 use crossterm::{
     event::{
-        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, MouseEventKind,
+        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind,
+        KeyModifiers, MouseEventKind,
     },
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
@@ -12,6 +13,7 @@ use crossterm::{
 use ratatui::{
     Terminal,
     backend::CrosstermBackend,
+    layout::{Constraint, Direction, Layout},
     style::{Color as RColor, Modifier, Style},
     text::{Line, Span},
     widgets::Paragraph,
@@ -100,6 +102,20 @@ fn styled_line_to_ratatui(line: &StyledLine) -> Line<'static> {
     Line::from(line.spans.iter().map(span_to_ratatui).collect::<Vec<_>>())
 }
 
+// ─── Search ───────────────────────────────────────────────────────────────
+
+#[derive(Clone, Copy)]
+pub(crate) enum SearchDirection {
+    Forward,
+    Backward,
+}
+
+pub(crate) enum KeyAction {
+    Quit,
+    Redraw,
+    Nothing,
+}
+
 // ─── FlatLine ──────────────────────────────────────────────────────────────
 
 pub(crate) enum FlatLine {
@@ -141,6 +157,13 @@ pub(crate) struct PagerState {
     pub(crate) terminal_width: u16,
     opener: Option<&'static str>,
     theme: &'static crate::theme::Theme,
+    // Search state
+    search_mode: Option<SearchDirection>,
+    search_input: String,
+    search_query: String,
+    search_matches: Vec<usize>,
+    search_current: Option<usize>,
+    search_direction: SearchDirection,
 }
 
 impl PagerState {
@@ -162,6 +185,12 @@ impl PagerState {
             terminal_width,
             opener: detect_opener(),
             theme,
+            search_mode: None,
+            search_input: String::new(),
+            search_query: String::new(),
+            search_matches: Vec::new(),
+            search_current: None,
+            search_direction: SearchDirection::Forward,
         };
         state.rebuild_flat_lines();
         state.update_active_from_viewport();
@@ -243,6 +272,10 @@ impl PagerState {
                 .iter()
                 .position(|e| e.block_index == bi)
         });
+
+        if !self.search_query.is_empty() {
+            self.recompute_matches();
+        }
     }
 
     pub(crate) fn max_scroll(&self) -> usize {
@@ -407,10 +440,374 @@ impl PagerState {
             .enumerate()
             .skip(self.scroll)
             .take(height)
-            .map(|(idx, fl)| self.flat_line_to_ratatui(fl, idx))
+            .map(|(idx, fl)| {
+                let mut line = self.flat_line_to_ratatui(fl, idx);
+                if self.is_current_search_match(idx) {
+                    for span in &mut line.spans {
+                        span.style = span.style.bg(RColor::DarkGray);
+                    }
+                }
+                line
+            })
             .collect();
         let paragraph = Paragraph::new(lines).scroll((0, self.h_scroll as u16));
         f.render_widget(paragraph, area);
+    }
+    // ─── Search ────────────────────────────────────────────────────────────
+
+    fn flat_line_text(flat: &FlatLine) -> String {
+        match flat {
+            FlatLine::Styled(line) | FlatLine::DiagramAscii(line) => {
+                line.spans.iter().map(|s| s.text.as_str()).collect()
+            }
+            FlatLine::DiagramCollapsed {
+                node_count,
+                edge_count,
+                ..
+            } => {
+                format!("Flowchart: {} nodes, {} edges", node_count, edge_count)
+            }
+            FlatLine::ImagePlaceholder { alt, .. } => alt.clone(),
+        }
+    }
+
+    fn recompute_matches(&mut self) {
+        self.search_matches.clear();
+        self.search_current = None;
+        let query = self.search_query.to_lowercase();
+        for (i, fl) in self.flat_lines.iter().enumerate() {
+            if Self::flat_line_text(fl).to_lowercase().contains(&query) {
+                self.search_matches.push(i);
+            }
+        }
+        if !self.search_matches.is_empty() {
+            let pos = self.search_matches.iter().position(|&m| m >= self.scroll);
+            self.search_current = Some(pos.unwrap_or(0));
+        }
+    }
+
+    fn enter_search(&mut self, direction: SearchDirection) {
+        self.search_mode = Some(direction);
+        self.search_direction = direction;
+        self.search_input.clear();
+    }
+
+    fn cancel_search(&mut self) {
+        self.search_mode = None;
+        self.search_input.clear();
+    }
+
+    fn confirm_search(&mut self) {
+        self.search_mode = None;
+        let query = std::mem::take(&mut self.search_input);
+        if query.is_empty() {
+            self.search_query.clear();
+            self.search_matches.clear();
+            self.search_current = None;
+            return;
+        }
+        self.search_query = query;
+        self.recompute_matches();
+        if !self.search_matches.is_empty() {
+            match self.search_direction {
+                SearchDirection::Forward => {
+                    let pos = self.search_matches.iter().position(|&m| m >= self.scroll);
+                    self.search_current = Some(pos.unwrap_or(0));
+                }
+                SearchDirection::Backward => {
+                    let viewport_end = self.scroll + self.terminal_height as usize;
+                    let pos = self.search_matches.iter().rposition(|&m| m < viewport_end);
+                    self.search_current = Some(pos.unwrap_or(self.search_matches.len() - 1));
+                }
+            }
+            self.scroll_to_current_match();
+        }
+    }
+
+    fn scroll_to_current_match(&mut self) {
+        if let Some(idx) = self.search_current {
+            let line = self.search_matches[idx];
+            let height = self.terminal_height as usize;
+            if line < self.scroll || line >= self.scroll + height {
+                self.scroll = line.saturating_sub(height / 3);
+                self.clamp_scroll();
+            }
+            self.update_active_from_viewport();
+        }
+    }
+
+    fn next_match(&mut self) -> bool {
+        if self.search_matches.is_empty() {
+            return false;
+        }
+        let len = self.search_matches.len();
+        self.search_current = Some(match self.search_current {
+            Some(idx) => (idx + 1) % len,
+            None => 0,
+        });
+        self.scroll_to_current_match();
+        true
+    }
+
+    fn prev_match(&mut self) -> bool {
+        if self.search_matches.is_empty() {
+            return false;
+        }
+        let len = self.search_matches.len();
+        self.search_current = Some(match self.search_current {
+            Some(idx) => (idx + len - 1) % len,
+            None => len - 1,
+        });
+        self.scroll_to_current_match();
+        true
+    }
+
+    fn is_current_search_match(&self, flat_line_index: usize) -> bool {
+        self.search_current
+            .is_some_and(|c| self.search_matches[c] == flat_line_index)
+    }
+
+    pub(crate) fn search_bar_line(&self) -> Option<Line<'static>> {
+        if let Some(dir) = &self.search_mode {
+            let prefix = match dir {
+                SearchDirection::Forward => "/",
+                SearchDirection::Backward => "?",
+            };
+            Some(Line::from(vec![
+                Span::styled(
+                    format!("{}{}", prefix, self.search_input),
+                    Style::default().fg(RColor::White),
+                ),
+                Span::styled("█", Style::default().fg(RColor::DarkGray)),
+            ]))
+        } else if !self.search_query.is_empty() && !self.search_matches.is_empty() {
+            let prefix = match self.search_direction {
+                SearchDirection::Forward => "/",
+                SearchDirection::Backward => "?",
+            };
+            let current = self.search_current.map(|c| c + 1).unwrap_or(0);
+            let total = self.search_matches.len();
+            Some(Line::from(Span::styled(
+                format!("{}{} [{}/{}]", prefix, self.search_query, current, total),
+                Style::default().fg(RColor::DarkGray),
+            )))
+        } else if !self.search_query.is_empty() {
+            Some(Line::from(Span::styled(
+                format!("Pattern not found: {}", self.search_query),
+                Style::default().fg(RColor::Red),
+            )))
+        } else {
+            None
+        }
+    }
+
+    // ─── Key handling ─────────────────────────────────────────────────────
+
+    fn handle_search_input(&mut self, key: KeyEvent) -> KeyAction {
+        match key.code {
+            KeyCode::Esc => {
+                self.cancel_search();
+                KeyAction::Redraw
+            }
+            KeyCode::Enter => {
+                self.confirm_search();
+                KeyAction::Redraw
+            }
+            KeyCode::Backspace => {
+                self.search_input.pop();
+                KeyAction::Redraw
+            }
+            KeyCode::Char(c) => {
+                self.search_input.push(c);
+                KeyAction::Redraw
+            }
+            _ => KeyAction::Nothing,
+        }
+    }
+
+    pub(crate) fn handle_key_event(&mut self, key: KeyEvent) -> KeyAction {
+        if key.kind != KeyEventKind::Press {
+            return KeyAction::Nothing;
+        }
+
+        if self.search_mode.is_some() {
+            return self.handle_search_input(key);
+        }
+
+        let page = (self.terminal_height as usize).saturating_sub(1).max(1);
+        let half_page = (page / 2).max(1);
+
+        // Check Ctrl combinations first
+        if key.modifiers.contains(KeyModifiers::CONTROL) {
+            return match key.code {
+                KeyCode::Char('d') => {
+                    let max = self.max_scroll();
+                    let new = (self.scroll + half_page).min(max);
+                    if new != self.scroll {
+                        self.scroll = new;
+                        self.update_active_from_viewport();
+                        KeyAction::Redraw
+                    } else {
+                        KeyAction::Nothing
+                    }
+                }
+                KeyCode::Char('u') => {
+                    let new = self.scroll.saturating_sub(half_page);
+                    if new != self.scroll {
+                        self.scroll = new;
+                        self.update_active_from_viewport();
+                        KeyAction::Redraw
+                    } else {
+                        KeyAction::Nothing
+                    }
+                }
+                KeyCode::Char('f') => {
+                    let max = self.max_scroll();
+                    let new = (self.scroll + page).min(max);
+                    if new != self.scroll {
+                        self.scroll = new;
+                        self.update_active_from_viewport();
+                        KeyAction::Redraw
+                    } else {
+                        KeyAction::Nothing
+                    }
+                }
+                KeyCode::Char('b') => {
+                    let new = self.scroll.saturating_sub(page);
+                    if new != self.scroll {
+                        self.scroll = new;
+                        self.update_active_from_viewport();
+                        KeyAction::Redraw
+                    } else {
+                        KeyAction::Nothing
+                    }
+                }
+                _ => KeyAction::Nothing,
+            };
+        }
+
+        match key.code {
+            KeyCode::Char('q') | KeyCode::Esc => KeyAction::Quit,
+            KeyCode::Down | KeyCode::Char('j') => {
+                let max = self.max_scroll();
+                if self.scroll < max {
+                    self.scroll += 1;
+                    self.update_active_from_viewport();
+                    KeyAction::Redraw
+                } else {
+                    KeyAction::Nothing
+                }
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                if self.scroll > 0 {
+                    self.scroll = self.scroll.saturating_sub(1);
+                    self.update_active_from_viewport();
+                    KeyAction::Redraw
+                } else {
+                    KeyAction::Nothing
+                }
+            }
+            KeyCode::PageDown | KeyCode::Char(' ') => {
+                let max = self.max_scroll();
+                let new = (self.scroll + page).min(max);
+                if new != self.scroll {
+                    self.scroll = new;
+                    self.update_active_from_viewport();
+                    KeyAction::Redraw
+                } else {
+                    KeyAction::Nothing
+                }
+            }
+            KeyCode::PageUp => {
+                let new = self.scroll.saturating_sub(page);
+                if new != self.scroll {
+                    self.scroll = new;
+                    self.update_active_from_viewport();
+                    KeyAction::Redraw
+                } else {
+                    KeyAction::Nothing
+                }
+            }
+            KeyCode::Home | KeyCode::Char('g') => {
+                if self.scroll != 0 {
+                    self.scroll = 0;
+                    self.update_active_from_viewport();
+                    KeyAction::Redraw
+                } else {
+                    KeyAction::Nothing
+                }
+            }
+            KeyCode::End | KeyCode::Char('G') => {
+                let max = self.max_scroll();
+                if self.scroll != max {
+                    self.scroll = max;
+                    self.update_active_from_viewport();
+                    KeyAction::Redraw
+                } else {
+                    KeyAction::Nothing
+                }
+            }
+            KeyCode::Right | KeyCode::Char('l') => {
+                self.h_scroll = self.h_scroll.saturating_add(4);
+                KeyAction::Redraw
+            }
+            KeyCode::Left | KeyCode::Char('h') => {
+                self.h_scroll = self.h_scroll.saturating_sub(4);
+                KeyAction::Redraw
+            }
+            KeyCode::Tab => {
+                self.cycle_active(true);
+                KeyAction::Redraw
+            }
+            KeyCode::BackTab => {
+                self.cycle_active(false);
+                KeyAction::Redraw
+            }
+            KeyCode::Enter => {
+                self.activate_current();
+                KeyAction::Redraw
+            }
+            KeyCode::Char('/') => {
+                self.enter_search(SearchDirection::Forward);
+                KeyAction::Redraw
+            }
+            KeyCode::Char('?') => {
+                self.enter_search(SearchDirection::Backward);
+                KeyAction::Redraw
+            }
+            KeyCode::Char('n') => {
+                if self.next_match() {
+                    KeyAction::Redraw
+                } else {
+                    KeyAction::Nothing
+                }
+            }
+            KeyCode::Char('N') => {
+                if self.prev_match() {
+                    KeyAction::Redraw
+                } else {
+                    KeyAction::Nothing
+                }
+            }
+            _ => KeyAction::Nothing,
+        }
+    }
+
+    pub(crate) fn handle_mouse_event(&mut self, mouse: crossterm::event::MouseEvent) -> bool {
+        match mouse.kind {
+            MouseEventKind::ScrollDown => {
+                let max = self.max_scroll();
+                self.scroll = (self.scroll + 3).min(max);
+                self.update_active_from_viewport();
+                true
+            }
+            MouseEventKind::ScrollUp => {
+                self.scroll = self.scroll.saturating_sub(3);
+                self.update_active_from_viewport();
+                true
+            }
+            _ => false,
+        }
     }
 }
 
@@ -430,72 +827,27 @@ pub fn run_pager(content: Vec<RenderedBlock>, theme: &'static crate::theme::Them
 
     loop {
         terminal.draw(|f| {
-            state.draw_content(f, f.area());
+            let area = f.area();
+            if let Some(search_line) = state.search_bar_line() {
+                let chunks = Layout::default()
+                    .direction(Direction::Vertical)
+                    .constraints([Constraint::Min(0), Constraint::Length(1)])
+                    .split(area);
+                state.draw_content(f, chunks[0]);
+                f.render_widget(Paragraph::new(search_line), chunks[1]);
+            } else {
+                state.draw_content(f, area);
+            }
         })?;
 
         match event::read()? {
-            Event::Key(key) if key.kind == KeyEventKind::Press => {
-                let page = (state.terminal_height as usize).saturating_sub(1).max(1);
-                match key.code {
-                    KeyCode::Char('q') | KeyCode::Esc => break,
-                    KeyCode::Down | KeyCode::Char('j') => {
-                        let max = state.max_scroll();
-                        if state.scroll < max {
-                            state.scroll += 1;
-                            state.update_active_from_viewport();
-                        }
-                    }
-                    KeyCode::Up | KeyCode::Char('k') => {
-                        state.scroll = state.scroll.saturating_sub(1);
-                        state.update_active_from_viewport();
-                    }
-                    KeyCode::PageDown | KeyCode::Char(' ') => {
-                        let max = state.max_scroll();
-                        state.scroll = (state.scroll + page).min(max);
-                        state.update_active_from_viewport();
-                    }
-                    KeyCode::PageUp => {
-                        state.scroll = state.scroll.saturating_sub(page);
-                        state.update_active_from_viewport();
-                    }
-                    KeyCode::Home | KeyCode::Char('g') => {
-                        state.scroll = 0;
-                        state.update_active_from_viewport();
-                    }
-                    KeyCode::End | KeyCode::Char('G') => {
-                        state.scroll = state.max_scroll();
-                        state.update_active_from_viewport();
-                    }
-                    KeyCode::Right | KeyCode::Char('l') => {
-                        state.h_scroll = state.h_scroll.saturating_add(4);
-                    }
-                    KeyCode::Left | KeyCode::Char('h') => {
-                        state.h_scroll = state.h_scroll.saturating_sub(4);
-                    }
-                    KeyCode::Tab => {
-                        state.cycle_active(true);
-                    }
-                    KeyCode::BackTab => {
-                        state.cycle_active(false);
-                    }
-                    KeyCode::Enter => {
-                        state.activate_current();
-                    }
-                    _ => {}
-                }
-            }
-            Event::Mouse(mouse) => match mouse.kind {
-                MouseEventKind::ScrollDown => {
-                    let max = state.max_scroll();
-                    state.scroll = (state.scroll + 3).min(max);
-                    state.update_active_from_viewport();
-                }
-                MouseEventKind::ScrollUp => {
-                    state.scroll = state.scroll.saturating_sub(3);
-                    state.update_active_from_viewport();
-                }
-                _ => {}
+            Event::Key(key) => match state.handle_key_event(key) {
+                KeyAction::Quit => break,
+                KeyAction::Redraw | KeyAction::Nothing => {}
             },
+            Event::Mouse(mouse) => {
+                state.handle_mouse_event(mouse);
+            }
             Event::Resize(w, h) => {
                 state.terminal_height = h;
                 state.terminal_width = w;
