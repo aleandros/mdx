@@ -28,6 +28,7 @@ pub struct PositionedParticipant {
     pub y: usize,
     pub width: usize,
     pub center_x: usize,
+    pub style: Option<crate::mermaid::NodeStyle>,
 }
 
 #[derive(Debug, Clone)]
@@ -38,6 +39,7 @@ pub struct PositionedMessage {
     pub label: String,
     pub arrow: ArrowStyle,
     pub self_message: bool,
+    pub edge_style: Option<crate::mermaid::MermaidEdgeStyle>,
 }
 
 #[derive(Debug, Clone)]
@@ -128,6 +130,7 @@ pub fn layout(diagram: &SequenceDiagram) -> SequenceLayout {
                 y: 0,
                 width: w,
                 center_x: cx,
+                style: p.style.clone(),
             }
         })
         .collect();
@@ -251,6 +254,7 @@ fn process_events(
                 to,
                 label,
                 arrow,
+                edge_style,
             } => {
                 let fi = participant_index.get(from).copied().unwrap_or(0);
                 let ti = participant_index.get(to).copied().unwrap_or(0);
@@ -273,6 +277,7 @@ fn process_events(
                     label: display_label,
                     arrow: arrow.clone(),
                     self_message: self_msg,
+                    edge_style: edge_style.clone(),
                 });
 
                 if self_msg {
@@ -532,6 +537,7 @@ mod tests {
                 .map(|(id, label)| Participant {
                     id: id.to_string(),
                     label: label.to_string(),
+                    style: None,
                 })
                 .collect(),
             events,
@@ -569,6 +575,7 @@ mod tests {
                 to: "B".to_string(),
                 label: "Hello".to_string(),
                 arrow: ArrowStyle::SolidArrow,
+                edge_style: None,
             }],
         );
         let result = layout(&diagram);
@@ -586,6 +593,7 @@ mod tests {
                 to: "A".to_string(),
                 label: "Think".to_string(),
                 arrow: ArrowStyle::SolidArrow,
+                edge_style: None,
             }],
         );
         let result = layout(&diagram);
@@ -602,6 +610,7 @@ mod tests {
                 to: "B".to_string(),
                 label: "Hello".to_string(),
                 arrow: ArrowStyle::SolidArrow,
+                edge_style: None,
             }],
         );
         let result = layout(&diagram);
@@ -623,6 +632,7 @@ mod tests {
                         to: "B".to_string(),
                         label: "Ping".to_string(),
                         arrow: ArrowStyle::SolidArrow,
+                        edge_style: None,
                     }],
                 }],
             }],
@@ -640,10 +650,12 @@ mod tests {
                 Participant {
                     id: "A".to_string(),
                     label: "A".to_string(),
+                    style: None,
                 },
                 Participant {
                     id: "B".to_string(),
                     label: "B".to_string(),
+                    style: None,
                 },
             ],
             events: vec![
@@ -652,12 +664,14 @@ mod tests {
                     to: "B".to_string(),
                     label: "First".to_string(),
                     arrow: ArrowStyle::SolidArrow,
+                    edge_style: None,
                 },
                 Event::Message {
                     from: "B".to_string(),
                     to: "A".to_string(),
                     label: "Second".to_string(),
                     arrow: ArrowStyle::DashedArrow,
+                    edge_style: None,
                 },
             ],
             autonumber: true,
@@ -677,6 +691,7 @@ mod tests {
                     to: "B".to_string(),
                     label: "Request".to_string(),
                     arrow: ArrowStyle::SolidArrow,
+                    edge_style: None,
                 },
                 Event::Activate {
                     participant: "B".to_string(),
@@ -686,6 +701,7 @@ mod tests {
                     to: "A".to_string(),
                     label: "Response".to_string(),
                     arrow: ArrowStyle::DashedArrow,
+                    edge_style: None,
                 },
                 Event::Deactivate {
                     participant: "B".to_string(),

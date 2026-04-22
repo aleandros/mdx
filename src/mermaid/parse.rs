@@ -2,7 +2,8 @@ use std::collections::HashMap;
 
 use anyhow::{Context, bail};
 
-use super::{Direction, Edge, EdgeStyle, FlowChart, Node, NodeShape};
+use super::color::{parse_edge_style_props, parse_node_style_props};
+use super::{Direction, Edge, EdgeStyle, FlowChart, MermaidEdgeStyle, Node, NodeShape, NodeStyle};
 
 // ---------------------------------------------------------------------------
 // Public entry point
@@ -36,13 +37,91 @@ pub fn parse_flowchart(input: &str) -> anyhow::Result<FlowChart> {
     let mut node_map: HashMap<String, Node> = HashMap::new();
     let mut edges: Vec<Edge> = Vec::new();
 
+    let mut class_defs: HashMap<String, NodeStyle> = HashMap::new();
+    let mut class_assignments: Vec<(Vec<String>, String)> = Vec::new();
+    let mut link_styles: Vec<(usize, MermaidEdgeStyle)> = Vec::new();
+    let mut node_styles: Vec<(String, NodeStyle)> = Vec::new();
+
     for line in lines {
         let trimmed = line.trim();
         if trimmed.is_empty() || trimmed.starts_with("%%") {
             continue;
         }
+
+        // style A fill:#f9f,stroke:#333,color:#000
+        if let Some(rest) = trimmed.strip_prefix("style ") {
+            if let Some((id, props)) = rest.split_once(' ') {
+                let style = parse_node_style_props(props);
+                node_styles.push((id.to_string(), style));
+            }
+            continue;
+        }
+
+        // classDef className fill:#f9f,stroke:#333
+        if let Some(rest) = trimmed.strip_prefix("classDef ") {
+            if let Some((name, props)) = rest.split_once(' ') {
+                let style = parse_node_style_props(props);
+                class_defs.insert(name.to_string(), style);
+            }
+            continue;
+        }
+
+        // class A,B className
+        if let Some(rest) = trimmed.strip_prefix("class ") {
+            if let Some((ids_str, class_name)) = rest.rsplit_once(' ') {
+                let ids: Vec<String> = ids_str.split(',').map(|s| s.trim().to_string()).collect();
+                class_assignments.push((ids, class_name.to_string()));
+            }
+            continue;
+        }
+
+        // linkStyle 0 stroke:#ff3
+        if let Some(rest) = trimmed.strip_prefix("linkStyle ") {
+            if let Some((idx_str, props)) = rest.split_once(' ')
+                && let Ok(idx) = idx_str.parse::<usize>()
+            {
+                let style = parse_edge_style_props(props);
+                link_styles.push((idx, style));
+            }
+            continue;
+        }
+
         parse_statement(trimmed, &mut node_order, &mut node_map, &mut edges)
             .with_context(|| format!("Failed to parse line: {:?}", trimmed))?;
+    }
+
+    // Apply class assignments to nodes
+    for (ids, class_name) in &class_assignments {
+        if let Some(class_style) = class_defs.get(class_name) {
+            for id in ids {
+                if let Some(node) = node_map.get_mut(id) {
+                    node.node_style = Some(class_style.clone());
+                }
+            }
+        }
+    }
+
+    // Apply inline style directives (override class styles)
+    for (id, style) in &node_styles {
+        if let Some(node) = node_map.get_mut(id) {
+            let existing = node.node_style.get_or_insert_with(NodeStyle::default);
+            if style.fill.is_some() {
+                existing.fill = style.fill.clone();
+            }
+            if style.stroke.is_some() {
+                existing.stroke = style.stroke.clone();
+            }
+            if style.color.is_some() {
+                existing.color = style.color.clone();
+            }
+        }
+    }
+
+    // Apply link styles to edges
+    for (idx, style) in &link_styles {
+        if let Some(edge) = edges.get_mut(*idx) {
+            edge.edge_style = Some(style.clone());
+        }
     }
 
     let nodes: Vec<Node> = node_order.iter().map(|id| node_map[id].clone()).collect();
@@ -119,6 +198,7 @@ fn parse_statement(
             to: next_node.id.clone(),
             label,
             style,
+            edge_style: None,
         });
 
         prev_node = next_node;
@@ -161,6 +241,7 @@ fn parse_node_term(chars: &[char], pos: &mut usize) -> anyhow::Result<Node> {
             id: id.clone(),
             label: id,
             shape: NodeShape::Rect,
+            node_style: None,
         });
     }
 
@@ -172,6 +253,7 @@ fn parse_node_term(chars: &[char], pos: &mut usize) -> anyhow::Result<Node> {
                 id,
                 label,
                 shape: NodeShape::Rect,
+                node_style: None,
             })
         }
         '(' => {
@@ -189,6 +271,7 @@ fn parse_node_term(chars: &[char], pos: &mut usize) -> anyhow::Result<Node> {
                     id,
                     label,
                     shape: NodeShape::Circle,
+                    node_style: None,
                 })
             } else {
                 // Rounded: (label)
@@ -197,6 +280,7 @@ fn parse_node_term(chars: &[char], pos: &mut usize) -> anyhow::Result<Node> {
                     id,
                     label,
                     shape: NodeShape::Rounded,
+                    node_style: None,
                 })
             }
         }
@@ -207,6 +291,7 @@ fn parse_node_term(chars: &[char], pos: &mut usize) -> anyhow::Result<Node> {
                 id,
                 label,
                 shape: NodeShape::Diamond,
+                node_style: None,
             })
         }
         _ => {
@@ -215,6 +300,7 @@ fn parse_node_term(chars: &[char], pos: &mut usize) -> anyhow::Result<Node> {
                 id: id.clone(),
                 label: id,
                 shape: NodeShape::Rect,
+                node_style: None,
             })
         }
     }
@@ -480,5 +566,62 @@ mod tests {
         assert_eq!(chart.nodes.len(), 3);
         let ids: Vec<&str> = chart.nodes.iter().map(|n| n.id.as_str()).collect();
         assert_eq!(ids, vec!["A", "B", "C"]);
+    }
+
+    // -----------------------------------------------------------------------
+    // Style directives
+    // -----------------------------------------------------------------------
+
+    use crate::render::Color;
+
+    #[test]
+    fn test_parse_style_directive() {
+        let input = "graph TD\n    A[Start]\n    style A fill:#ff9900,stroke:#333,color:#fff\n";
+        let chart = flowchart(input);
+        assert_eq!(chart.nodes.len(), 1);
+        let node = &chart.nodes[0];
+        let style = node.node_style.as_ref().expect("node should have style");
+        assert_eq!(style.fill, Some(Color::Rgb(255, 153, 0)));
+        assert_eq!(style.stroke, Some(Color::Rgb(51, 51, 51)));
+        assert_eq!(style.color, Some(Color::Rgb(255, 255, 255)));
+    }
+
+    #[test]
+    fn test_parse_classdef_and_class() {
+        let input = "graph TD\n    A[Start]\n    B[End]\n    classDef highlight fill:#f9f,stroke:#333\n    class A,B highlight\n";
+        let chart = flowchart(input);
+        let a_style = chart.nodes[0]
+            .node_style
+            .as_ref()
+            .expect("A should have style");
+        let b_style = chart.nodes[1]
+            .node_style
+            .as_ref()
+            .expect("B should have style");
+        assert_eq!(a_style.fill, Some(Color::Rgb(255, 153, 255)));
+        assert_eq!(b_style.fill, Some(Color::Rgb(255, 153, 255)));
+    }
+
+    #[test]
+    fn test_parse_linkstyle() {
+        let input = "graph TD\n    A --> B\n    B --> C\n    linkStyle 0 stroke:#ff3\n";
+        let chart = flowchart(input);
+        let edge0_style = chart.edges[0]
+            .edge_style
+            .as_ref()
+            .expect("edge 0 should have style");
+        assert_eq!(edge0_style.stroke, Some(Color::Rgb(255, 255, 51)));
+        assert!(chart.edges[1].edge_style.is_none());
+    }
+
+    #[test]
+    fn test_style_directive_invalid_color_ignored() {
+        let input = "graph TD\n    A[Start]\n    style A fill:notacolor\n";
+        let chart = flowchart(input);
+        let style = chart.nodes[0]
+            .node_style
+            .as_ref()
+            .expect("node should have style");
+        assert_eq!(style.fill, None);
     }
 }

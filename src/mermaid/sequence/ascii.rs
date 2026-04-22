@@ -1,7 +1,56 @@
 use super::ArrowStyle;
 use super::layout::{PositionedFragment, SequenceLayout};
 use crate::mermaid::ascii::Canvas;
+use crate::mermaid::{MermaidEdgeStyle, NodeStyle};
+use crate::render::SpanStyle;
 
+fn stroke_style(style: &Option<NodeStyle>) -> SpanStyle {
+    match style {
+        Some(ns) => {
+            let fg = ns.stroke.clone().or_else(|| ns.fill.clone());
+            SpanStyle {
+                fg,
+                ..Default::default()
+            }
+        }
+        None => SpanStyle::default(),
+    }
+}
+
+fn label_style(style: &Option<NodeStyle>) -> SpanStyle {
+    match style {
+        Some(ns) if ns.color.is_some() => SpanStyle {
+            fg: ns.color.clone(),
+            ..Default::default()
+        },
+        _ => SpanStyle::default(),
+    }
+}
+
+fn edge_line_style(style: &Option<MermaidEdgeStyle>) -> SpanStyle {
+    match style {
+        Some(es) if es.stroke.is_some() => SpanStyle {
+            fg: es.stroke.clone(),
+            ..Default::default()
+        },
+        _ => SpanStyle::default(),
+    }
+}
+
+fn edge_label_style(style: &Option<MermaidEdgeStyle>) -> SpanStyle {
+    match style {
+        Some(es) => {
+            let fg = es.label_color.clone().or_else(|| es.stroke.clone());
+            SpanStyle {
+                fg,
+                ..Default::default()
+            }
+        }
+        None => SpanStyle::default(),
+    }
+}
+
+#[allow(dead_code)]
 pub fn render(layout: &SequenceLayout) -> Vec<String> {
     if layout.width == 0 || layout.height == 0 {
         return vec![];
@@ -54,6 +103,49 @@ pub fn render(layout: &SequenceLayout) -> Vec<String> {
 
     let mut lines = canvas.to_lines();
     while lines.last().map(|l: &String| l.is_empty()).unwrap_or(false) {
+        lines.pop();
+    }
+    lines
+}
+
+pub fn render_styled(layout: &SequenceLayout) -> Vec<crate::render::StyledLine> {
+    if layout.width == 0 || layout.height == 0 {
+        return vec![];
+    }
+
+    let self_msg_extra: usize = layout
+        .messages
+        .iter()
+        .filter(|m| m.self_message && !m.label.is_empty())
+        .map(|m| {
+            let needed = m.from_x + 4 + m.label.len();
+            needed.saturating_sub(layout.width)
+        })
+        .max()
+        .unwrap_or(0);
+
+    let note_extra: usize = layout
+        .notes
+        .iter()
+        .map(|n| {
+            let right_edge = n.x + n.width;
+            right_edge.saturating_sub(layout.width)
+        })
+        .max()
+        .unwrap_or(0);
+
+    let canvas_width = layout.width + 4 + self_msg_extra.max(note_extra);
+    let mut canvas = Canvas::new(canvas_width, layout.height + 2);
+
+    draw_lifelines(&mut canvas, layout);
+    draw_fragments(&mut canvas, layout);
+    draw_messages(&mut canvas, layout);
+    draw_activations(&mut canvas, layout);
+    draw_notes(&mut canvas, layout);
+    draw_participants(&mut canvas, layout);
+
+    let mut lines = canvas.to_styled_lines();
+    while lines.last().map(|l| l.spans.is_empty()).unwrap_or(false) {
         lines.pop();
     }
     lines
@@ -238,6 +330,8 @@ fn draw_message(canvas: &mut Canvas, msg: &super::layout::PositionedMessage) {
     let y = msg.y;
     let label_row = y;
     let arrow_row = y + 1;
+    let els = edge_line_style(&msg.edge_style);
+    let els_label = edge_label_style(&msg.edge_style);
 
     let left_x = msg.from_x.min(msg.to_x);
     let right_x = msg.from_x.max(msg.to_x);
@@ -250,7 +344,7 @@ fn draw_message(canvas: &mut Canvas, msg: &super::layout::PositionedMessage) {
         } else {
             left_x
         };
-        canvas.draw_text(label_x, label_row, &msg.label);
+        canvas.draw_text_styled(label_x, label_row, &msg.label, &els_label);
     }
 
     // Arrow line: between the two participants
@@ -277,7 +371,7 @@ fn draw_message(canvas: &mut Canvas, msg: &super::layout::PositionedMessage) {
         } else {
             line_char
         };
-        canvas.set(col, arrow_row, ch);
+        canvas.set_styled(col, arrow_row, ch, &els);
         col += 1;
     }
 
@@ -289,14 +383,14 @@ fn draw_message(canvas: &mut Canvas, msg: &super::layout::PositionedMessage) {
         let head_len = head_chars.len();
         let head_start = msg.to_x.saturating_sub(head_len);
         for (i, &hc) in head_chars.iter().enumerate() {
-            canvas.set(head_start + i, arrow_row, hc);
+            canvas.set_styled(head_start + i, arrow_row, hc, &els);
         }
     } else {
         // Head at from_x (left side)
         let head = arrow_head_left(&msg.arrow);
         let head_chars: Vec<char> = head.chars().collect();
         for (i, &hc) in head_chars.iter().enumerate() {
-            canvas.set(msg.to_x + i, arrow_row, hc);
+            canvas.set_styled(msg.to_x + i, arrow_row, hc, &els);
         }
     }
 }
@@ -304,22 +398,24 @@ fn draw_message(canvas: &mut Canvas, msg: &super::layout::PositionedMessage) {
 fn draw_self_message(canvas: &mut Canvas, msg: &super::layout::PositionedMessage) {
     let x = msg.from_x;
     let y = msg.y;
+    let els = edge_line_style(&msg.edge_style);
+    let els_label = edge_label_style(&msg.edge_style);
 
     // Row 0: ──┐ label
-    canvas.set(x, y, '─');
-    canvas.set(x + 1, y, '─');
-    canvas.set(x + 2, y, '┐');
+    canvas.set_styled(x, y, '─', &els);
+    canvas.set_styled(x + 1, y, '─', &els);
+    canvas.set_styled(x + 2, y, '┐', &els);
     if !msg.label.is_empty() {
-        canvas.draw_text(x + 4, y, &msg.label);
+        canvas.draw_text_styled(x + 4, y, &msg.label, &els_label);
     }
 
     // Row 1: vertical │
-    canvas.set(x + 2, y + 1, '│');
+    canvas.set_styled(x + 2, y + 1, '│', &els);
 
     // Row 2: <─┘
-    canvas.set(x, y + 2, '<');
-    canvas.set(x + 1, y + 2, '─');
-    canvas.set(x + 2, y + 2, '┘');
+    canvas.set_styled(x, y + 2, '<', &els);
+    canvas.set_styled(x + 1, y + 2, '─', &els);
+    canvas.set_styled(x + 2, y + 2, '┘', &els);
 }
 
 fn arrow_line_chars(arrow: &ArrowStyle) -> (char, bool) {
@@ -417,6 +513,8 @@ fn draw_participant_box(canvas: &mut Canvas, p: &super::layout::PositionedPartic
     let y = p.y; // always 0
     let w = p.width;
     let h = 3;
+    let ss = stroke_style(&p.style);
+    let ls = label_style(&p.style);
 
     // Clear area first (overwrite any lifeline chars)
     for row in 0..h {
@@ -426,25 +524,25 @@ fn draw_participant_box(canvas: &mut Canvas, p: &super::layout::PositionedPartic
     }
 
     // Top border
-    canvas.set(x, y, '┌');
+    canvas.set_styled(x, y, '┌', &ss);
     for i in 1..w - 1 {
-        canvas.set(x + i, y, '─');
+        canvas.set_styled(x + i, y, '─', &ss);
     }
-    canvas.set(x + w - 1, y, '┐');
+    canvas.set_styled(x + w - 1, y, '┐', &ss);
 
     // Middle row with label
-    canvas.set(x, y + 1, '│');
-    canvas.set(x + w - 1, y + 1, '│');
+    canvas.set_styled(x, y + 1, '│', &ss);
+    canvas.set_styled(x + w - 1, y + 1, '│', &ss);
     // Center the label with 1 space padding on each side
     let label_x = x + 1 + (w - 2 - p.label.len()) / 2;
-    canvas.draw_text(label_x, y + 1, &p.label);
+    canvas.draw_text_styled(label_x, y + 1, &p.label, &ls);
 
     // Bottom border
-    canvas.set(x, y + 2, '└');
+    canvas.set_styled(x, y + 2, '└', &ss);
     for i in 1..w - 1 {
-        canvas.set(x + i, y + 2, '─');
+        canvas.set_styled(x + i, y + 2, '─', &ss);
     }
-    canvas.set(x + w - 1, y + 2, '┘');
+    canvas.set_styled(x + w - 1, y + 2, '┘', &ss);
 }
 
 // ---------------------------------------------------------------------------

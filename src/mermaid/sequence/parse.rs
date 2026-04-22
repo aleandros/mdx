@@ -3,6 +3,8 @@ use anyhow::bail;
 use super::{
     ArrowStyle, Event, FragmentKind, FragmentSection, NotePosition, Participant, SequenceDiagram,
 };
+use crate::mermaid::color::{parse_edge_style_props, parse_node_style_props};
+use crate::mermaid::{MermaidEdgeStyle, NodeStyle};
 
 pub fn parse_sequence(input: &str) -> anyhow::Result<SequenceDiagram> {
     let mut lines = input.lines().peekable();
@@ -35,6 +37,13 @@ pub fn parse_sequence(input: &str) -> anyhow::Result<SequenceDiagram> {
     // Top-level events list
     let mut top_events: Vec<Event> = vec![];
 
+    // Style directive accumulators
+    let mut class_defs: std::collections::HashMap<String, NodeStyle> =
+        std::collections::HashMap::new();
+    let mut class_assignments: Vec<(Vec<String>, String)> = Vec::new();
+    let mut node_styles: Vec<(String, NodeStyle)> = Vec::new();
+    let mut link_styles: Vec<(usize, MermaidEdgeStyle)> = Vec::new();
+
     // Push an event to the current scope (top-level or innermost fragment section)
     macro_rules! push_event {
         ($event:expr) => {
@@ -63,7 +72,11 @@ pub fn parse_sequence(input: &str) -> anyhow::Result<SequenceDiagram> {
                 let id = id.trim().to_string();
                 let label = label.trim().to_string();
                 if !participants.iter().any(|p| p.id == id) {
-                    participants.push(Participant { id, label });
+                    participants.push(Participant {
+                        id,
+                        label,
+                        style: None,
+                    });
                 }
             } else {
                 let id = rest.to_string();
@@ -71,6 +84,7 @@ pub fn parse_sequence(input: &str) -> anyhow::Result<SequenceDiagram> {
                     participants.push(Participant {
                         id: id.clone(),
                         label: id,
+                        style: None,
                     });
                 }
             }
@@ -155,10 +169,86 @@ pub fn parse_sequence(input: &str) -> anyhow::Result<SequenceDiagram> {
             continue;
         }
 
+        // style ParticipantId fill:#f9f,stroke:#333
+        if let Some(rest) = line.strip_prefix("style ") {
+            if let Some((id, props)) = rest.split_once(' ') {
+                let style = parse_node_style_props(props);
+                node_styles.push((id.trim().to_string(), style));
+            }
+            continue;
+        }
+
+        // classDef className fill:#f9f
+        if let Some(rest) = line.strip_prefix("classDef ") {
+            if let Some((name, props)) = rest.split_once(' ') {
+                let style = parse_node_style_props(props);
+                class_defs.insert(name.trim().to_string(), style);
+            }
+            continue;
+        }
+
+        // class A,B className
+        if let Some(rest) = line.strip_prefix("class ") {
+            if let Some((ids_str, class_name)) = rest.rsplit_once(' ') {
+                let ids: Vec<String> = ids_str.split(',').map(|s| s.trim().to_string()).collect();
+                class_assignments.push((ids, class_name.trim().to_string()));
+            }
+            continue;
+        }
+
+        // linkStyle 0 stroke:#ff3
+        if let Some(rest) = line.strip_prefix("linkStyle ") {
+            if let Some((idx_str, props)) = rest.split_once(' ')
+                && let Ok(idx) = idx_str.parse::<usize>()
+            {
+                let style = parse_edge_style_props(props);
+                link_styles.push((idx, style));
+            }
+            continue;
+        }
+
         // Message — try to parse arrow
         if let Some(event) = parse_message(line, &mut participants) {
             push_event!(event);
             continue;
+        }
+    }
+
+    // Apply class assignments to participants
+    for (ids, class_name) in &class_assignments {
+        if let Some(class_style) = class_defs.get(class_name) {
+            for id in ids {
+                if let Some(p) = participants.iter_mut().find(|p| p.id == *id) {
+                    p.style = Some(class_style.clone());
+                }
+            }
+        }
+    }
+
+    // Apply inline style directives (override class)
+    for (id, style) in &node_styles {
+        if let Some(p) = participants.iter_mut().find(|p| p.id == *id) {
+            let existing = p.style.get_or_insert_with(NodeStyle::default);
+            if style.fill.is_some() {
+                existing.fill = style.fill.clone();
+            }
+            if style.stroke.is_some() {
+                existing.stroke = style.stroke.clone();
+            }
+            if style.color.is_some() {
+                existing.color = style.color.clone();
+            }
+        }
+    }
+
+    // Apply link styles to messages by index
+    let mut msg_idx = 0usize;
+    for event in top_events.iter_mut() {
+        if let Event::Message { edge_style, .. } = event {
+            if let Some((_, style)) = link_styles.iter().find(|(i, _)| *i == msg_idx) {
+                *edge_style = Some(style.clone());
+            }
+            msg_idx += 1;
         }
     }
 
@@ -258,6 +348,7 @@ fn parse_message(line: &str, participants: &mut Vec<Participant>) -> Option<Even
                         participants.push(Participant {
                             id: id.to_string(),
                             label: id.to_string(),
+                            style: None,
                         });
                     }
                 }
@@ -267,6 +358,7 @@ fn parse_message(line: &str, participants: &mut Vec<Participant>) -> Option<Even
                     to,
                     label,
                     arrow: arrow_style.clone(),
+                    edge_style: None,
                 });
             }
         }
@@ -279,6 +371,7 @@ fn parse_message(line: &str, participants: &mut Vec<Participant>) -> Option<Even
 mod tests {
     use super::*;
     use crate::mermaid::sequence::{ArrowStyle, Event, FragmentKind, NotePosition};
+    use crate::render::Color;
 
     #[test]
     fn test_parse_explicit_participants() {
@@ -317,6 +410,7 @@ mod tests {
             to,
             label,
             arrow,
+            ..
         } = &diagram.events[0]
         {
             assert_eq!(from, "A");
@@ -532,5 +626,45 @@ sequenceDiagram
         } else {
             panic!("Expected Fragment event");
         }
+    }
+
+    #[test]
+    fn test_parse_sequence_style_participant() {
+        let input = "sequenceDiagram\n    participant A\n    participant B\n    style A fill:#ff9900,stroke:#333\n    A->>B: Hello\n";
+        let diagram = parse_sequence(input).unwrap();
+        let a_style = diagram.participants[0]
+            .style
+            .as_ref()
+            .expect("A should have style");
+        assert_eq!(a_style.fill, Some(Color::Rgb(255, 153, 0)));
+        assert!(diagram.participants[1].style.is_none());
+    }
+
+    #[test]
+    fn test_parse_sequence_linkstyle() {
+        let input = "sequenceDiagram\n    participant A\n    participant B\n    A->>B: Hello\n    B->>A: World\n    linkStyle 0 stroke:#f00\n";
+        let diagram = parse_sequence(input).unwrap();
+        if let Event::Message { edge_style, .. } = &diagram.events[0] {
+            let es = edge_style
+                .as_ref()
+                .expect("message 0 should have edge style");
+            assert_eq!(es.stroke, Some(Color::Rgb(255, 0, 0)));
+        } else {
+            panic!("Expected Message event");
+        }
+        if let Event::Message { edge_style, .. } = &diagram.events[1] {
+            assert!(edge_style.is_none());
+        }
+    }
+
+    #[test]
+    fn test_parse_sequence_classdef_and_class() {
+        let input = "sequenceDiagram\n    participant A\n    participant B\n    classDef server fill:#0f0\n    class A server\n    A->>B: Hello\n";
+        let diagram = parse_sequence(input).unwrap();
+        let a_style = diagram.participants[0]
+            .style
+            .as_ref()
+            .expect("A should have style");
+        assert_eq!(a_style.fill, Some(Color::Rgb(0, 255, 0)));
     }
 }

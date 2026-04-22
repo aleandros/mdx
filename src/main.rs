@@ -120,7 +120,7 @@ fn pipe_output(blocks: &[render::RenderedBlock], no_color: bool) -> Result<()> {
             }
             render::RenderedBlock::Diagram { lines, .. } => {
                 for line in lines {
-                    writeln!(stdout, "{}", line)?;
+                    writeln!(stdout, "{}", render::styled_line_to_ansi(line, no_color))?;
                 }
                 writeln!(stdout)?;
             }
