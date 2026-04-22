@@ -75,6 +75,7 @@ impl Canvas {
         }
     }
 
+    #[allow(dead_code)]
     pub fn to_lines(&self) -> Vec<String> {
         self.grid
             .iter()
@@ -593,6 +594,7 @@ fn draw_edge_label(canvas: &mut Canvas, edge: &PositionedEdge) {
 // render
 // ---------------------------------------------------------------------------
 
+#[allow(dead_code)]
 pub fn render(layout: &LayoutResult) -> Vec<String> {
     let extra_width = 10;
     let extra_height = 2;

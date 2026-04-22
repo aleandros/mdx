@@ -73,7 +73,7 @@ fn read_file_with_retry(path: &Path) -> Option<String> {
 }
 
 struct MermaidCacheEntry {
-    lines: Vec<String>,
+    lines: Vec<crate::render::StyledLine>,
     node_count: usize,
     edge_count: usize,
 }
@@ -713,7 +713,9 @@ mod tests {
         cache.insert(
             0, // position-based key
             MermaidCacheEntry {
-                lines: vec!["cached line".to_string()],
+                lines: vec![crate::render::StyledLine {
+                    spans: vec![crate::render::StyledSpan::plain("cached line")],
+                }],
                 node_count: 2,
                 edge_count: 1,
             },

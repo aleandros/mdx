@@ -58,7 +58,7 @@ impl StyledLine {
 pub enum RenderedBlock {
     Lines(Vec<StyledLine>),
     Diagram {
-        lines: Vec<String>,
+        lines: Vec<StyledLine>,
         node_count: usize,
         edge_count: usize,
     },
@@ -262,7 +262,7 @@ pub fn render_blocks(
                     MermaidMode::Raw => {
                         out.push(render_as_code());
                     }
-                    MermaidMode::Render => match mermaid::render_mermaid(content) {
+                    MermaidMode::Render => match mermaid::render_mermaid(content, theme) {
                         Ok((lines, node_count, edge_count)) => {
                             out.push(RenderedBlock::Diagram {
                                 lines,
@@ -289,7 +289,7 @@ pub fn render_blocks(
                     },
                     MermaidMode::Split => {
                         out.push(render_as_code());
-                        match mermaid::render_mermaid(content) {
+                        match mermaid::render_mermaid(content, theme) {
                             Ok((lines, node_count, edge_count)) => {
                                 out.push(RenderedBlock::Diagram {
                                     lines,

@@ -50,6 +50,7 @@ fn edge_label_style_fn(style: &Option<MermaidEdgeStyle>) -> SpanStyle {
     }
 }
 
+#[allow(dead_code)]
 pub fn render(layout: &SequenceLayout) -> Vec<String> {
     if layout.width == 0 || layout.height == 0 {
         return vec![];

@@ -104,7 +104,7 @@ fn styled_line_to_ratatui(line: &StyledLine) -> Line<'static> {
 
 pub(crate) enum FlatLine {
     Styled(StyledLine),
-    DiagramAscii(String),
+    DiagramAscii(StyledLine),
     DiagramCollapsed {
         #[allow(dead_code)]
         block_index: usize,
@@ -189,7 +189,9 @@ impl PagerState {
                     edge_count,
                 } => {
                     let is_tall = lines.len() > height_threshold;
-                    let is_wide = lines.iter().any(|l| l.len() > width_limit);
+                    let is_wide = lines
+                        .iter()
+                        .any(|l| l.spans.iter().map(|s| s.text.len()).sum::<usize>() > width_limit);
                     let is_large = is_tall || is_wide;
                     if is_large && !self.expanded.contains(&block_index) {
                         let flat_line_index = self.flat_lines.len();
@@ -345,14 +347,13 @@ impl PagerState {
 
         match flat {
             FlatLine::Styled(line) => styled_line_to_ratatui(line),
-            FlatLine::DiagramAscii(text) => {
+            FlatLine::DiagramAscii(styled_line) => {
                 if self.is_in_active_block(flat_line_index) {
-                    Line::from(vec![
-                        Span::styled("▎", Style::default().fg(collapsed_color)),
-                        Span::raw(text.clone()),
-                    ])
+                    let mut spans = vec![Span::styled("▎", Style::default().fg(collapsed_color))];
+                    spans.extend(styled_line.spans.iter().map(span_to_ratatui));
+                    Line::from(spans)
                 } else {
-                    Line::raw(text.clone())
+                    styled_line_to_ratatui(styled_line)
                 }
             }
             FlatLine::DiagramCollapsed {
