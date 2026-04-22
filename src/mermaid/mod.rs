@@ -176,4 +176,40 @@ mod tests {
         });
         assert!(all_plain, "Unstyled diagram should have no colors");
     }
+
+    #[test]
+    fn test_render_styled_flowchart_end_to_end() {
+        let input = "graph TD\n    A[Start] --> B[End]\n    style A stroke:#ff0000\n    classDef blue fill:#0000ff\n    class B blue\n    linkStyle 0 stroke:#00ff00\n";
+        let theme = Theme::default_theme();
+        let (lines, node_count, edge_count) = render_mermaid(input, theme).unwrap();
+        assert_eq!(node_count, 2);
+        assert_eq!(edge_count, 1);
+        assert!(!lines.is_empty());
+        // Verify colors are present and are theme colors (not raw input colors)
+        let all_colors: Vec<_> = lines
+            .iter()
+            .flat_map(|l| l.spans.iter())
+            .filter_map(|s| s.style.fg.clone())
+            .collect();
+        assert!(!all_colors.is_empty(), "Should have colored spans");
+        // All colors should be from the theme palette, not raw #ff0000
+        for color in &all_colors {
+            if let crate::render::Color::Rgb(r, g, b) = color {
+                assert!(
+                    !(*r == 255 && *g == 0 && *b == 0),
+                    "Raw red should be resolved to nearest theme color, not passed through"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_render_styled_sequence_end_to_end() {
+        let input = "sequenceDiagram\n    participant A\n    participant B\n    A->>B: Hello\n    style A stroke:#ff0000\n    linkStyle 0 stroke:#00ff00\n";
+        let theme = Theme::default_theme();
+        let (lines, participant_count, event_count) = render_mermaid(input, theme).unwrap();
+        assert_eq!(participant_count, 2);
+        assert_eq!(event_count, 1);
+        assert!(!lines.is_empty());
+    }
 }
