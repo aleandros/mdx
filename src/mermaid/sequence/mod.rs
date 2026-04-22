@@ -13,6 +13,7 @@ pub struct SequenceDiagram {
 pub struct Participant {
     pub id: String,
     pub label: String,
+    pub style: Option<crate::mermaid::NodeStyle>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -22,6 +23,7 @@ pub enum Event {
         to: String,
         label: String,
         arrow: ArrowStyle,
+        edge_style: Option<crate::mermaid::MermaidEdgeStyle>,
     },
     Note {
         position: NotePosition,
