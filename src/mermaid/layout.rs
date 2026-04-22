@@ -15,6 +15,7 @@ pub struct PositionedNode {
     pub height: usize,
     /// Use compact rendering (3-row hexagon) for diamonds in LR/RL direction
     pub compact: bool,
+    pub node_style: Option<super::NodeStyle>,
 }
 
 #[derive(Debug, Clone)]
@@ -26,6 +27,7 @@ pub struct PositionedEdge {
     pub label: Option<String>,
     pub style: super::EdgeStyle,
     pub points: Vec<(usize, usize)>,
+    pub edge_style: Option<super::MermaidEdgeStyle>,
 }
 
 #[derive(Debug)]
@@ -361,6 +363,7 @@ pub fn layout(chart: &FlowChart) -> LayoutResult {
             width: node_width[i],
             height: node_height[i],
             compact: is_lr && node.shape == NodeShape::Diamond,
+            node_style: node.node_style.clone(),
         })
         .collect();
 
@@ -426,6 +429,7 @@ pub fn layout(chart: &FlowChart) -> LayoutResult {
                 label: edge.label.clone(),
                 style: edge.style.clone(),
                 points,
+                edge_style: edge.edge_style.clone(),
             })
         })
         .collect();
