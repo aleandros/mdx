@@ -1,20 +1,37 @@
 use super::layout::{LayoutResult, PositionedEdge, PositionedNode};
 use super::{EdgeStyle, NodeShape};
+use crate::render::{SpanStyle, StyledLine, StyledSpan};
 
 // ---------------------------------------------------------------------------
 // Canvas
 // ---------------------------------------------------------------------------
 
+#[derive(Clone)]
+struct Cell {
+    ch: char,
+    #[allow(dead_code)]
+    style: SpanStyle,
+}
+
+impl Default for Cell {
+    fn default() -> Self {
+        Cell {
+            ch: ' ',
+            style: SpanStyle::default(),
+        }
+    }
+}
+
 pub(crate) struct Canvas {
-    grid: Vec<Vec<char>>,
-    width: usize,
-    height: usize,
+    grid: Vec<Vec<Cell>>,
+    pub(crate) width: usize,
+    pub(crate) height: usize,
 }
 
 impl Canvas {
     pub fn new(width: usize, height: usize) -> Self {
         Canvas {
-            grid: vec![vec![' '; width]; height],
+            grid: vec![vec![Cell::default(); width]; height],
             width,
             height,
         }
@@ -22,7 +39,17 @@ impl Canvas {
 
     pub fn set(&mut self, x: usize, y: usize, ch: char) {
         if x < self.width && y < self.height {
-            self.grid[y][x] = ch;
+            self.grid[y][x].ch = ch;
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn set_styled(&mut self, x: usize, y: usize, ch: char, style: &SpanStyle) {
+        if x < self.width && y < self.height {
+            self.grid[y][x] = Cell {
+                ch,
+                style: style.clone(),
+            };
         }
     }
 
@@ -32,12 +59,70 @@ impl Canvas {
         }
     }
 
+    #[allow(dead_code)]
+    pub fn draw_text_styled(&mut self, x: usize, y: usize, text: &str, style: &SpanStyle) {
+        for (i, ch) in text.chars().enumerate() {
+            self.set_styled(x + i, y, ch, style);
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn get(&self, x: usize, y: usize) -> char {
+        if x < self.width && y < self.height {
+            self.grid[y][x].ch
+        } else {
+            ' '
+        }
+    }
+
     pub fn to_lines(&self) -> Vec<String> {
         self.grid
             .iter()
             .map(|row| {
-                let s: String = row.iter().collect();
+                let s: String = row.iter().map(|c| c.ch).collect();
                 s.trim_end().to_string()
+            })
+            .collect()
+    }
+
+    #[allow(dead_code)]
+    pub fn to_styled_lines(&self) -> Vec<StyledLine> {
+        self.grid
+            .iter()
+            .map(|row| {
+                let last_non_space = row
+                    .iter()
+                    .rposition(|c| c.ch != ' ' || c.style != SpanStyle::default())
+                    .map(|i| i + 1)
+                    .unwrap_or(0);
+                let row = &row[..last_non_space];
+                if row.is_empty() {
+                    return StyledLine::empty();
+                }
+                let mut spans: Vec<StyledSpan> = Vec::new();
+                let mut current_text = String::new();
+                let mut current_style = row[0].style.clone();
+                for cell in row {
+                    if cell.style == current_style {
+                        current_text.push(cell.ch);
+                    } else {
+                        if !current_text.is_empty() {
+                            spans.push(StyledSpan {
+                                text: current_text,
+                                style: current_style,
+                            });
+                        }
+                        current_text = String::from(cell.ch);
+                        current_style = cell.style.clone();
+                    }
+                }
+                if !current_text.is_empty() {
+                    spans.push(StyledSpan {
+                        text: current_text,
+                        style: current_style,
+                    });
+                }
+                StyledLine { spans }
             })
             .collect()
     }
@@ -685,6 +770,37 @@ mod tests {
         assert_eq!(lines[1], "hi", "Row with text should trim trailing spaces");
         // Line 2: empty → ""
         assert_eq!(lines[2], "", "Empty row should trim to empty string");
+    }
+
+    #[test]
+    fn test_canvas_to_styled_lines() {
+        use crate::render::{Color, SpanStyle};
+        let mut canvas = Canvas::new(10, 1);
+        let style = SpanStyle {
+            fg: Some(Color::Rgb(255, 0, 0)),
+            ..Default::default()
+        };
+        canvas.set_styled(0, 0, 'A', &style);
+        canvas.set_styled(1, 0, 'B', &style);
+        canvas.set(2, 0, 'C');
+        let lines = canvas.to_styled_lines();
+        assert_eq!(lines.len(), 1);
+        let spans = &lines[0].spans;
+        assert!(spans.len() >= 2);
+        assert_eq!(spans[0].text, "AB");
+        assert_eq!(spans[0].style.fg, Some(Color::Rgb(255, 0, 0)));
+        assert_eq!(spans[1].text, "C");
+        assert_eq!(spans[1].style, SpanStyle::default());
+    }
+
+    #[test]
+    fn test_canvas_styled_lines_trims_trailing_default() {
+        let mut canvas = Canvas::new(10, 1);
+        canvas.set(0, 0, 'X');
+        let lines = canvas.to_styled_lines();
+        assert_eq!(lines.len(), 1);
+        let total_text: String = lines[0].spans.iter().map(|s| s.text.as_str()).collect();
+        assert_eq!(total_text, "X");
     }
 
     #[test]
