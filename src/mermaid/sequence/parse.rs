@@ -3,7 +3,7 @@ use anyhow::bail;
 use super::{
     ArrowStyle, Event, FragmentKind, FragmentSection, NotePosition, Participant, SequenceDiagram,
 };
-use crate::mermaid::color::parse_color;
+use crate::mermaid::color::{parse_edge_style_props, parse_node_style_props};
 use crate::mermaid::{MermaidEdgeStyle, NodeStyle};
 
 pub fn parse_sequence(input: &str) -> anyhow::Result<SequenceDiagram> {
@@ -365,37 +365,6 @@ fn parse_message(line: &str, participants: &mut Vec<Participant>) -> Option<Even
     }
 
     None
-}
-
-fn parse_node_style_props(props: &str) -> NodeStyle {
-    let mut style = NodeStyle::default();
-    for prop in props.split(',') {
-        let prop = prop.trim();
-        if let Some((key, value)) = prop.split_once(':') {
-            match key.trim() {
-                "fill" => style.fill = parse_color(value.trim()),
-                "stroke" => style.stroke = parse_color(value.trim()),
-                "color" => style.color = parse_color(value.trim()),
-                _ => {}
-            }
-        }
-    }
-    style
-}
-
-fn parse_edge_style_props(props: &str) -> MermaidEdgeStyle {
-    let mut style = MermaidEdgeStyle::default();
-    for prop in props.split(',') {
-        let prop = prop.trim();
-        if let Some((key, value)) = prop.split_once(':') {
-            match key.trim() {
-                "stroke" => style.stroke = parse_color(value.trim()),
-                "color" => style.label_color = parse_color(value.trim()),
-                _ => {}
-            }
-        }
-    }
-    style
 }
 
 #[cfg(test)]

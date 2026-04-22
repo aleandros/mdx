@@ -1,7 +1,7 @@
+use super::{MermaidEdgeStyle, NodeStyle};
 use crate::render::Color;
 use crate::theme::Theme;
 
-#[allow(dead_code)]
 pub fn parse_color(input: &str) -> Option<Color> {
     let input = input.trim();
     if let Some(hex) = input.strip_prefix('#') {
@@ -11,7 +11,6 @@ pub fn parse_color(input: &str) -> Option<Color> {
     }
 }
 
-#[allow(dead_code)]
 fn parse_hex(hex: &str) -> Option<Color> {
     match hex.len() {
         6 => {
@@ -30,7 +29,6 @@ fn parse_hex(hex: &str) -> Option<Color> {
     }
 }
 
-#[allow(dead_code)]
 fn parse_named(name: &str) -> Option<Color> {
     match name.to_lowercase().as_str() {
         "red" => Some(Color::Rgb(255, 0, 0)),
@@ -66,7 +64,6 @@ fn color_to_rgb(color: &Color) -> (f64, f64, f64) {
     }
 }
 
-#[allow(dead_code)]
 pub fn resolve_color(color: &Color, theme: &Theme) -> Color {
     let (r, g, b) = color_to_rgb(color);
     let mut best_color = color.clone();
@@ -80,6 +77,37 @@ pub fn resolve_color(color: &Color, theme: &Theme) -> Color {
         }
     }
     best_color
+}
+
+pub(crate) fn parse_node_style_props(props: &str) -> NodeStyle {
+    let mut style = NodeStyle::default();
+    for prop in props.split(',') {
+        let prop = prop.trim();
+        if let Some((key, value)) = prop.split_once(':') {
+            match key.trim() {
+                "fill" => style.fill = parse_color(value.trim()),
+                "stroke" => style.stroke = parse_color(value.trim()),
+                "color" => style.color = parse_color(value.trim()),
+                _ => {}
+            }
+        }
+    }
+    style
+}
+
+pub(crate) fn parse_edge_style_props(props: &str) -> MermaidEdgeStyle {
+    let mut style = MermaidEdgeStyle::default();
+    for prop in props.split(',') {
+        let prop = prop.trim();
+        if let Some((key, value)) = prop.split_once(':') {
+            match key.trim() {
+                "stroke" => style.stroke = parse_color(value.trim()),
+                "color" => style.label_color = parse_color(value.trim()),
+                _ => {}
+            }
+        }
+    }
+    style
 }
 
 #[cfg(test)]

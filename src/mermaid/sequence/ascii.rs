@@ -37,7 +37,7 @@ fn edge_line_style(style: &Option<MermaidEdgeStyle>) -> SpanStyle {
     }
 }
 
-fn edge_label_style_fn(style: &Option<MermaidEdgeStyle>) -> SpanStyle {
+fn edge_label_style(style: &Option<MermaidEdgeStyle>) -> SpanStyle {
     match style {
         Some(es) => {
             let fg = es.label_color.clone().or_else(|| es.stroke.clone());
@@ -108,7 +108,6 @@ pub fn render(layout: &SequenceLayout) -> Vec<String> {
     lines
 }
 
-#[allow(dead_code)]
 pub fn render_styled(layout: &SequenceLayout) -> Vec<crate::render::StyledLine> {
     if layout.width == 0 || layout.height == 0 {
         return vec![];
@@ -332,7 +331,7 @@ fn draw_message(canvas: &mut Canvas, msg: &super::layout::PositionedMessage) {
     let label_row = y;
     let arrow_row = y + 1;
     let els = edge_line_style(&msg.edge_style);
-    let els_label = edge_label_style_fn(&msg.edge_style);
+    let els_label = edge_label_style(&msg.edge_style);
 
     let left_x = msg.from_x.min(msg.to_x);
     let right_x = msg.from_x.max(msg.to_x);
@@ -400,7 +399,7 @@ fn draw_self_message(canvas: &mut Canvas, msg: &super::layout::PositionedMessage
     let x = msg.from_x;
     let y = msg.y;
     let els = edge_line_style(&msg.edge_style);
-    let els_label = edge_label_style_fn(&msg.edge_style);
+    let els_label = edge_label_style(&msg.edge_style);
 
     // Row 0: ──┐ label
     canvas.set_styled(x, y, '─', &els);

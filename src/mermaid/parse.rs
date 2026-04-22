@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use anyhow::{Context, bail};
 
-use super::color::parse_color;
+use super::color::{parse_edge_style_props, parse_node_style_props};
 use super::{Direction, Edge, EdgeStyle, FlowChart, MermaidEdgeStyle, Node, NodeShape, NodeStyle};
 
 // ---------------------------------------------------------------------------
@@ -385,45 +385,6 @@ fn skip_whitespace(chars: &[char], pos: &mut usize) {
     while *pos < chars.len() && chars[*pos].is_whitespace() {
         *pos += 1;
     }
-}
-
-// ---------------------------------------------------------------------------
-// Style prop parsers
-// ---------------------------------------------------------------------------
-
-fn parse_node_style_props(props: &str) -> NodeStyle {
-    let mut style = NodeStyle::default();
-    for prop in props.split(',') {
-        let prop = prop.trim();
-        if let Some((key, value)) = prop.split_once(':') {
-            let key = key.trim();
-            let value = value.trim();
-            match key {
-                "fill" => style.fill = parse_color(value),
-                "stroke" => style.stroke = parse_color(value),
-                "color" => style.color = parse_color(value),
-                _ => {}
-            }
-        }
-    }
-    style
-}
-
-fn parse_edge_style_props(props: &str) -> MermaidEdgeStyle {
-    let mut style = MermaidEdgeStyle::default();
-    for prop in props.split(',') {
-        let prop = prop.trim();
-        if let Some((key, value)) = prop.split_once(':') {
-            let key = key.trim();
-            let value = value.trim();
-            match key {
-                "stroke" => style.stroke = parse_color(value),
-                "color" => style.label_color = parse_color(value),
-                _ => {}
-            }
-        }
-    }
-    style
 }
 
 // ---------------------------------------------------------------------------

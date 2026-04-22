@@ -138,10 +138,19 @@ fn resolve_edge_style(style: &mut MermaidEdgeStyle, theme: &crate::theme::Theme)
 
 fn resolve_event_styles(events: &mut [sequence::Event], theme: &crate::theme::Theme) {
     for event in events.iter_mut() {
-        if let sequence::Event::Message { edge_style, .. } = event
-            && let Some(style) = edge_style
-        {
-            resolve_edge_style(style, theme);
+        match event {
+            sequence::Event::Message {
+                edge_style: Some(style),
+                ..
+            } => {
+                resolve_edge_style(style, theme);
+            }
+            sequence::Event::Fragment { sections, .. } => {
+                for section in sections.iter_mut() {
+                    resolve_event_styles(&mut section.events, theme);
+                }
+            }
+            _ => {}
         }
     }
 }

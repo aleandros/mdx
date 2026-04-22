@@ -9,7 +9,6 @@ use crate::render::{SpanStyle, StyledLine, StyledSpan};
 #[derive(Clone)]
 struct Cell {
     ch: char,
-    #[allow(dead_code)]
     style: SpanStyle,
 }
 
@@ -43,7 +42,6 @@ impl Canvas {
         }
     }
 
-    #[allow(dead_code)]
     pub fn set_styled(&mut self, x: usize, y: usize, ch: char, style: &SpanStyle) {
         if x < self.width && y < self.height {
             self.grid[y][x] = Cell {
@@ -59,14 +57,12 @@ impl Canvas {
         }
     }
 
-    #[allow(dead_code)]
     pub fn draw_text_styled(&mut self, x: usize, y: usize, text: &str, style: &SpanStyle) {
         for (i, ch) in text.chars().enumerate() {
             self.set_styled(x + i, y, ch, style);
         }
     }
 
-    #[allow(dead_code)]
     pub fn get(&self, x: usize, y: usize) -> char {
         if x < self.width && y < self.height {
             self.grid[y][x].ch
@@ -86,7 +82,6 @@ impl Canvas {
             .collect()
     }
 
-    #[allow(dead_code)]
     pub fn to_styled_lines(&self) -> Vec<StyledLine> {
         self.grid
             .iter()
@@ -476,7 +471,6 @@ fn apply_edge_style(canvas: &mut Canvas, conn: &[Vec<u8>], edge: &PositionedEdge
     }
 }
 
-#[allow(dead_code)]
 fn color_edge_segments(canvas: &mut Canvas, edge: &PositionedEdge) {
     let style = edge_line_style(&edge.edge_style);
     if style.fg.is_none() {
@@ -651,7 +645,6 @@ pub fn render(layout: &LayoutResult) -> Vec<String> {
     lines
 }
 
-#[allow(dead_code)]
 pub fn render_styled(layout: &LayoutResult) -> Vec<StyledLine> {
     let extra_width = 10;
     let extra_height = 2;
