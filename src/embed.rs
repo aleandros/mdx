@@ -2,6 +2,41 @@ use crate::render::{RenderedBlock, StyledLine, StyledSpan};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 #[allow(dead_code)]
+pub struct EmbedOptions {
+    pub width: u16,
+    pub height: Option<usize>,
+    pub no_color: bool,
+}
+
+#[allow(dead_code)]
+pub fn run<W: std::io::Write>(
+    input: &str,
+    opts: EmbedOptions,
+    highlighter: &crate::highlight::Highlighter,
+    ui_theme: &crate::theme::Theme,
+    mermaid_mode: crate::render::MermaidMode,
+    writer: &mut W,
+) -> anyhow::Result<()> {
+    let blocks = crate::parser::parse_markdown(input);
+    let rendered =
+        crate::render::render_blocks(&blocks, opts.width, highlighter, ui_theme, mermaid_mode);
+    let lines = flatten_blocks(&rendered);
+    let capped: Box<dyn Iterator<Item = StyledLine>> = match opts.height {
+        Some(h) => Box::new(lines.into_iter().take(h)),
+        None => Box::new(lines.into_iter()),
+    };
+    let max_cols = opts.width as usize;
+    for line in capped {
+        let cut = truncate_line_width(&line, max_cols);
+        writeln!(
+            writer,
+            "{}",
+            crate::render::styled_line_to_ansi(&cut, opts.no_color)
+        )?;
+    }
+    Ok(())
+}
+
 pub fn flatten_blocks(blocks: &[RenderedBlock]) -> Vec<StyledLine> {
     let mut out = Vec::new();
     for block in blocks {
@@ -32,7 +67,6 @@ pub fn flatten_blocks(blocks: &[RenderedBlock]) -> Vec<StyledLine> {
     out
 }
 
-#[allow(dead_code)]
 pub fn truncate_line_width(line: &StyledLine, max_cols: usize) -> StyledLine {
     if max_cols == 0 {
         return StyledLine::empty();
@@ -232,5 +266,84 @@ mod tests {
         };
         let out = truncate_line_width(&line, 100);
         assert_eq!(line_text(&out), "hi");
+    }
+
+    #[test]
+    fn run_emits_only_height_lines_when_capped() {
+        let input = "# A\n\nparagraph one\n\nparagraph two\n";
+        let highlighter = crate::highlight::Highlighter::new(None).unwrap();
+        let theme = crate::theme::Theme::default_theme();
+        let opts = EmbedOptions {
+            width: 80,
+            height: Some(2),
+            no_color: true,
+        };
+        let mut buf: Vec<u8> = Vec::new();
+        run(
+            input,
+            opts,
+            &highlighter,
+            theme,
+            crate::render::MermaidMode::Render,
+            &mut buf,
+        )
+        .unwrap();
+        let s = String::from_utf8(buf).unwrap();
+        let line_count = s.matches('\n').count();
+        assert_eq!(line_count, 2, "exactly 2 newlines emitted, got: {:?}", s);
+    }
+
+    #[test]
+    fn run_crops_each_line_to_width() {
+        let input = "a very long paragraph that will be wrapped or truncated depending on width";
+        let highlighter = crate::highlight::Highlighter::new(None).unwrap();
+        let theme = crate::theme::Theme::default_theme();
+        let opts = EmbedOptions {
+            width: 10,
+            height: None,
+            no_color: true,
+        };
+        let mut buf: Vec<u8> = Vec::new();
+        run(
+            input,
+            opts,
+            &highlighter,
+            theme,
+            crate::render::MermaidMode::Render,
+            &mut buf,
+        )
+        .unwrap();
+        let s = String::from_utf8(buf).unwrap();
+        for line in s.lines() {
+            assert!(
+                UnicodeWidthStr::width(line) <= 10,
+                "line exceeded width 10: {:?}",
+                line
+            );
+        }
+    }
+
+    #[test]
+    fn run_respects_no_color_flag() {
+        let input = "# Heading\n\nbody text\n";
+        let highlighter = crate::highlight::Highlighter::new(None).unwrap();
+        let theme = crate::theme::Theme::default_theme();
+        let opts = EmbedOptions {
+            width: 80,
+            height: None,
+            no_color: true,
+        };
+        let mut buf: Vec<u8> = Vec::new();
+        run(
+            input,
+            opts,
+            &highlighter,
+            theme,
+            crate::render::MermaidMode::Render,
+            &mut buf,
+        )
+        .unwrap();
+        let s = String::from_utf8(buf).unwrap();
+        assert!(!s.contains('\x1b'), "no-color output must not contain ESC");
     }
 }
