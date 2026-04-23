@@ -1,3 +1,4 @@
+mod config;
 mod embed;
 mod highlight;
 mod mermaid;
