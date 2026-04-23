@@ -92,6 +92,27 @@ impl Config {
             }
         }
     }
+
+    /// Generate the default config file content with all keys commented out.
+    pub fn generate_default() -> &'static str {
+        "\
+## Syntax highlighting theme for code blocks
+# theme = \"base16-ocean.dark\"
+
+## UI theme for headers, text, and chrome
+# ui_theme = \"clay\"
+
+## Force pager mode
+# pager = false
+
+## Terminal width override (omit to use terminal width)
+# width = 100
+
+## Mermaid diagram rendering
+# no_mermaid_rendering = false
+# split_mermaid_rendering = false
+"
+    }
 }
 
 #[cfg(test)]
@@ -262,5 +283,27 @@ mod tests {
         unsafe {
             std::env::remove_var("XDG_CONFIG_HOME");
         }
+    }
+
+    #[test]
+    fn generate_default_is_valid_toml_when_uncommented() {
+        let default = Config::generate_default();
+        let uncommented: String = default
+            .lines()
+            .map(|line| {
+                if let Some(stripped) = line.strip_prefix("# ") {
+                    stripped
+                } else {
+                    line
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let result: Result<Config, _> = toml::from_str(&uncommented);
+        assert!(
+            result.is_ok(),
+            "uncommented default should parse: {:?}",
+            result.err()
+        );
     }
 }
