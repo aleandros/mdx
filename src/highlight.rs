@@ -58,7 +58,10 @@ impl Highlighter {
         let mut highlighter = HighlightLines::new(syntax, theme);
         let mut result = Vec::new();
 
-        for line in code.lines() {
+        // `highlight_line` expects lines *with* trailing `\n`; otherwise
+        // end-of-line scopes (e.g. `//` line comments) never close and bleed
+        // into subsequent lines.
+        for line in syntect::util::LinesWithEndings::from(code) {
             let ranges = highlighter.highlight_line(line, &self.syntax_set).ok()?;
             let spans: Vec<StyledSpan> = ranges
                 .into_iter()
@@ -73,13 +76,14 @@ impl Highlighter {
                         ))
                     };
                     StyledSpan {
-                        text: text.to_string(),
+                        text: text.trim_end_matches('\n').to_string(),
                         style: SpanStyle {
                             fg,
                             ..Default::default()
                         },
                     }
                 })
+                .filter(|s| !s.text.is_empty())
                 .collect();
             result.push(spans);
         }
