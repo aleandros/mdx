@@ -178,16 +178,6 @@ fn resolve_ui_theme(name: Option<&str>) -> Result<&'static theme::Theme> {
     }
 }
 
-fn use_pager(args: &Args) -> bool {
-    if args.no_pager {
-        return false;
-    }
-    if args.pager {
-        return true;
-    }
-    std::io::stdout().is_terminal()
-}
-
 pub(crate) fn pipe_output(blocks: &[render::RenderedBlock], no_color: bool) -> Result<()> {
     let mut stdout = std::io::stdout().lock();
     for block in blocks {
@@ -268,6 +258,9 @@ fn main() -> Result<()> {
 
     let args = cli.args;
 
+    // Load config (user + project, or explicit --config)
+    let config = config::Config::load(args.config.as_deref())?;
+
     // Handle --theme=list before reading input
     if args.theme.as_deref() == Some("list") {
         let h = highlight::Highlighter::new(None).map_err(|e| anyhow::anyhow!(e))?;
@@ -288,13 +281,23 @@ fn main() -> Result<()> {
     // Validate watch args early
     validate_watch_args(&args)?;
 
-    let width = resolve_width(args.width);
+    let width = resolve_width(args.width.or(config.width));
     let no_color = std::env::var("NO_COLOR").is_ok();
-    let highlighter =
-        highlight::Highlighter::new(args.theme.clone()).map_err(|e| anyhow::anyhow!(e))?;
-    let ui_theme = resolve_ui_theme(args.ui_theme.as_deref())?;
-    let mermaid_mode =
-        resolve_mermaid_mode(args.no_mermaid_rendering, args.split_mermaid_rendering);
+    let theme_name = args.theme.or(config.theme);
+    let highlighter = highlight::Highlighter::new(theme_name).map_err(|e| anyhow::anyhow!(e))?;
+    let ui_theme_name = args.ui_theme.or(config.ui_theme);
+    let ui_theme = resolve_ui_theme(ui_theme_name.as_deref())?;
+    let mermaid_mode = resolve_mermaid_mode(
+        args.no_mermaid_rendering || config.no_mermaid_rendering.unwrap_or(false),
+        args.split_mermaid_rendering || config.split_mermaid_rendering.unwrap_or(false),
+    );
+    let use_pager = if args.no_pager {
+        false
+    } else if args.pager || config.pager.unwrap_or(false) {
+        true
+    } else {
+        std::io::stdout().is_terminal()
+    };
 
     // Watch mode — dispatch before reading input
     if args.watch {
@@ -306,7 +309,7 @@ fn main() -> Result<()> {
     let input = read_input_from(args.file.as_deref(), std::io::stdin().is_terminal())?;
     let blocks = parser::parse_markdown(&input);
     let rendered = render::render_blocks(&blocks, width, &highlighter, ui_theme, mermaid_mode);
-    if use_pager(&args) {
+    if use_pager {
         setup_panic_hook();
         pager::run_pager(rendered, ui_theme)?;
     } else {
@@ -316,6 +319,9 @@ fn main() -> Result<()> {
 }
 
 fn run_embed(eargs: EmbedArgs) -> Result<()> {
+    // Load config
+    let config = config::Config::load(eargs.config.as_deref())?;
+
     // theme=list / ui-theme=list short-circuits
     if eargs.theme.as_deref() == Some("list") {
         let h = highlight::Highlighter::new(None).map_err(|e| anyhow::anyhow!(e))?;
@@ -331,13 +337,16 @@ fn run_embed(eargs: EmbedArgs) -> Result<()> {
         return Ok(());
     }
 
-    let width = resolve_width(eargs.width);
+    let width = resolve_width(eargs.width.or(config.width));
     let no_color = std::env::var("NO_COLOR").is_ok();
-    let highlighter =
-        highlight::Highlighter::new(eargs.theme.clone()).map_err(|e| anyhow::anyhow!(e))?;
-    let ui_theme = resolve_ui_theme(eargs.ui_theme.as_deref())?;
-    let mermaid_mode =
-        resolve_mermaid_mode(eargs.no_mermaid_rendering, eargs.split_mermaid_rendering);
+    let theme_name = eargs.theme.or(config.theme);
+    let highlighter = highlight::Highlighter::new(theme_name).map_err(|e| anyhow::anyhow!(e))?;
+    let ui_theme_name = eargs.ui_theme.or(config.ui_theme);
+    let ui_theme = resolve_ui_theme(ui_theme_name.as_deref())?;
+    let mermaid_mode = resolve_mermaid_mode(
+        eargs.no_mermaid_rendering || config.no_mermaid_rendering.unwrap_or(false),
+        eargs.split_mermaid_rendering || config.split_mermaid_rendering.unwrap_or(false),
+    );
 
     let input = read_input_from(eargs.file.as_deref(), std::io::stdin().is_terminal())?;
     let opts = embed::EmbedOptions {
