@@ -3,6 +3,7 @@ mod highlight;
 mod mermaid;
 mod pager;
 mod parser;
+mod preview;
 mod render;
 mod self_update;
 mod theme;
@@ -49,6 +50,8 @@ enum Commands {
     Update,
     /// Render markdown into a bounded ANSI stream for embedding in other TUIs
     Embed(EmbedArgs),
+    /// Preview all available UI themes with sample markdown
+    PreviewThemes,
 }
 
 #[derive(clap::Args)]
@@ -233,6 +236,7 @@ fn main() -> Result<()> {
     match cli.command {
         Some(Commands::Update) => return self_update::run(),
         Some(Commands::Embed(eargs)) => return run_embed(eargs),
+        Some(Commands::PreviewThemes) => return preview::run(),
         None => {}
     }
 

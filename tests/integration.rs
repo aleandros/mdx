@@ -396,3 +396,39 @@ fn embed_diagram_crops_without_exceeding_width() {
         );
     }
 }
+
+#[test]
+fn test_preview_themes_runs_and_prints_all_themes() {
+    let output = Command::new(env!("CARGO_BIN_EXE_mdx"))
+        .arg("preview-themes")
+        .env("NO_COLOR", "1")
+        .output()
+        .expect("failed to run mdx preview-themes");
+    assert!(
+        output.status.success(),
+        "preview-themes should succeed, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // Should contain every theme name
+    for name in &[
+        "clay",
+        "hearth",
+        "frost",
+        "nord",
+        "glacier",
+        "steel",
+        "solarized-dark",
+        "solarized-light",
+        "paper",
+        "snow",
+        "latte",
+    ] {
+        assert!(
+            stdout.contains(name),
+            "output should contain theme '{}', got: {}",
+            name,
+            stdout
+        );
+    }
+}
