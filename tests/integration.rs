@@ -626,8 +626,8 @@ fn test_cli_flag_overrides_config() {
     let dir = std::env::temp_dir().join("mdx_config_integration");
     std::fs::create_dir_all(&dir).unwrap();
     let config_path = dir.join("override_config.toml");
-    // Config sets an invalid theme to prove CLI flag wins
-    std::fs::write(&config_path, "ui_theme = \"nord\"\n").unwrap();
+    // Config sets an invalid theme — if config were used, this would fail
+    std::fs::write(&config_path, "ui_theme = \"nonexistent_theme_xyz\"\n").unwrap();
     let md_path = dir.join("override_test.md");
     std::fs::write(&md_path, "# Hello\n").unwrap();
     // CLI flag --ui-theme overrides the config value
