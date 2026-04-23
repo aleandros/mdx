@@ -96,19 +96,19 @@ impl Config {
     /// Generate the default config file content with all keys commented out.
     pub fn generate_default() -> &'static str {
         "\
-## Syntax highlighting theme for code blocks
+# Syntax highlighting theme for code blocks
 # theme = \"base16-ocean.dark\"
 
-## UI theme for headers, text, and chrome
+# UI theme for headers, text, and chrome
 # ui_theme = \"clay\"
 
-## Force pager mode
+# Force pager mode
 # pager = false
 
-## Terminal width override (omit to use terminal width)
+# Terminal width override (omit to use terminal width)
 # width = 100
 
-## Mermaid diagram rendering
+# Mermaid diagram rendering
 # no_mermaid_rendering = false
 # split_mermaid_rendering = false
 "
@@ -288,10 +288,13 @@ mod tests {
     #[test]
     fn generate_default_is_valid_toml_when_uncommented() {
         let default = Config::generate_default();
+        // Only uncomment lines that contain '=' (config key-value pairs)
         let uncommented: String = default
             .lines()
             .map(|line| {
-                if let Some(stripped) = line.strip_prefix("# ") {
+                if let Some(stripped) = line.strip_prefix("# ")
+                    && stripped.contains('=')
+                {
                     stripped
                 } else {
                     line
