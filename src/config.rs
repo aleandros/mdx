@@ -35,6 +35,63 @@ impl Config {
                 .or(self.split_mermaid_rendering),
         }
     }
+
+    /// Discover and load config, merging layers.
+    /// If `cli_config_path` is Some, only that file is loaded (error if missing).
+    /// Otherwise: user config (optional) merged with project config (optional).
+    pub fn load(cli_config_path: Option<&std::path::Path>) -> anyhow::Result<Config> {
+        if let Some(path) = cli_config_path {
+            if !path.exists() {
+                anyhow::bail!("config file not found: {}", path.display());
+            }
+            return Config::from_file(path);
+        }
+
+        let mut config = Config::default();
+
+        if let Some(user_path) = Config::user_config_path()
+            && user_path.exists()
+        {
+            config = config.merge(Config::from_file(&user_path)?);
+        }
+
+        if let Some(project_path) = Config::project_config_path()
+            && project_path.exists()
+        {
+            config = config.merge(Config::from_file(&project_path)?);
+        }
+
+        Ok(config)
+    }
+
+    /// Returns path to user config: $XDG_CONFIG_HOME/mdx/config.toml
+    /// Falls back to ~/.config/mdx/config.toml
+    pub fn user_config_path() -> Option<std::path::PathBuf> {
+        let config_dir = std::env::var("XDG_CONFIG_HOME")
+            .ok()
+            .map(std::path::PathBuf::from)
+            .or_else(|| {
+                std::env::var("HOME")
+                    .ok()
+                    .map(|h| std::path::PathBuf::from(h).join(".config"))
+            })?;
+        Some(config_dir.join("mdx").join("config.toml"))
+    }
+
+    /// Walk from CWD upward to find a directory containing .git,
+    /// then check for .mdx.toml there.
+    pub fn project_config_path() -> Option<std::path::PathBuf> {
+        let mut dir = std::env::current_dir().ok()?;
+        loop {
+            if dir.join(".git").exists() {
+                let config_path = dir.join(".mdx.toml");
+                return Some(config_path);
+            }
+            if !dir.pop() {
+                return None;
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -163,5 +220,47 @@ mod tests {
         assert_eq!(config.width, Some(100));
         assert_eq!(config.no_mermaid_rendering, Some(true));
         assert_eq!(config.split_mermaid_rendering, Some(false));
+    }
+
+    #[test]
+    fn load_explicit_config_path() {
+        let dir = std::env::temp_dir().join("mdx_config_test_load");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("explicit.toml");
+        std::fs::write(&path, "ui_theme = \"nord\"\n").unwrap();
+        let config = Config::load(Some(&path)).unwrap();
+        assert_eq!(config.ui_theme.as_deref(), Some("nord"));
+    }
+
+    #[test]
+    fn load_explicit_config_path_missing_errors() {
+        let path = std::path::Path::new("/tmp/mdx_config_does_not_exist.toml");
+        let result = Config::load(Some(path));
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("config file not found"), "err: {}", err);
+    }
+
+    #[test]
+    fn load_no_config_files_returns_default() {
+        let config = std::panic::catch_unwind(|| Config::load(None));
+        assert!(config.is_ok());
+    }
+
+    #[test]
+    fn user_config_path_respects_xdg() {
+        // SAFETY: single-threaded test; no other threads reading this var concurrently.
+        unsafe {
+            std::env::set_var("XDG_CONFIG_HOME", "/tmp/mdx_xdg_test");
+        }
+        let path = Config::user_config_path().unwrap();
+        assert_eq!(
+            path,
+            std::path::PathBuf::from("/tmp/mdx_xdg_test/mdx/config.toml")
+        );
+        // SAFETY: same as above.
+        unsafe {
+            std::env::remove_var("XDG_CONFIG_HOME");
+        }
     }
 }
