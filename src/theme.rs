@@ -28,6 +28,8 @@ impl Theme {
             "nord" => Some(&NORD),
             "glacier" => Some(&GLACIER),
             "steel" => Some(&STEEL),
+            "solarized-dark" => Some(&SOLARIZED_DARK),
+            "solarized-light" => Some(&SOLARIZED_LIGHT),
             _ => None,
         }
     }
@@ -37,12 +39,30 @@ impl Theme {
     }
 
     pub fn available_names() -> &'static [&'static str] {
-        &["clay", "hearth", "frost", "nord", "glacier", "steel"]
+        &[
+            "clay",
+            "hearth",
+            "frost",
+            "nord",
+            "glacier",
+            "steel",
+            "solarized-dark",
+            "solarized-light",
+        ]
     }
 
     #[allow(dead_code)]
     pub fn all() -> &'static [&'static Theme] {
-        static ALL: &[&Theme] = &[&CLAY, &HEARTH, &FROST, &NORD, &GLACIER, &STEEL];
+        static ALL: &[&Theme] = &[
+            &CLAY,
+            &HEARTH,
+            &FROST,
+            &NORD,
+            &GLACIER,
+            &STEEL,
+            &SOLARIZED_DARK,
+            &SOLARIZED_LIGHT,
+        ];
         ALL
     }
 
@@ -220,6 +240,56 @@ static STEEL: Theme = Theme {
     diagram_edge_label: Color::Rgb(140, 150, 165),
 };
 
+static SOLARIZED_DARK: Theme = Theme {
+    name: "solarized-dark",
+    heading: [
+        Color::Rgb(38, 139, 210),  // H1: Blue
+        Color::Rgb(42, 161, 152),  // H2: Cyan
+        Color::Rgb(133, 153, 0),   // H3: Green
+        Color::Rgb(181, 137, 0),   // H4: Yellow
+        Color::Rgb(108, 113, 196), // H5: Violet
+        Color::Rgb(101, 123, 131), // H6: Base00
+    ],
+    body: Color::Rgb(131, 148, 150),
+    bold: Color::Rgb(131, 148, 150),
+    italic: Color::Rgb(131, 148, 150),
+    link: Color::Rgb(42, 161, 152),
+    inline_code: Color::Rgb(181, 137, 0),
+    horizontal_rule: Color::Rgb(88, 110, 117),
+    diagram_border: Color::Rgb(181, 137, 0),
+    diagram_collapsed: Color::Rgb(42, 161, 152),
+    diagram_node_fill: Color::Rgb(181, 137, 0),
+    diagram_node_border: Color::Rgb(38, 139, 210),
+    diagram_node_text: Color::Rgb(131, 148, 150),
+    diagram_edge_stroke: Color::Rgb(42, 161, 152),
+    diagram_edge_label: Color::Rgb(108, 113, 196),
+};
+
+static SOLARIZED_LIGHT: Theme = Theme {
+    name: "solarized-light",
+    heading: [
+        Color::Rgb(38, 139, 210),  // H1: Blue
+        Color::Rgb(42, 161, 152),  // H2: Cyan
+        Color::Rgb(133, 153, 0),   // H3: Green
+        Color::Rgb(181, 137, 0),   // H4: Yellow
+        Color::Rgb(108, 113, 196), // H5: Violet
+        Color::Rgb(147, 161, 161), // H6: Base1
+    ],
+    body: Color::Rgb(101, 123, 131),
+    bold: Color::Rgb(101, 123, 131),
+    italic: Color::Rgb(101, 123, 131),
+    link: Color::Rgb(42, 161, 152),
+    inline_code: Color::Rgb(181, 137, 0),
+    horizontal_rule: Color::Rgb(147, 161, 161),
+    diagram_border: Color::Rgb(181, 137, 0),
+    diagram_collapsed: Color::Rgb(42, 161, 152),
+    diagram_node_fill: Color::Rgb(181, 137, 0),
+    diagram_node_border: Color::Rgb(38, 139, 210),
+    diagram_node_text: Color::Rgb(101, 123, 131),
+    diagram_edge_stroke: Color::Rgb(42, 161, 152),
+    diagram_edge_label: Color::Rgb(108, 113, 196),
+};
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -278,6 +348,18 @@ mod tests {
     fn test_steel_lookup() {
         assert!(Theme::by_name("steel").is_some());
         assert_eq!(Theme::by_name("steel").unwrap().heading.len(), 6);
+    }
+
+    #[test]
+    fn test_solarized_dark_lookup() {
+        assert!(Theme::by_name("solarized-dark").is_some());
+        assert_eq!(Theme::by_name("solarized-dark").unwrap().heading.len(), 6);
+    }
+
+    #[test]
+    fn test_solarized_light_lookup() {
+        assert!(Theme::by_name("solarized-light").is_some());
+        assert_eq!(Theme::by_name("solarized-light").unwrap().heading.len(), 6);
     }
 
     #[test]
