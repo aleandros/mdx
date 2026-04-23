@@ -24,6 +24,10 @@ impl Theme {
         match name {
             "clay" => Some(&CLAY),
             "hearth" => Some(&HEARTH),
+            "frost" => Some(&FROST),
+            "nord" => Some(&NORD),
+            "glacier" => Some(&GLACIER),
+            "steel" => Some(&STEEL),
             _ => None,
         }
     }
@@ -33,12 +37,12 @@ impl Theme {
     }
 
     pub fn available_names() -> &'static [&'static str] {
-        &["clay", "hearth"]
+        &["clay", "hearth", "frost", "nord", "glacier", "steel"]
     }
 
     #[allow(dead_code)]
     pub fn all() -> &'static [&'static Theme] {
-        static ALL: &[&Theme] = &[&CLAY, &HEARTH];
+        static ALL: &[&Theme] = &[&CLAY, &HEARTH, &FROST, &NORD, &GLACIER, &STEEL];
         ALL
     }
 
@@ -116,6 +120,106 @@ static HEARTH: Theme = Theme {
     diagram_edge_label: Color::Rgb(150, 140, 120),
 };
 
+static FROST: Theme = Theme {
+    name: "frost",
+    heading: [
+        Color::Rgb(100, 180, 255), // H1: Bright Blue
+        Color::Rgb(90, 175, 175),  // H2: Teal
+        Color::Rgb(135, 175, 215), // H3: Periwinkle
+        Color::Rgb(95, 135, 175),  // H4: Steel Blue
+        Color::Rgb(135, 135, 175), // H5: Lavender
+        Color::Rgb(108, 112, 134), // H6: Muted Slate
+    ],
+    body: Color::Rgb(160, 176, 192),
+    bold: Color::Rgb(160, 176, 192),
+    italic: Color::Rgb(160, 176, 192),
+    link: Color::Rgb(90, 175, 175),
+    inline_code: Color::Rgb(135, 175, 215),
+    horizontal_rule: Color::Rgb(74, 85, 104),
+    diagram_border: Color::Rgb(135, 175, 215),
+    diagram_collapsed: Color::Rgb(90, 175, 175),
+    diagram_node_fill: Color::Rgb(135, 175, 215),
+    diagram_node_border: Color::Rgb(100, 180, 255),
+    diagram_node_text: Color::Rgb(160, 176, 192),
+    diagram_edge_stroke: Color::Rgb(90, 175, 175),
+    diagram_edge_label: Color::Rgb(135, 135, 175),
+};
+
+static NORD: Theme = Theme {
+    name: "nord",
+    heading: [
+        Color::Rgb(136, 192, 208), // H1: Nord Frost
+        Color::Rgb(129, 161, 193), // H2: Nord Frost Dark
+        Color::Rgb(163, 190, 140), // H3: Nord Green
+        Color::Rgb(235, 203, 139), // H4: Nord Yellow
+        Color::Rgb(180, 142, 173), // H5: Nord Purple
+        Color::Rgb(94, 129, 172),  // H6: Nord Blue
+    ],
+    body: Color::Rgb(216, 222, 233),
+    bold: Color::Rgb(216, 222, 233),
+    italic: Color::Rgb(216, 222, 233),
+    link: Color::Rgb(136, 192, 208),
+    inline_code: Color::Rgb(129, 161, 193),
+    horizontal_rule: Color::Rgb(76, 86, 106),
+    diagram_border: Color::Rgb(129, 161, 193),
+    diagram_collapsed: Color::Rgb(136, 192, 208),
+    diagram_node_fill: Color::Rgb(129, 161, 193),
+    diagram_node_border: Color::Rgb(136, 192, 208),
+    diagram_node_text: Color::Rgb(216, 222, 233),
+    diagram_edge_stroke: Color::Rgb(163, 190, 140),
+    diagram_edge_label: Color::Rgb(180, 142, 173),
+};
+
+static GLACIER: Theme = Theme {
+    name: "glacier",
+    heading: [
+        Color::Rgb(80, 200, 220),  // H1: Ice Cyan
+        Color::Rgb(100, 160, 210), // H2: Arctic Blue
+        Color::Rgb(70, 180, 170),  // H3: Teal
+        Color::Rgb(150, 130, 200), // H4: Amethyst
+        Color::Rgb(130, 150, 180), // H5: Pale Steel
+        Color::Rgb(100, 115, 140), // H6: Slate
+    ],
+    body: Color::Rgb(185, 200, 215),
+    bold: Color::Rgb(185, 200, 215),
+    italic: Color::Rgb(185, 200, 215),
+    link: Color::Rgb(70, 180, 170),
+    inline_code: Color::Rgb(110, 150, 200),
+    horizontal_rule: Color::Rgb(55, 65, 80),
+    diagram_border: Color::Rgb(110, 150, 200),
+    diagram_collapsed: Color::Rgb(70, 180, 170),
+    diagram_node_fill: Color::Rgb(110, 150, 200),
+    diagram_node_border: Color::Rgb(80, 200, 220),
+    diagram_node_text: Color::Rgb(185, 200, 215),
+    diagram_edge_stroke: Color::Rgb(70, 180, 170),
+    diagram_edge_label: Color::Rgb(130, 150, 180),
+};
+
+static STEEL: Theme = Theme {
+    name: "steel",
+    heading: [
+        Color::Rgb(140, 170, 210), // H1: Soft Blue
+        Color::Rgb(110, 145, 180), // H2: Slate Blue
+        Color::Rgb(150, 190, 140), // H3: Sage
+        Color::Rgb(180, 160, 120), // H4: Khaki
+        Color::Rgb(140, 150, 165), // H5: Pewter
+        Color::Rgb(120, 128, 140), // H6: Gunmetal
+    ],
+    body: Color::Rgb(175, 180, 190),
+    bold: Color::Rgb(175, 180, 190),
+    italic: Color::Rgb(175, 180, 190),
+    link: Color::Rgb(110, 145, 180),
+    inline_code: Color::Rgb(150, 160, 180),
+    horizontal_rule: Color::Rgb(60, 65, 75),
+    diagram_border: Color::Rgb(150, 160, 180),
+    diagram_collapsed: Color::Rgb(110, 145, 180),
+    diagram_node_fill: Color::Rgb(150, 160, 180),
+    diagram_node_border: Color::Rgb(140, 170, 210),
+    diagram_node_text: Color::Rgb(175, 180, 190),
+    diagram_edge_stroke: Color::Rgb(150, 190, 140),
+    diagram_edge_label: Color::Rgb(140, 150, 165),
+};
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -150,6 +254,30 @@ mod tests {
     fn test_hearth_heading_count() {
         let theme = Theme::by_name("hearth").unwrap();
         assert_eq!(theme.heading.len(), 6);
+    }
+
+    #[test]
+    fn test_frost_lookup() {
+        assert!(Theme::by_name("frost").is_some());
+        assert_eq!(Theme::by_name("frost").unwrap().heading.len(), 6);
+    }
+
+    #[test]
+    fn test_nord_lookup() {
+        assert!(Theme::by_name("nord").is_some());
+        assert_eq!(Theme::by_name("nord").unwrap().heading.len(), 6);
+    }
+
+    #[test]
+    fn test_glacier_lookup() {
+        assert!(Theme::by_name("glacier").is_some());
+        assert_eq!(Theme::by_name("glacier").unwrap().heading.len(), 6);
+    }
+
+    #[test]
+    fn test_steel_lookup() {
+        assert!(Theme::by_name("steel").is_some());
+        assert_eq!(Theme::by_name("steel").unwrap().heading.len(), 6);
     }
 
     #[test]
