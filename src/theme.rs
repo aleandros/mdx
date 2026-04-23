@@ -36,6 +36,12 @@ impl Theme {
         &["clay", "hearth"]
     }
 
+    #[allow(dead_code)]
+    pub fn all() -> &'static [&'static Theme] {
+        static ALL: &[&Theme] = &[&CLAY, &HEARTH];
+        ALL
+    }
+
     pub fn all_colors(&self) -> Vec<&Color> {
         let mut colors: Vec<&Color> = Vec::new();
         for c in &self.heading {
@@ -144,5 +150,23 @@ mod tests {
     fn test_hearth_heading_count() {
         let theme = Theme::by_name("hearth").unwrap();
         assert_eq!(theme.heading.len(), 6);
+    }
+
+    #[test]
+    fn test_all_returns_every_theme() {
+        let all = Theme::all();
+        let names = Theme::available_names();
+        assert_eq!(
+            all.len(),
+            names.len(),
+            "all() and available_names() must match in length"
+        );
+        for theme in all {
+            assert!(
+                names.contains(&theme.name),
+                "Theme '{}' in all() but not in available_names()",
+                theme.name
+            );
+        }
     }
 }
