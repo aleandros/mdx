@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>mdx — Markdown in the terminal, with Mermaid as ASCII</title>
+<meta name="description" content="Terminal Markdown renderer with Mermaid flowcharts drawn as ASCII art. Like glow, but your graph TD blocks actually render.">
+<meta property="og:title" content="mdx — Markdown in the terminal, with Mermaid as ASCII">
+<meta property="og:description" content="Terminal Markdown renderer with Mermaid flowcharts drawn as ASCII art.">
+<meta property="og:image" content="assets/mdxdemo.gif">
+<meta property="og:type" content="website">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" type="image/png" href="assets/logo.png">
+<link rel="stylesheet" href="style.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+
+<div class="scanlines" aria-hidden="true"></div>
+<div class="glow-bg" aria-hidden="true"></div>
+
+<header class="nav">
+  <div class="nav-inner">
+    <a href="#" class="brand">
+      <span class="prompt">$</span> mdx
+    </a>
+    <nav class="nav-links">
+      <a href="#features">features</a>
+      <a href="#install">install</a>
+      <a href="#why">why</a>
+      <a href="https://github.com/aleandros/mdx/blob/main/docs/USAGE.md">docs</a>
+      <a href="https://github.com/aleandros/mdx" class="gh-link" aria-label="GitHub">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.3 3.44 9.8 8.2 11.39.6.11.82-.26.82-.58v-2.17c-3.34.73-4.04-1.41-4.04-1.41-.55-1.39-1.34-1.76-1.34-1.76-1.09-.75.08-.73.08-.73 1.21.09 1.84 1.24 1.84 1.24 1.07 1.84 2.81 1.31 3.5 1 .11-.78.42-1.31.76-1.61-2.67-.3-5.47-1.33-5.47-5.93 0-1.31.47-2.38 1.24-3.22-.13-.3-.54-1.52.12-3.18 0 0 1.01-.32 3.3 1.23a11.5 11.5 0 0 1 6 0c2.29-1.55 3.3-1.23 3.3-1.23.66 1.66.25 2.88.12 3.18.77.84 1.23 1.91 1.23 3.22 0 4.61-2.8 5.63-5.48 5.92.43.37.81 1.1.81 2.22v3.29c0 .32.22.69.83.57A12 12 0 0 0 24 12c0-6.63-5.37-12-12-12z"/></svg>
+      </a>
+    </nav>
+  </div>
+</header>
+
+<main>
+
+<section class="hero">
+  <div class="hero-inner">
+    <div class="hero-text">
+      <div class="badges">
+        <a href="https://crates.io/crates/mermd"><img src="https://img.shields.io/crates/v/mermd.svg?style=flat-square&color=2a2a2a&labelColor=0a0a0a" alt="crates.io"></a>
+        <a href="https://github.com/aleandros/mdx/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/aleandros/mdx/ci.yml?style=flat-square&color=2a2a2a&labelColor=0a0a0a&label=ci" alt="CI"></a>
+        <a href="https://github.com/aleandros/mdx/releases/latest"><img src="https://img.shields.io/github/v/release/aleandros/mdx?style=flat-square&color=2a2a2a&labelColor=0a0a0a" alt="release"></a>
+        <a href="https://github.com/aleandros/mdx/blob/main/LICENSE.txt"><img src="https://img.shields.io/badge/license-MIT-yellow.svg?style=flat-square&color=2a2a2a&labelColor=0a0a0a" alt="MIT"></a>
+      </div>
+
+      <h1>
+        Read Markdown in the terminal —<br>
+        with <span class="accent">Mermaid</span> diagrams drawn as <span class="accent-alt">ASCII&nbsp;art</span>.
+      </h1>
+      <p class="tagline">
+        Like <a href="https://github.com/charmbracelet/glow"><code>glow</code></a>, but your <code>graph TD</code> blocks actually render.
+      </p>
+
+      <div class="install-box">
+        <div class="install-header">
+          <span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span>
+          <span class="install-title">install.sh</span>
+        </div>
+        <div class="install-body">
+          <code id="install-cmd">curl -fsSL https://raw.githubusercontent.com/aleandros/mdx/main/install.sh | sh</code>
+          <button class="copy-btn" data-clip="#install-cmd" aria-label="Copy install command">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+          </button>
+        </div>
+      </div>
+
+      <div class="cta-row">
+        <a href="https://github.com/aleandros/mdx" class="btn btn-primary">view on github →</a>
+        <a href="#features" class="btn btn-ghost">see what it does</a>
+      </div>
+    </div>
+
+    <div class="hero-visual">
+      <div class="terminal">
+        <div class="terminal-header">
+          <span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span>
+          <span class="terminal-title">~ mdx README.md</span>
+        </div>
+        <div class="terminal-body">
+          <img src="assets/mdxdemo.gif" alt="mdx rendering a markdown file with a mermaid diagram" loading="eager">
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="features" class="features">
+  <div class="section-inner">
+    <h2><span class="prompt">›</span> what you get</h2>
+    <div class="feature-grid">
+      <div class="feature">
+        <div class="feature-icon">
+<pre>┌─▶┐
+│  │
+└──┘</pre>
+        </div>
+        <h3>Mermaid as ASCII</h3>
+        <p>Flowcharts and sequence diagrams rendered inline. No browser. No alt-tab. Just characters.</p>
+      </div>
+      <div class="feature">
+        <div class="feature-icon">
+<pre>▼ j k
+  /search
+  &lt;tab&gt;</pre>
+        </div>
+        <h3>Interactive pager</h3>
+        <p>Vim-style keybindings, search, tab-through diagrams, expand on demand.</p>
+      </div>
+      <div class="feature">
+        <div class="feature-icon">
+<pre>mdx embed
+ → stream
+ → TUI</pre>
+        </div>
+        <h3>Embeddable</h3>
+        <p><code>mdx embed</code> gives you a bounded ANSI stream for other TUIs to consume.</p>
+      </div>
+      <div class="feature">
+        <div class="feature-icon">
+<pre>░▒▓█
+11 themes
+syntect</pre>
+        </div>
+        <h3>Themes</h3>
+        <p>11 UI themes, syntect-powered syntax highlighting, project- and user-level config.</p>
+      </div>
+      <div class="feature">
+        <div class="feature-icon">
+<pre>-W file.md
+ ↻ on save</pre>
+        </div>
+        <h3>Watch mode</h3>
+        <p><code>mdx -W file.md</code> re-renders on save. Edit in one pane, read in another.</p>
+      </div>
+      <div class="feature">
+        <div class="feature-icon">
+<pre>cat x.md |
+  mdx</pre>
+        </div>
+        <h3>Pipes anywhere</h3>
+        <p>Reads from stdin. Drop it into any shell pipeline next to <code>cat</code>, <code>curl</code>, or <code>git show</code>.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="install" class="install-section">
+  <div class="section-inner">
+    <h2><span class="prompt">›</span> get it running</h2>
+
+    <div class="install-grid">
+      <div class="install-card">
+        <h3>one-liner</h3>
+        <p class="install-desc">Detects your OS + architecture, drops the binary in <code>/usr/local/bin</code> (or <code>~/.local/bin</code>).</p>
+        <div class="code-block">
+          <pre><code>curl -fsSL https://raw.githubusercontent.com/aleandros/mdx/main/install.sh | sh</code></pre>
+        </div>
+      </div>
+
+      <div class="install-card">
+        <h3>cargo</h3>
+        <p class="install-desc">Published as <code>mermd</code> on crates.io (the <code>mdx</code> name was taken).</p>
+        <div class="code-block">
+          <pre><code>cargo install mermd</code></pre>
+        </div>
+      </div>
+
+      <div class="install-card">
+        <h3>from source</h3>
+        <p class="install-desc">Rust toolchain required. Binary lands in <code>target/release/mdx</code>.</p>
+        <div class="code-block">
+          <pre><code>git clone https://github.com/aleandros/mdx.git
+cd mdx
+cargo build --release</code></pre>
+        </div>
+      </div>
+    </div>
+
+    <div class="usage-preview">
+      <h3>then use it</h3>
+      <div class="code-block">
+        <pre><code><span class="c-comment"># render a file</span>
+mdx README.md
+
+<span class="c-comment"># pipe anything</span>
+cat CHANGELOG.md | mdx
+
+<span class="c-comment"># watch mode</span>
+mdx -W notes.md
+
+<span class="c-comment"># embed in another TUI</span>
+mdx embed docs/architecture.md</code></pre>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="why" class="why">
+  <div class="section-inner">
+    <h2><span class="prompt">›</span> why</h2>
+    <blockquote>
+      <p>
+        Markdown is everpresent in day-to-day workflow, and <code>glow</code> spoils you — until the doc hits a Mermaid block and you're back to squinting at raw source or alt-tabbing to a browser.
+      </p>
+      <p>
+        mdx is the fix. Same <em>"just read this thing"</em> ergonomics, but diagrams render where you already are.
+      </p>
+    </blockquote>
+
+    <div class="scope-note">
+      <strong>Diagram support is scoped.</strong> Today mdx renders <code>graph</code> / <code>flowchart</code> and <code>sequenceDiagram</code>. Class, state, ER, gantt, and others are not yet supported — <a href="https://github.com/aleandros/mdx/pulls">PRs welcome</a>.
+    </div>
+  </div>
+</section>
+
+<section class="cta">
+  <div class="section-inner">
+    <div class="cta-box">
+      <h2>stop alt-tabbing.</h2>
+      <p>Render the whole thing where you're already working.</p>
+      <div class="cta-row">
+        <a href="https://github.com/aleandros/mdx" class="btn btn-primary">★ star on github</a>
+        <a href="https://github.com/aleandros/mdx/blob/main/docs/USAGE.md" class="btn btn-ghost">full docs →</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer>
+  <div class="footer-inner">
+    <div>
+      <span class="prompt">$</span> mdx <span class="dim">— MIT licensed</span>
+    </div>
+    <div class="footer-links">
+      <a href="https://github.com/aleandros/mdx">github</a>
+      <a href="https://crates.io/crates/mermd">crates.io</a>
+      <a href="https://github.com/aleandros/mdx/blob/main/CHANGELOG.md">changelog</a>
+      <a href="https://github.com/aleandros/mdx/issues">issues</a>
+    </div>
+  </div>
+</footer>
+
+<script src="script.js"></script>
+</body>
+</html>
