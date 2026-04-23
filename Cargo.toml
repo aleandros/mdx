@@ -30,7 +30,9 @@ crossterm = "0.28"
 notify = "6"
 pulldown-cmark = "0.12"
 ratatui = "0.29"
+serde = { version = "1", features = ["derive"] }
 syntect = { version = "5", default-features = false, features = ["parsing", "default-themes", "dump-load", "regex-fancy"] }
+toml = "0.8"
 unicode-width = "0.1"
 
 [dev-dependencies]
