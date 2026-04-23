@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.6] - 2026-04-23
+
+### Fixed
+- Pager: ghost characters on the right edge when scrolling through code blocks containing tabs. Ratatui measured `\t` as one cell while the terminal advanced to the next tab stop, leaving uncleared cells across frames. Tabs are now expanded to spaces before reaching ratatui.
+- Syntax highlighting: `//` line comments (and other end-of-line scopes) bled into every subsequent line. `highlight_line` needs trailing newlines to close line-scoped patterns; switched to `syntect::util::LinesWithEndings`.
+
 ## [0.1.5] - 2026-04-23
 
 ### Added
