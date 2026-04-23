@@ -62,6 +62,20 @@ fn detect_opener() -> Option<&'static str> {
 
 // ─── Style conversion ──────────────────────────────────────────────────────
 
+/// Tab width used when expanding `\t` in spans before handing them to ratatui.
+/// Ratatui measures a tab as 1 cell, but real terminals advance to the next
+/// tab stop — the width mismatch causes stale cells to persist across frames
+/// (visible as ghosted characters on the right edge when scrolling).
+const TAB_WIDTH: usize = 4;
+
+fn expand_tabs(text: &str) -> String {
+    if !text.contains('\t') {
+        return text.to_string();
+    }
+    let spaces: String = " ".repeat(TAB_WIDTH);
+    text.replace('\t', &spaces)
+}
+
 fn span_to_ratatui(span: &StyledSpan) -> Span<'static> {
     let mut style = Style::default();
 
@@ -78,7 +92,7 @@ fn span_to_ratatui(span: &StyledSpan) -> Span<'static> {
         style = style.add_modifier(Modifier::DIM);
     }
 
-    Span::styled(span.text.clone(), style)
+    Span::styled(expand_tabs(&span.text), style)
 }
 
 fn color_to_ratatui(color: &Color) -> RColor {
