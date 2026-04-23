@@ -30,6 +30,9 @@ impl Theme {
             "steel" => Some(&STEEL),
             "solarized-dark" => Some(&SOLARIZED_DARK),
             "solarized-light" => Some(&SOLARIZED_LIGHT),
+            "paper" => Some(&PAPER),
+            "snow" => Some(&SNOW),
+            "latte" => Some(&LATTE),
             _ => None,
         }
     }
@@ -48,6 +51,9 @@ impl Theme {
             "steel",
             "solarized-dark",
             "solarized-light",
+            "paper",
+            "snow",
+            "latte",
         ]
     }
 
@@ -62,6 +68,9 @@ impl Theme {
             &STEEL,
             &SOLARIZED_DARK,
             &SOLARIZED_LIGHT,
+            &PAPER,
+            &SNOW,
+            &LATTE,
         ];
         ALL
     }
@@ -290,6 +299,81 @@ static SOLARIZED_LIGHT: Theme = Theme {
     diagram_edge_label: Color::Rgb(108, 113, 196),
 };
 
+static PAPER: Theme = Theme {
+    name: "paper",
+    heading: [
+        Color::Rgb(130, 80, 40),   // H1: Dark Brown
+        Color::Rgb(150, 60, 30),   // H2: Burnt Sienna
+        Color::Rgb(40, 105, 55),   // H3: Forest
+        Color::Rgb(80, 65, 140),   // H4: Plum
+        Color::Rgb(90, 105, 120),  // H5: Slate
+        Color::Rgb(130, 130, 130), // H6: Gray
+    ],
+    body: Color::Rgb(55, 50, 45),
+    bold: Color::Rgb(55, 50, 45),
+    italic: Color::Rgb(55, 50, 45),
+    link: Color::Rgb(40, 105, 55),
+    inline_code: Color::Rgb(120, 85, 40),
+    horizontal_rule: Color::Rgb(192, 184, 168),
+    diagram_border: Color::Rgb(120, 85, 40),
+    diagram_collapsed: Color::Rgb(40, 105, 55),
+    diagram_node_fill: Color::Rgb(120, 85, 40),
+    diagram_node_border: Color::Rgb(150, 60, 30),
+    diagram_node_text: Color::Rgb(55, 50, 45),
+    diagram_edge_stroke: Color::Rgb(40, 105, 55),
+    diagram_edge_label: Color::Rgb(90, 105, 120),
+};
+
+static SNOW: Theme = Theme {
+    name: "snow",
+    heading: [
+        Color::Rgb(25, 105, 160),  // H1: Deep Blue
+        Color::Rgb(10, 120, 120),  // H2: Teal
+        Color::Rgb(70, 120, 40),   // H3: Olive
+        Color::Rgb(90, 75, 190),   // H4: Indigo
+        Color::Rgb(100, 115, 130), // H5: Cool Gray
+        Color::Rgb(130, 130, 145), // H6: Silver
+    ],
+    body: Color::Rgb(40, 55, 70),
+    bold: Color::Rgb(40, 55, 70),
+    italic: Color::Rgb(40, 55, 70),
+    link: Color::Rgb(10, 120, 120),
+    inline_code: Color::Rgb(80, 65, 140),
+    horizontal_rule: Color::Rgb(176, 192, 208),
+    diagram_border: Color::Rgb(80, 65, 140),
+    diagram_collapsed: Color::Rgb(10, 120, 120),
+    diagram_node_fill: Color::Rgb(80, 65, 140),
+    diagram_node_border: Color::Rgb(25, 105, 160),
+    diagram_node_text: Color::Rgb(40, 55, 70),
+    diagram_edge_stroke: Color::Rgb(10, 120, 120),
+    diagram_edge_label: Color::Rgb(100, 115, 130),
+};
+
+static LATTE: Theme = Theme {
+    name: "latte",
+    heading: [
+        Color::Rgb(30, 102, 245),  // H1: Blue
+        Color::Rgb(23, 146, 153),  // H2: Teal
+        Color::Rgb(64, 160, 43),   // H3: Green
+        Color::Rgb(223, 142, 29),  // H4: Yellow
+        Color::Rgb(136, 57, 239),  // H5: Mauve
+        Color::Rgb(108, 111, 133), // H6: Overlay
+    ],
+    body: Color::Rgb(76, 79, 105),
+    bold: Color::Rgb(76, 79, 105),
+    italic: Color::Rgb(76, 79, 105),
+    link: Color::Rgb(23, 146, 153),
+    inline_code: Color::Rgb(254, 100, 11),
+    horizontal_rule: Color::Rgb(188, 192, 204),
+    diagram_border: Color::Rgb(254, 100, 11),
+    diagram_collapsed: Color::Rgb(23, 146, 153),
+    diagram_node_fill: Color::Rgb(254, 100, 11),
+    diagram_node_border: Color::Rgb(30, 102, 245),
+    diagram_node_text: Color::Rgb(76, 79, 105),
+    diagram_edge_stroke: Color::Rgb(23, 146, 153),
+    diagram_edge_label: Color::Rgb(136, 57, 239),
+};
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -348,6 +432,24 @@ mod tests {
     fn test_steel_lookup() {
         assert!(Theme::by_name("steel").is_some());
         assert_eq!(Theme::by_name("steel").unwrap().heading.len(), 6);
+    }
+
+    #[test]
+    fn test_paper_lookup() {
+        assert!(Theme::by_name("paper").is_some());
+        assert_eq!(Theme::by_name("paper").unwrap().heading.len(), 6);
+    }
+
+    #[test]
+    fn test_snow_lookup() {
+        assert!(Theme::by_name("snow").is_some());
+        assert_eq!(Theme::by_name("snow").unwrap().heading.len(), 6);
+    }
+
+    #[test]
+    fn test_latte_lookup() {
+        assert!(Theme::by_name("latte").is_some());
+        assert_eq!(Theme::by_name("latte").unwrap().heading.len(), 6);
     }
 
     #[test]
