@@ -432,3 +432,216 @@ fn test_preview_themes_runs_and_prints_all_themes() {
         );
     }
 }
+
+// ─── config file support ─────────────────────────────────────────────────
+
+#[test]
+fn test_config_flag_sets_ui_theme() {
+    let dir = std::env::temp_dir().join("mdx_config_integration");
+    std::fs::create_dir_all(&dir).unwrap();
+    let config_path = dir.join("test_config.toml");
+    std::fs::write(&config_path, "ui_theme = \"nord\"\n").unwrap();
+    let md_path = dir.join("config_test.md");
+    std::fs::write(&md_path, "# Hello\n").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_mdx"))
+        .arg("--config")
+        .arg(&config_path)
+        .arg("--no-pager")
+        .arg(&md_path)
+        .output()
+        .expect("failed to run mdx");
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn test_config_flag_missing_file_errors() {
+    let output = Command::new(env!("CARGO_BIN_EXE_mdx"))
+        .arg("--config")
+        .arg("/tmp/mdx_nonexistent_config.toml")
+        .arg("--no-pager")
+        .arg("/dev/null")
+        .output()
+        .expect("failed to run mdx");
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("config file not found"),
+        "stderr: {}",
+        stderr
+    );
+}
+
+#[test]
+fn test_config_flag_invalid_toml_errors() {
+    let dir = std::env::temp_dir().join("mdx_config_integration");
+    std::fs::create_dir_all(&dir).unwrap();
+    let config_path = dir.join("bad_config.toml");
+    std::fs::write(&config_path, "not valid toml = = =\n").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_mdx"))
+        .arg("--config")
+        .arg(&config_path)
+        .arg("--no-pager")
+        .arg("/dev/null")
+        .output()
+        .expect("failed to run mdx");
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("failed to parse config file"),
+        "stderr: {}",
+        stderr
+    );
+}
+
+#[test]
+fn test_config_flag_unknown_key_errors() {
+    let dir = std::env::temp_dir().join("mdx_config_integration");
+    std::fs::create_dir_all(&dir).unwrap();
+    let config_path = dir.join("unknown_key_config.toml");
+    std::fs::write(&config_path, "bogus_key = true\n").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_mdx"))
+        .arg("--config")
+        .arg(&config_path)
+        .arg("--no-pager")
+        .arg("/dev/null")
+        .output()
+        .expect("failed to run mdx");
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("failed to parse config file"),
+        "stderr: {}",
+        stderr
+    );
+}
+
+#[test]
+fn test_init_creates_config_file() {
+    let dir = std::env::temp_dir().join("mdx_init_test");
+    // Clean up from previous runs
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_mdx"))
+        .arg("init")
+        .env("XDG_CONFIG_HOME", &dir)
+        .env("HOME", &dir)
+        .output()
+        .expect("failed to run mdx init");
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Config file created"), "stdout: {}", stdout);
+    let config_path = dir.join("mdx").join("config.toml");
+    assert!(
+        config_path.exists(),
+        "config file should exist at {:?}",
+        config_path
+    );
+    let content = std::fs::read_to_string(&config_path).unwrap();
+    assert!(
+        content.contains("# theme"),
+        "should contain commented defaults: {}",
+        content
+    );
+}
+
+#[test]
+fn test_init_refuses_if_config_exists() {
+    let dir = std::env::temp_dir().join("mdx_init_exists_test");
+    let _ = std::fs::remove_dir_all(&dir);
+    let mdx_dir = dir.join("mdx");
+    std::fs::create_dir_all(&mdx_dir).unwrap();
+    let config_path = mdx_dir.join("config.toml");
+    std::fs::write(&config_path, "theme = \"nord\"\n").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_mdx"))
+        .arg("init")
+        .env("XDG_CONFIG_HOME", &dir)
+        .env("HOME", &dir)
+        .output()
+        .expect("failed to run mdx init");
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("already exists"), "stderr: {}", stderr);
+    // Verify original content is untouched
+    let content = std::fs::read_to_string(&config_path).unwrap();
+    assert_eq!(content, "theme = \"nord\"\n");
+}
+
+#[test]
+fn test_embed_config_flag() {
+    let dir = std::env::temp_dir().join("mdx_config_integration");
+    std::fs::create_dir_all(&dir).unwrap();
+    let config_path = dir.join("embed_config.toml");
+    std::fs::write(&config_path, "ui_theme = \"frost\"\n").unwrap();
+    let md_path = dir.join("embed_config_test.md");
+    std::fs::write(&md_path, "# Hello\n").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_mdx"))
+        .args(["embed", "--width", "40"])
+        .arg("--config")
+        .arg(&config_path)
+        .arg(&md_path)
+        .output()
+        .expect("failed to run mdx embed");
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn test_project_config_discovery() {
+    let dir = std::env::temp_dir().join("mdx_project_config_test");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join(".git")).unwrap();
+    std::fs::write(dir.join(".mdx.toml"), "ui_theme = \"hearth\"\n").unwrap();
+    let md_path = dir.join("test.md");
+    std::fs::write(&md_path, "# Hello\n").unwrap();
+    // Run from inside the project dir so discovery finds .git
+    let output = Command::new(env!("CARGO_BIN_EXE_mdx"))
+        .arg("--no-pager")
+        .arg(&md_path)
+        .current_dir(&dir)
+        // Prevent user config from interfering
+        .env("XDG_CONFIG_HOME", dir.join("no_user_config"))
+        .env("HOME", dir.join("no_user_config"))
+        .output()
+        .expect("failed to run mdx");
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn test_cli_flag_overrides_config() {
+    let dir = std::env::temp_dir().join("mdx_config_integration");
+    std::fs::create_dir_all(&dir).unwrap();
+    let config_path = dir.join("override_config.toml");
+    // Config sets an invalid theme to prove CLI flag wins
+    std::fs::write(&config_path, "ui_theme = \"nord\"\n").unwrap();
+    let md_path = dir.join("override_test.md");
+    std::fs::write(&md_path, "# Hello\n").unwrap();
+    // CLI flag --ui-theme overrides the config value
+    let output = Command::new(env!("CARGO_BIN_EXE_mdx"))
+        .arg("--config")
+        .arg(&config_path)
+        .arg("--ui-theme=frost")
+        .arg("--no-pager")
+        .arg(&md_path)
+        .output()
+        .expect("failed to run mdx");
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
