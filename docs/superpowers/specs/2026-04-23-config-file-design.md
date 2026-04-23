@@ -150,7 +150,7 @@ Error: unknown field `ui-theme` in /home/user/.config/mdx/config.toml
   did you mean `ui_theme`?
 ```
 
-**Invalid values** — validated after merge, same as CLI flags. Error references source file:
+**Invalid values** — each file's values are validated immediately after parsing, before merging. This preserves provenance for error messages:
 ```
 Error: unknown UI theme "norf" (from /home/user/project/.mdx.toml)
   available themes: clay, hearth, frost, nord, ...
