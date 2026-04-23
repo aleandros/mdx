@@ -53,6 +53,8 @@ enum Commands {
     Embed(EmbedArgs),
     /// Preview all available UI themes with sample markdown
     PreviewThemes,
+    /// Generate a default user config file at ~/.config/mdx/config.toml
+    Init,
 }
 
 #[derive(clap::Args)]
@@ -87,6 +89,10 @@ struct Args {
     #[arg(long)]
     ui_theme: Option<String>,
 
+    /// Path to a config file (overrides user and project config)
+    #[arg(long, value_name = "PATH")]
+    config: Option<PathBuf>,
+
     /// Show raw mermaid source without rendering
     #[arg(long)]
     no_mermaid_rendering: bool,
@@ -116,6 +122,10 @@ struct EmbedArgs {
     /// UI color theme (use `list` to see options)
     #[arg(long)]
     ui_theme: Option<String>,
+
+    /// Path to a config file (overrides user and project config)
+    #[arg(long, value_name = "PATH")]
+    config: Option<PathBuf>,
 
     /// Show raw mermaid source without rendering
     #[arg(long)]
@@ -231,6 +241,20 @@ fn setup_panic_hook() {
     }));
 }
 
+fn run_init() -> Result<()> {
+    let path = config::Config::user_config_path()
+        .ok_or_else(|| anyhow::anyhow!("cannot determine home directory"))?;
+    if path.exists() {
+        anyhow::bail!("Config file already exists: {}", path.display());
+    }
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(&path, config::Config::generate_default())?;
+    println!("Config file created: {}", path.display());
+    Ok(())
+}
+
 fn main() -> Result<()> {
     let cli = Cli::from_arg_matches(&Cli::command().after_help(PAGER_KEYS_HELP).get_matches())?;
 
@@ -238,6 +262,7 @@ fn main() -> Result<()> {
         Some(Commands::Update) => return self_update::run(),
         Some(Commands::Embed(eargs)) => return run_embed(eargs),
         Some(Commands::PreviewThemes) => return preview::run(),
+        Some(Commands::Init) => return run_init(),
         None => {}
     }
 
@@ -428,6 +453,7 @@ mod tests {
             width: None,
             theme: None,
             ui_theme: None,
+            config: None,
             no_mermaid_rendering: false,
             split_mermaid_rendering: false,
         };
@@ -446,6 +472,7 @@ mod tests {
             width: None,
             theme: None,
             ui_theme: None,
+            config: None,
             no_mermaid_rendering: false,
             split_mermaid_rendering: false,
         };
@@ -464,6 +491,7 @@ mod tests {
             width: None,
             theme: None,
             ui_theme: None,
+            config: None,
             no_mermaid_rendering: false,
             split_mermaid_rendering: false,
         };
@@ -506,5 +534,28 @@ mod tests {
     fn test_embed_subcommand_rejects_watch_flag() {
         let result = Cli::try_parse_from(["mdx", "embed", "--watch", "file.md"]);
         assert!(result.is_err(), "embed must not accept --watch");
+    }
+
+    #[test]
+    fn test_init_subcommand() {
+        let cli = Cli::parse_from(["mdx", "init"]);
+        assert!(matches!(cli.command, Some(Commands::Init)));
+    }
+
+    #[test]
+    fn test_config_flag() {
+        let cli = Cli::parse_from(["mdx", "--config", "/tmp/my.toml", "test.md"]);
+        assert_eq!(cli.args.config, Some(PathBuf::from("/tmp/my.toml")));
+    }
+
+    #[test]
+    fn test_embed_config_flag() {
+        let cli = Cli::parse_from(["mdx", "embed", "--config", "/tmp/my.toml", "file.md"]);
+        match cli.command {
+            Some(Commands::Embed(args)) => {
+                assert_eq!(args.config, Some(PathBuf::from("/tmp/my.toml")));
+            }
+            _ => panic!("expected Embed subcommand"),
+        }
     }
 }
