@@ -177,7 +177,7 @@ fn use_pager(args: &Args) -> bool {
     std::io::stdout().is_terminal()
 }
 
-fn pipe_output(blocks: &[render::RenderedBlock], no_color: bool) -> Result<()> {
+pub(crate) fn pipe_output(blocks: &[render::RenderedBlock], no_color: bool) -> Result<()> {
     let mut stdout = std::io::stdout().lock();
     for block in blocks {
         match block {

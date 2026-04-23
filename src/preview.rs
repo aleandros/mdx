@@ -31,8 +31,11 @@ pub fn run() -> Result<()> {
     let blocks = crate::parser::parse_markdown(SAMPLE_MARKDOWN);
 
     for theme in Theme::all() {
-        // Theme name header
-        println!("\n\x1b[1m  ── {} ──\x1b[0m\n", theme.name);
+        if no_color {
+            println!("\n  -- {} --\n", theme.name);
+        } else {
+            println!("\n\x1b[1m  ── {} ──\x1b[0m\n", theme.name);
+        }
 
         let rendered = render::render_blocks(
             &blocks,
@@ -42,28 +45,7 @@ pub fn run() -> Result<()> {
             render::MermaidMode::Render,
         );
 
-        for block in &rendered {
-            match block {
-                render::RenderedBlock::Lines(lines) => {
-                    for line in lines {
-                        println!("{}", render::styled_line_to_ansi(line, no_color));
-                    }
-                }
-                render::RenderedBlock::Diagram { lines, .. } => {
-                    for line in lines {
-                        println!("{}", render::styled_line_to_ansi(line, no_color));
-                    }
-                    println!();
-                }
-                render::RenderedBlock::Image { alt, url } => {
-                    if alt.is_empty() {
-                        println!("[Image]({})", url);
-                    } else {
-                        println!("[Image: {}]({})", alt, url);
-                    }
-                }
-            }
-        }
+        crate::pipe_output(&rendered, no_color)?;
     }
     Ok(())
 }
