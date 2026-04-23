@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.5] - 2026-04-23
+
+### Added
+- Config file support: `--config` flag, layered loading (CLI > env > file > defaults), and `mdx init` subcommand to scaffold a default TOML config
+- `mdx embed` subcommand: non-interactive rendering with width/height truncation and unicode-aware line clipping for embedding output in other tools
+- `mdx preview-themes` subcommand to render a preview of all bundled syntax themes
+- Nine new UI themes: frost, nord, glacier, steel, solarized-dark, solarized-light, paper, snow, latte
+- `Theme::all()` enumeration API
+- Mermaid color support: hex and CSS named color parsing, `style`/`classDef`/`class`/`linkStyle` directive parsing, styled sequence diagrams, per-cell `SpanStyle` canvas, theme palette extension with nearest-color resolution
+- Vim-style search and scroll keybindings in the pager
+- Publishing to crates.io on release; crate renamed to `mermd` to claim the name
+- README logo and status badges
+
+### Fixed
+- `preview-themes` now reuses `pipe_output` and respects `NO_COLOR` in theme headers
+- `generate_default` uses single `#` for description comments so output parses as valid TOML
+- Mermaid rendering: removed dead annotations, deduplicated helpers, and now recurses into sequence fragments
+
 ## [0.1.4] - 2026-04-21
 
 ### Added
