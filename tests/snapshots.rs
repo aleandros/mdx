@@ -55,6 +55,19 @@ snapshot_test!(
     120
 );
 
+// flowchart-subgraph.md — exercises subgraph/end, quoted labels, <br/>,
+// cylinder nodes, extended dotted edges, and quoted edge labels
+snapshot_test!(
+    snapshot_flowchart_subgraph_w80,
+    "docs/examples/flowchart-subgraph.md",
+    80
+);
+snapshot_test!(
+    snapshot_flowchart_subgraph_w120,
+    "docs/examples/flowchart-subgraph.md",
+    120
+);
+
 // mixed-content.md
 snapshot_test!(
     snapshot_mixed_content_w80,

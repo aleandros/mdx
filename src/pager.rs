@@ -216,7 +216,7 @@ impl PagerState {
 
         self.flat_lines.clear();
         self.interactive_blocks.clear();
-        let height_threshold = (self.terminal_height as usize) / 2;
+        let height_threshold = self.terminal_height as usize;
         let width_limit = self.terminal_width as usize;
 
         for (block_index, block) in self.content.iter().enumerate() {
@@ -231,10 +231,12 @@ impl PagerState {
                     node_count,
                     edge_count,
                 } => {
+                    // Collapse only when genuinely unmanageable: taller than
+                    // the full terminal height, or more than twice as wide.
                     let is_tall = lines.len() > height_threshold;
-                    let is_wide = lines
-                        .iter()
-                        .any(|l| l.spans.iter().map(|s| s.text.len()).sum::<usize>() > width_limit);
+                    let is_wide = lines.iter().any(|l| {
+                        l.spans.iter().map(|s| s.text.len()).sum::<usize>() > width_limit * 2
+                    });
                     let is_large = is_tall || is_wide;
                     if is_large && !self.expanded.contains(&block_index) {
                         let flat_line_index = self.flat_lines.len();

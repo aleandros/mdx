@@ -1,4 +1,4 @@
-use super::layout::{LayoutResult, PositionedEdge, PositionedNode};
+use super::layout::{LayoutResult, PositionedEdge, PositionedNode, SubgraphBox};
 use super::{EdgeStyle, MermaidEdgeStyle, NodeShape, NodeStyle};
 use crate::render::{SpanStyle, StyledLine, StyledSpan};
 
@@ -349,6 +349,81 @@ fn draw_node(canvas: &mut Canvas, node: &PositionedNode) {
 }
 
 // ---------------------------------------------------------------------------
+// Subgraph box drawing
+// ---------------------------------------------------------------------------
+
+fn draw_subgraph_box(canvas: &mut Canvas, sg: &SubgraphBox) {
+    let x = sg.x;
+    let y = sg.y;
+    let w = sg.width;
+    let h = sg.height;
+
+    // Guard: out of bounds or too small
+    if w < 4 || h < 2 {
+        return;
+    }
+    if x >= canvas.width || y >= canvas.height {
+        return;
+    }
+
+    let style = SpanStyle {
+        fg: sg.border_color.clone(),
+        ..Default::default()
+    };
+
+    // Top border: ┌ <space>label<space> ─...─ ┐
+    canvas.set_styled(x, y, '┌', &style);
+    // Top border: fill with ─ then overwrite with " label " starting at x+1
+    let label_text = format!(" {} ", sg.label);
+    for i in 1..w - 1 {
+        if x + i < canvas.width {
+            canvas.set_styled(x + i, y, '─', &style);
+        }
+    }
+    for (i, ch) in label_text.chars().enumerate() {
+        let col = x + 1 + i;
+        if col < x + w - 1 && col < canvas.width {
+            canvas.set_styled(col, y, ch, &style);
+        } else {
+            break;
+        }
+    }
+    if x + w - 1 < canvas.width {
+        canvas.set_styled(x + w - 1, y, '┐', &style);
+    }
+
+    // Left and right borders
+    for row in 1..h - 1 {
+        let cy = y + row;
+        if cy >= canvas.height {
+            break;
+        }
+        if x < canvas.width {
+            canvas.set_styled(x, cy, '│', &style);
+        }
+        if x + w - 1 < canvas.width {
+            canvas.set_styled(x + w - 1, cy, '│', &style);
+        }
+    }
+
+    // Bottom border
+    let by = y + h - 1;
+    if by < canvas.height {
+        if x < canvas.width {
+            canvas.set_styled(x, by, '└', &style);
+        }
+        for i in 1..w - 1 {
+            if x + i < canvas.width {
+                canvas.set_styled(x + i, by, '─', &style);
+            }
+        }
+        if x + w - 1 < canvas.width {
+            canvas.set_styled(x + w - 1, by, '┘', &style);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Edge drawing — connectivity-grid approach
 // ---------------------------------------------------------------------------
 //
@@ -575,11 +650,18 @@ fn draw_edge_label(canvas: &mut Canvas, edge: &PositionedEdge) {
             let y_mid = (y0.min(y1) + y0.max(y1)) / 2;
             canvas.draw_text_styled(x0 + 1, y_mid, label, &ls);
         } else {
+            // Straight horizontal edge: place label on the wire itself.
+            // Skip if the label is longer than the available segment — no room to
+            // draw it without stomping on adjacent node content.
             let x_min = x0.min(x1);
             let x_max = x0.max(x1);
-            let x_mid = (x_min + x_max) / 2;
-            let label_x = x_mid.saturating_sub(label.len() / 2);
-            canvas.draw_text_styled(label_x, if y0 > 0 { y0 - 1 } else { y0 }, label, &ls);
+            let seg_len = x_max.saturating_sub(x_min);
+            if label.len() < seg_len {
+                let x_mid = (x_min + x_max) / 2;
+                let label_x = x_mid.saturating_sub(label.len() / 2);
+                let label_x = label_x.max(x_min).min(x_max.saturating_sub(label.len()));
+                canvas.draw_text_styled(label_x, y0, label, &ls);
+            }
         }
     }
 }
@@ -627,14 +709,19 @@ pub fn render(layout: &LayoutResult) -> Vec<String> {
         draw_arrowhead(&mut canvas, edge);
     }
 
-    // 5. Draw edge labels
-    for edge in &layout.edges {
-        draw_edge_label(&mut canvas, edge);
+    // 5. Draw subgraph boxes (after arrowheads, before nodes)
+    for sg in &layout.subgraph_boxes {
+        draw_subgraph_box(&mut canvas, sg);
     }
 
-    // 6. Draw nodes on top of edges
+    // 6. Draw nodes on top of edges and subgraph boxes
     for node in &layout.nodes {
         draw_node(&mut canvas, node);
+    }
+
+    // 7. Draw edge labels on top of nodes
+    for edge in &layout.edges {
+        draw_edge_label(&mut canvas, edge);
     }
 
     // Trim trailing empty lines
@@ -685,14 +772,19 @@ pub fn render_styled(layout: &LayoutResult) -> Vec<StyledLine> {
         draw_arrowhead(&mut canvas, edge);
     }
 
-    // 5. Draw edge labels
-    for edge in &layout.edges {
-        draw_edge_label(&mut canvas, edge);
+    // 5. Draw subgraph boxes (after arrowheads, before nodes)
+    for sg in &layout.subgraph_boxes {
+        draw_subgraph_box(&mut canvas, sg);
     }
 
-    // 6. Draw nodes on top
+    // 6. Draw nodes on top of edges and subgraph boxes
     for node in &layout.nodes {
         draw_node(&mut canvas, node);
+    }
+
+    // 7. Draw edge labels on top of nodes
+    for edge in &layout.edges {
+        draw_edge_label(&mut canvas, edge);
     }
 
     let mut lines = canvas.to_styled_lines();
@@ -740,6 +832,7 @@ mod tests {
         let layout = LayoutResult {
             nodes: vec![node],
             edges: vec![],
+            subgraph_boxes: vec![],
             width: 6,
             height: 3,
         };
@@ -801,6 +894,7 @@ mod tests {
         let layout = LayoutResult {
             nodes: vec![node],
             edges: vec![],
+            subgraph_boxes: vec![],
             width: 6,
             height: 3,
         };
@@ -860,6 +954,7 @@ mod tests {
         let layout = LayoutResult {
             nodes: vec![node_a, node_b],
             edges: vec![edge],
+            subgraph_boxes: vec![],
             width: 6,
             height: 10,
         };
@@ -886,6 +981,7 @@ mod tests {
         let layout = LayoutResult {
             nodes: vec![node],
             edges: vec![],
+            subgraph_boxes: vec![],
             width: 7,
             height: 7,
         };
@@ -975,6 +1071,7 @@ mod tests {
         let layout = LayoutResult {
             nodes: vec![node_a, node_b],
             edges: vec![edge],
+            subgraph_boxes: vec![],
             width: 10,
             height: 14,
         };
@@ -1026,6 +1123,7 @@ mod tests {
         let layout = LayoutResult {
             nodes: vec![node],
             edges: vec![],
+            subgraph_boxes: vec![],
             width: 6,
             height: 3,
         };

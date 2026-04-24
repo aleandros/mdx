@@ -1,6 +1,6 @@
 use super::{Direction, FlowChart, NodeShape};
 
-const H_SPACING: usize = 4;
+const H_SPACING: usize = 6;
 const V_SPACING: usize = 4;
 
 #[derive(Debug, Clone)]
@@ -30,10 +30,22 @@ pub struct PositionedEdge {
     pub edge_style: Option<super::MermaidEdgeStyle>,
 }
 
+#[derive(Debug, Clone)]
+pub struct SubgraphBox {
+    pub label: String,
+    pub x: usize,
+    pub y: usize,
+    pub width: usize,
+    pub height: usize,
+    /// Resolved border color; set by the caller (render_mermaid) after layout.
+    pub border_color: Option<crate::render::Color>,
+}
+
 #[derive(Debug)]
 pub struct LayoutResult {
     pub nodes: Vec<PositionedNode>,
     pub edges: Vec<PositionedEdge>,
+    pub subgraph_boxes: Vec<SubgraphBox>,
     pub width: usize,
     pub height: usize,
 }
@@ -93,6 +105,7 @@ pub fn layout(chart: &FlowChart) -> LayoutResult {
         return LayoutResult {
             nodes: vec![],
             edges: vec![],
+            subgraph_boxes: vec![],
             width: 0,
             height: 0,
         };
@@ -262,7 +275,12 @@ pub fn layout(chart: &FlowChart) -> LayoutResult {
         })
         .collect();
 
-    let max_secondary_extent = *rank_secondary_extents.iter().max().unwrap_or(&0);
+    let mut max_secondary_extent = *rank_secondary_extents.iter().max().unwrap_or(&0);
+
+    // When subgraphs are present, reserve top margin on the secondary axis so
+    // the subgraph box top border (label row) has room above the first node row.
+    let sg_top_margin: usize = if chart.subgraphs.is_empty() { 0 } else { 2 };
+    max_secondary_extent += sg_top_margin;
 
     // Primary offsets per rank
     let rank_max_primary: Vec<usize> = rank_groups
@@ -292,7 +310,7 @@ pub fn layout(chart: &FlowChart) -> LayoutResult {
         let rank_extent = rank_secondary_extents[r];
         let secondary_offset = (max_secondary_extent - rank_extent) / 2;
 
-        let mut cur_secondary = secondary_offset;
+        let mut cur_secondary = secondary_offset + sg_top_margin;
         for &idx in group {
             node_primary[idx] = rank_primary_offsets[r];
             node_secondary[idx] = cur_secondary;
@@ -434,9 +452,58 @@ pub fn layout(chart: &FlowChart) -> LayoutResult {
         })
         .collect();
 
+    // Compute bounding boxes for subgraphs
+    const H_PAD: usize = 2;
+    const V_PAD: usize = 2;
+
+    // Build a lookup from node id to PositionedNode for fast access
+    let node_pos_map: std::collections::HashMap<&str, &PositionedNode> = positioned_nodes
+        .iter()
+        .map(|n| (n.id.as_str(), n))
+        .collect();
+
+    let subgraph_boxes: Vec<SubgraphBox> = chart
+        .subgraphs
+        .iter()
+        .filter_map(|sg| {
+            // Collect all positioned member nodes
+            let members: Vec<&PositionedNode> = sg
+                .node_ids
+                .iter()
+                .filter_map(|id| node_pos_map.get(id.as_str()).copied())
+                .collect();
+
+            if members.is_empty() {
+                return None;
+            }
+
+            let min_x = members.iter().map(|n| n.x).min().unwrap();
+            let min_y = members.iter().map(|n| n.y).min().unwrap();
+            let max_x_right = members.iter().map(|n| n.x + n.width).max().unwrap();
+            let max_y_bottom = members.iter().map(|n| n.y + n.height).max().unwrap();
+
+            let box_x = min_x.saturating_sub(H_PAD);
+            let box_y = min_y.saturating_sub(V_PAD);
+            // Minimum width so the label always fits in the top border: "┌ label ┐"
+            let min_w = sg.label.len() + 4;
+            let box_w = (max_x_right + H_PAD - box_x).max(min_w);
+            let box_h = max_y_bottom + V_PAD - box_y;
+
+            Some(SubgraphBox {
+                label: sg.label.clone(),
+                x: box_x,
+                y: box_y,
+                width: box_w,
+                height: box_h,
+                border_color: None,
+            })
+        })
+        .collect();
+
     LayoutResult {
         nodes: positioned_nodes,
         edges: positioned_edges,
+        subgraph_boxes,
         width: total_width,
         height: total_height,
     }
@@ -471,6 +538,7 @@ mod tests {
             direction: Direction::TopDown,
             nodes,
             edges,
+            subgraphs: vec![],
         }
     }
 
@@ -622,6 +690,7 @@ mod tests {
             direction: Direction::LeftRight,
             nodes,
             edges,
+            subgraphs: vec![],
         }
     }
 
@@ -630,6 +699,7 @@ mod tests {
             direction: Direction::BottomTop,
             nodes,
             edges,
+            subgraphs: vec![],
         }
     }
 
@@ -638,6 +708,7 @@ mod tests {
             direction: Direction::RightLeft,
             nodes,
             edges,
+            subgraphs: vec![],
         }
     }
 

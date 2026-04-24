@@ -3,7 +3,9 @@ use std::collections::HashMap;
 use anyhow::{Context, bail};
 
 use super::color::{parse_edge_style_props, parse_node_style_props};
-use super::{Direction, Edge, EdgeStyle, FlowChart, MermaidEdgeStyle, Node, NodeShape, NodeStyle};
+use super::{
+    Direction, Edge, EdgeStyle, FlowChart, MermaidEdgeStyle, Node, NodeShape, NodeStyle, Subgraph,
+};
 
 // ---------------------------------------------------------------------------
 // Public entry point
@@ -42,9 +44,34 @@ pub fn parse_flowchart(input: &str) -> anyhow::Result<FlowChart> {
     let mut link_styles: Vec<(usize, MermaidEdgeStyle)> = Vec::new();
     let mut node_styles: Vec<(String, NodeStyle)> = Vec::new();
 
+    // Subgraph tracking
+    let mut subgraphs: Vec<Subgraph> = Vec::new();
+    // Stack of (id, label, member_node_ids) for nested subgraphs
+    let mut subgraph_stack: Vec<(String, String, Vec<String>)> = Vec::new();
+
     for line in lines {
         let trimmed = line.trim();
         if trimmed.is_empty() || trimmed.starts_with("%%") {
+            continue;
+        }
+
+        // subgraph declarations: start a new subgraph context
+        if let Some(rest) = trimmed.strip_prefix("subgraph") {
+            let rest = rest.trim();
+            let (sg_id, sg_label) = parse_subgraph_header(rest);
+            subgraph_stack.push((sg_id, sg_label, Vec::new()));
+            continue;
+        }
+
+        // end: close the current subgraph context
+        if trimmed == "end" {
+            if let Some((sg_id, sg_label, member_ids)) = subgraph_stack.pop() {
+                subgraphs.push(Subgraph {
+                    id: sg_id,
+                    label: sg_label,
+                    node_ids: member_ids,
+                });
+            }
             continue;
         }
 
@@ -86,8 +113,18 @@ pub fn parse_flowchart(input: &str) -> anyhow::Result<FlowChart> {
             continue;
         }
 
+        // Track node_order length before parsing to detect newly added nodes
+        let before_len = node_order.len();
         parse_statement(trimmed, &mut node_order, &mut node_map, &mut edges)
             .with_context(|| format!("Failed to parse line: {:?}", trimmed))?;
+
+        // Any newly added nodes belong to the current subgraph (if any)
+        if !subgraph_stack.is_empty() {
+            let new_ids: Vec<String> = node_order[before_len..].to_vec();
+            if let Some(top) = subgraph_stack.last_mut() {
+                top.2.extend(new_ids);
+            }
+        }
     }
 
     // Apply class assignments to nodes
@@ -130,6 +167,7 @@ pub fn parse_flowchart(input: &str) -> anyhow::Result<FlowChart> {
         direction,
         nodes,
         edges,
+        subgraphs,
     })
 }
 
@@ -248,10 +286,10 @@ fn parse_node_term(chars: &[char], pos: &mut usize) -> anyhow::Result<Node> {
     match chars[*pos] {
         '[' => {
             *pos += 1;
-            let label = collect_until(chars, pos, ']')?;
+            let raw = collect_until(chars, pos, ']')?;
             Ok(Node {
                 id,
-                label,
+                label: clean_label(&raw),
                 shape: NodeShape::Rect,
                 node_style: None,
             })
@@ -262,23 +300,23 @@ fn parse_node_term(chars: &[char], pos: &mut usize) -> anyhow::Result<Node> {
             if *pos < chars.len() && chars[*pos] == '(' {
                 // Circle: ((label))
                 *pos += 1;
-                let label = collect_until(chars, pos, ')')?;
+                let raw = collect_until(chars, pos, ')')?;
                 // consume second ')'
                 if *pos < chars.len() && chars[*pos] == ')' {
                     *pos += 1;
                 }
                 Ok(Node {
                     id,
-                    label,
+                    label: clean_label(&raw),
                     shape: NodeShape::Circle,
                     node_style: None,
                 })
             } else {
                 // Rounded: (label)
-                let label = collect_until(chars, pos, ')')?;
+                let raw = collect_until(chars, pos, ')')?;
                 Ok(Node {
                     id,
-                    label,
+                    label: clean_label(&raw),
                     shape: NodeShape::Rounded,
                     node_style: None,
                 })
@@ -286,10 +324,10 @@ fn parse_node_term(chars: &[char], pos: &mut usize) -> anyhow::Result<Node> {
         }
         '{' => {
             *pos += 1;
-            let label = collect_until(chars, pos, '}')?;
+            let raw = collect_until(chars, pos, '}')?;
             Ok(Node {
                 id,
-                label,
+                label: clean_label(&raw),
                 shape: NodeShape::Diamond,
                 node_style: None,
             })
@@ -319,8 +357,21 @@ fn parse_edge(chars: &[char], pos: &mut usize) -> anyhow::Result<(EdgeStyle, Opt
     let remaining: String = chars[*pos..].iter().collect();
 
     let (style, consumed) = if remaining.starts_with("-.-") {
-        // Dotted: `-.->` (consume 4 chars)
-        (EdgeStyle::Dotted, 4)
+        // Dotted: `-.->` has arrowhead (4 chars); `-.-` alone has none (3 chars).
+        // Distinguish by whether char 3 is `>`.
+        let n = if remaining.chars().nth(3) == Some('>') {
+            4
+        } else {
+            3
+        };
+        (EdgeStyle::Dotted, n)
+    } else if let Some(stripped) = remaining.strip_prefix("-.") {
+        // Extended dotted with embedded text: `-.label.->` (e.g. `-.failure.->`)
+        if let Some(end_idx) = stripped.find(".->") {
+            (EdgeStyle::Dotted, 2 + end_idx + 3)
+        } else {
+            bail!("No edge found at position {}", pos);
+        }
     } else if remaining.starts_with("==>") {
         // Thick
         (EdgeStyle::Thick, 3)
@@ -336,12 +387,18 @@ fn parse_edge(chars: &[char], pos: &mut usize) -> anyhow::Result<(EdgeStyle, Opt
 
     *pos += consumed;
 
-    // Optional label: |label|
+    // Optional label: |label| — strip surrounding quotes from label text
     skip_whitespace(chars, pos);
     let label = if *pos < chars.len() && chars[*pos] == '|' {
         *pos += 1;
-        let lbl = collect_until(chars, pos, '|')?;
-        Some(lbl)
+        let raw = collect_until(chars, pos, '|')?;
+        let cleaned = raw
+            .trim()
+            .strip_prefix('"')
+            .and_then(|s| s.strip_suffix('"'))
+            .unwrap_or(raw.trim())
+            .to_string();
+        Some(cleaned)
     } else {
         None
     };
@@ -352,6 +409,71 @@ fn parse_edge(chars: &[char], pos: &mut usize) -> anyhow::Result<(EdgeStyle, Opt
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/// Normalize a raw label extracted from bracket notation.
+///
+/// Handles:
+/// - Surrounding double quotes: `"text"` → `text`
+/// - Cylinder shape wrapper: `("text")` → `text`
+/// - HTML line breaks: `<br/>` / `<br>` → ` / `
+fn clean_label(s: &str) -> String {
+    let s = s.trim();
+    // Strip outer double quotes
+    let s = s
+        .strip_prefix('"')
+        .and_then(|s| s.strip_suffix('"'))
+        .unwrap_or(s);
+    // Unwrap cylinder notation ("inner") → inner, then strip quotes
+    let s = if let Some(inner) = s.strip_prefix("(\"").and_then(|s| s.strip_suffix("\")")) {
+        inner
+    } else if let Some(inner) = s.strip_prefix('(').and_then(|s| s.strip_suffix(')')) {
+        inner
+            .strip_prefix('"')
+            .and_then(|s| s.strip_suffix('"'))
+            .unwrap_or(inner)
+    } else {
+        s
+    };
+    // Replace HTML line-break tags with a visual separator
+    let mut result = s.to_string();
+    for br in &["<br/>", "<br>", "<BR/>", "<BR>"] {
+        result = result.replace(br, " / ");
+    }
+    result.trim().to_string()
+}
+
+/// Parse a subgraph header: `ID["Label"]` or just `ID` → (id, label).
+/// If no label is found, the id is used as the label.
+fn parse_subgraph_header(rest: &str) -> (String, String) {
+    // rest might be empty (anonymous subgraph)
+    let rest = rest.trim();
+    if rest.is_empty() {
+        return (String::new(), String::new());
+    }
+
+    // Find the id (up to '[', '"', or whitespace)
+    let id_end = rest
+        .find(|c: char| c == '[' || c == '"' || c.is_whitespace())
+        .unwrap_or(rest.len());
+    let id = rest[..id_end].to_string();
+
+    // Look for a label in brackets: ID["Label"] or ID[Label]
+    let remainder = rest[id_end..].trim();
+    let label = if let Some(inner) = remainder
+        .strip_prefix('[')
+        .and_then(|s| s.strip_suffix(']'))
+    {
+        clean_label(inner)
+    } else if !remainder.is_empty() {
+        // Fallback: treat the remainder as a label
+        clean_label(remainder)
+    } else {
+        // No label: use the id
+        id.clone()
+    };
+
+    (id, label)
+}
 
 fn parse_identifier(chars: &[char], pos: &mut usize) -> anyhow::Result<String> {
     let start = *pos;
@@ -623,5 +745,122 @@ mod tests {
             .as_ref()
             .expect("node should have style");
         assert_eq!(style.fill, None);
+    }
+
+    // -----------------------------------------------------------------------
+    // Quoted labels
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_parse_quoted_rect_label() {
+        let chart = flowchart("graph LR\n    A[\"Domain Modules\"]\n");
+        assert_eq!(chart.nodes[0].label, "Domain Modules");
+    }
+
+    #[test]
+    fn test_parse_br_in_label() {
+        let chart = flowchart("graph LR\n    A[\"workerA()<br/>workerB()\"]\n");
+        assert_eq!(chart.nodes[0].label, "workerA() / workerB()");
+    }
+
+    #[test]
+    fn test_parse_cylinder_shape_label() {
+        let chart = flowchart("graph LR\n    DB[(\"Database\")]\n");
+        assert_eq!(chart.nodes[0].label, "Database");
+    }
+
+    // -----------------------------------------------------------------------
+    // Extended dotted edges
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_parse_extended_dotted_edge() {
+        let chart = flowchart("graph LR\n    A -.failure.-> B\n");
+        assert_eq!(chart.edges[0].style, EdgeStyle::Dotted);
+        assert_eq!(chart.edges[0].from, "A");
+        assert_eq!(chart.edges[0].to, "B");
+    }
+
+    #[test]
+    fn test_parse_extended_dotted_edge_short_label() {
+        let chart = flowchart("graph LR\n    A -.x.-> B\n");
+        assert_eq!(chart.edges[0].style, EdgeStyle::Dotted);
+    }
+
+    // -----------------------------------------------------------------------
+    // Quoted edge labels
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_parse_quoted_edge_label() {
+        let chart = flowchart("graph LR\n    A -->|\"publish event\"| B\n");
+        assert_eq!(chart.edges[0].label, Some("publish event".to_string()));
+    }
+
+    // -----------------------------------------------------------------------
+    // Subgraph / end skipping
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_parse_subgraph_skipped() {
+        let input = "graph LR\n    A[Source]\n    subgraph Broker[\"Broker\"]\n        B[Queue]\n    end\n    A --> B\n";
+        let chart = flowchart(input);
+        // Only real nodes — "subgraph" and "end" must not appear
+        let ids: Vec<&str> = chart.nodes.iter().map(|n| n.id.as_str()).collect();
+        assert!(!ids.contains(&"subgraph"), "subgraph should not be a node");
+        assert!(!ids.contains(&"end"), "end should not be a node");
+        assert!(ids.contains(&"A"));
+        assert!(ids.contains(&"B"));
+        assert_eq!(chart.edges.len(), 1);
+    }
+
+    // -----------------------------------------------------------------------
+    // Subgraph membership tracking
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_parse_subgraph_membership_single() {
+        let input = "graph LR\n    A[Source]\n    subgraph Broker[\"Message Broker\"]\n        B[Queue]\n        C[Router]\n    end\n    A --> B\n";
+        let chart = flowchart(input);
+        assert_eq!(chart.subgraphs.len(), 1);
+        let sg = &chart.subgraphs[0];
+        assert_eq!(sg.id, "Broker");
+        assert_eq!(sg.label, "Message Broker");
+        assert!(sg.node_ids.contains(&"B".to_string()));
+        assert!(sg.node_ids.contains(&"C".to_string()));
+        assert!(!sg.node_ids.contains(&"A".to_string()));
+    }
+
+    #[test]
+    fn test_parse_subgraph_membership_multiple() {
+        let input = "flowchart LR\n    subgraph G1[\"Group One\"]\n        N1[Alpha]\n        N2[Beta]\n    end\n    subgraph G2[\"Group Two\"]\n        N3[Gamma]\n    end\n    N1 --> N3\n";
+        let chart = flowchart(input);
+        assert_eq!(chart.subgraphs.len(), 2);
+        let g1 = chart.subgraphs.iter().find(|s| s.id == "G1").unwrap();
+        let g2 = chart.subgraphs.iter().find(|s| s.id == "G2").unwrap();
+        assert_eq!(g1.label, "Group One");
+        assert_eq!(g1.node_ids, vec!["N1".to_string(), "N2".to_string()]);
+        assert_eq!(g2.label, "Group Two");
+        assert_eq!(g2.node_ids, vec!["N3".to_string()]);
+    }
+
+    #[test]
+    fn test_parse_subgraph_no_subgraphs() {
+        let input = "graph TD\n    A --> B\n";
+        let chart = flowchart(input);
+        assert!(chart.subgraphs.is_empty());
+    }
+
+    #[test]
+    fn test_parse_subgraph_edge_nodes_not_in_subgraph() {
+        // Nodes added by edges OUTSIDE subgraph should NOT be in the subgraph
+        let input =
+            "graph LR\n    subgraph Broker[\"Broker\"]\n        B[Queue]\n    end\n    A --> B\n";
+        let chart = flowchart(input);
+        assert_eq!(chart.subgraphs.len(), 1);
+        let sg = &chart.subgraphs[0];
+        // A is added outside the subgraph
+        assert!(!sg.node_ids.contains(&"A".to_string()));
+        assert!(sg.node_ids.contains(&"B".to_string()));
     }
 }

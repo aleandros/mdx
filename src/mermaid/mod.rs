@@ -59,10 +59,18 @@ pub struct Edge {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct Subgraph {
+    pub id: String,
+    pub label: String,
+    pub node_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct FlowChart {
     pub direction: Direction,
     pub nodes: Vec<Node>,
     pub edges: Vec<Edge>,
+    pub subgraphs: Vec<Subgraph>,
 }
 
 /// Returns (styled_lines, node_count, edge_count)
@@ -89,7 +97,27 @@ pub fn render_mermaid(
         }
         resolve_event_styles(&mut diagram.events, theme);
 
-        let laid_out = sequence::layout::layout(&diagram);
+        let mut laid_out = sequence::layout::layout(&diagram);
+
+        // Apply theme default colors to unstyled participants and messages.
+        for p in &mut laid_out.participants {
+            if p.style.is_none() {
+                p.style = Some(NodeStyle {
+                    fill: None,
+                    stroke: Some(color::resolve_color(&theme.diagram_node_border, theme)),
+                    color: Some(color::resolve_color(&theme.diagram_node_text, theme)),
+                });
+            }
+        }
+        for msg in &mut laid_out.messages {
+            if msg.edge_style.is_none() {
+                msg.edge_style = Some(MermaidEdgeStyle {
+                    stroke: Some(color::resolve_color(&theme.diagram_edge_stroke, theme)),
+                    label_color: Some(color::resolve_color(&theme.diagram_edge_label, theme)),
+                });
+            }
+        }
+
         let lines = sequence::ascii::render_styled(&laid_out);
         Ok((lines, participant_count, event_count))
     } else {
@@ -109,7 +137,30 @@ pub fn render_mermaid(
             }
         }
 
-        let positioned = layout::layout(&chart);
+        let mut positioned = layout::layout(&chart);
+
+        // Apply theme defaults to elements without explicit styles.
+        for node in &mut positioned.nodes {
+            if node.node_style.is_none() {
+                node.node_style = Some(NodeStyle {
+                    fill: None,
+                    stroke: Some(color::resolve_color(&theme.diagram_node_border, theme)),
+                    color: Some(color::resolve_color(&theme.diagram_node_text, theme)),
+                });
+            }
+        }
+        for edge in &mut positioned.edges {
+            if edge.edge_style.is_none() {
+                edge.edge_style = Some(MermaidEdgeStyle {
+                    stroke: None, // edge lines stay in terminal default color
+                    label_color: Some(color::resolve_color(&theme.diagram_edge_label, theme)),
+                });
+            }
+        }
+        for sg in &mut positioned.subgraph_boxes {
+            sg.border_color = Some(color::resolve_color(&theme.diagram_border, theme));
+        }
+
         let lines = ascii::render_styled(&positioned);
         Ok((lines, node_count, edge_count))
     }
@@ -174,16 +225,18 @@ mod tests {
     }
 
     #[test]
-    fn test_render_mermaid_unstyled_is_plain() {
+    fn test_render_mermaid_uses_theme_defaults() {
+        // Unstyled diagrams now use theme default colors for node borders/text.
         let input = "graph TD\n    A --> B\n";
         let theme = Theme::default_theme();
         let (lines, _, _) = render_mermaid(input, theme).unwrap();
-        let all_plain = lines.iter().all(|line| {
-            line.spans
-                .iter()
-                .all(|s| s.style == crate::render::SpanStyle::default())
-        });
-        assert!(all_plain, "Unstyled diagram should have no colors");
+        let has_color = lines
+            .iter()
+            .any(|line| line.spans.iter().any(|s| s.style.fg.is_some()));
+        assert!(
+            has_color,
+            "Unstyled diagram should use theme default colors"
+        );
     }
 
     #[test]
