@@ -189,7 +189,7 @@ mdx --ui-theme=list        # List available UI themes
 
 Fenced code blocks tagged `mermaid` are rendered as ASCII art.
 
-> **Supported today:** `graph` / `flowchart` and `sequenceDiagram`. Other diagram types (class, state, ER, gantt, etc.) are not yet supported.
+> **Supported today:** `graph` / `flowchart`, `sequenceDiagram`, and `erDiagram`. Other diagram types (class, state, gantt, etc.) are not yet supported.
 
 ### Flowcharts
 
@@ -233,6 +233,53 @@ sequenceDiagram
     B-->>A: Response
 ```
 ````
+
+### ER diagrams
+
+mdx renders `erDiagram` blocks as ASCII tables linked by ASCII crow's foot
+endpoints.
+
+````markdown
+```mermaid
+erDiagram
+    CUSTOMER ||--o{ ORDER : places
+    ORDER ||--|{ LINE_ITEM : contains
+    CUSTOMER {
+        string name
+        string email "primary contact"
+    }
+    ORDER {
+        int id PK
+        int customer_id FK
+        date placed_at
+    }
+```
+````
+
+**Supported syntax**
+
+- **Header:** `erDiagram`
+- **Direction (extension):** `direction TD` / `direction LR`. Without one, mdx
+  tries `LR` first and falls back to `TD` if the laid-out width exceeds the
+  terminal width.
+- **Relationships:** `LEFT <lcard> <op> <rcard> RIGHT [: LABEL]`
+  - `<op>` is `--` (identifying, solid) or `..` (non-identifying, dotted).
+  - `<lcard>` is one of `||`, `o|`, `}o`, `}|`.
+  - `<rcard>` is one of `||`, `|o`, `o{`, `|{`.
+  - `LABEL` is a quoted string or a bareword.
+- **Entities:** `NAME { ... }` with one attribute per line:
+  - `TYPE NAME [PK | FK | PK,FK | FK,PK] ["comment"]`
+  - Long comments wrap below the attribute, aligned under the NAME column.
+  - Box width is capped per terminal width; tweak by passing `--width`.
+
+**Crow's foot glyphs**
+
+| Cardinality   | Left   | Right  |
+| ------------- | ------ | ------ |
+| Exactly one   | `\|\|` | `\|\|` |
+| Zero or one   | `o\|`  | `\|o`  |
+| Zero or many  | `}o`   | `o{`   |
+| One or many   | `}\|`  | `\|{`  |
 
 ## Updating
 
