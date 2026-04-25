@@ -1,4 +1,4 @@
-use crate::mermaid::er::EntityLineKind;
+use crate::mermaid::er::{Cardinality, EntityLineKind};
 use crate::mermaid::layout::{PositionedEdge, PositionedNode};
 
 /// Paints the borders and inner content of an entity box at its positioned
@@ -82,8 +82,81 @@ fn paint_text(canvas_lines: &mut [String], x: usize, y: usize, text: &str, max_w
     }
 }
 
-pub fn paint_cardinality(_canvas_lines: &mut [String], _edge: &PositionedEdge) {
-    // Implemented in Task 12.
+fn left_glyph(c: Cardinality) -> &'static str {
+    match c {
+        Cardinality::ExactlyOne => "||",
+        Cardinality::ZeroOrOne => "o|",
+        Cardinality::ZeroOrMany => "}o",
+        Cardinality::OneOrMany => "}|",
+    }
+}
+
+fn right_glyph(c: Cardinality) -> &'static str {
+    match c {
+        Cardinality::ExactlyOne => "||",
+        Cardinality::ZeroOrOne => "|o",
+        Cardinality::ZeroOrMany => "o{",
+        Cardinality::OneOrMany => "|{",
+    }
+}
+
+pub fn paint_cardinality(canvas_lines: &mut [String], edge: &PositionedEdge) {
+    let Some(meta) = edge.er_meta.as_ref() else {
+        return;
+    };
+    if edge.points.len() < 2 {
+        return;
+    }
+    let start = edge.points[0];
+    let end = *edge.points.last().unwrap();
+
+    let l_chars: Vec<char> = left_glyph(meta.left_card).chars().collect();
+    let r_chars: Vec<char> = right_glyph(meta.right_card).chars().collect();
+
+    paint_glyph_at(canvas_lines, start, edge.points[1], &l_chars);
+    paint_glyph_at(
+        canvas_lines,
+        end,
+        edge.points[edge.points.len() - 2],
+        &r_chars,
+    );
+}
+
+fn paint_glyph_at(
+    canvas_lines: &mut [String],
+    endpoint: (usize, usize),
+    next: (usize, usize),
+    glyph: &[char],
+) {
+    if glyph.len() != 2 {
+        return;
+    }
+    // Convention: glyph[0] is the lower-coord cell, glyph[1] is the higher-coord
+    // cell along the segment direction at the endpoint. Callers (left_glyph /
+    // right_glyph) produce strings in canvas-order (left→right or top→bottom).
+    let (c0, c1) = (glyph[0], glyph[1]);
+    let (x, y) = endpoint;
+    let dx = next.0 as isize - endpoint.0 as isize;
+    let dy = next.1 as isize - endpoint.1 as isize;
+    if dx.abs() > dy.abs() {
+        if dx > 0 {
+            // endpoint is the lower-coord cell; next is to the right.
+            set_cell(canvas_lines, x, y, c0);
+            set_cell(canvas_lines, x + 1, y, c1);
+        } else if dx < 0 && x >= 1 {
+            // endpoint is the higher-coord cell; next is to the left.
+            set_cell(canvas_lines, x - 1, y, c0);
+            set_cell(canvas_lines, x, y, c1);
+        }
+    } else if dy != 0 {
+        if dy > 0 {
+            set_cell(canvas_lines, x, y, c0);
+            set_cell(canvas_lines, x, y + 1, c1);
+        } else if y >= 1 {
+            set_cell(canvas_lines, x, y - 1, c0);
+            set_cell(canvas_lines, x, y, c1);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -172,6 +245,38 @@ mod tests {
         assert!(
             joined.contains("-----"),
             "separator dashes missing:\n{}",
+            joined
+        );
+    }
+
+    #[test]
+    fn test_relationship_renders_crow_foot_glyphs() {
+        use crate::mermaid::er::{Cardinality, Relationship};
+        let mut diag = ErDiagram {
+            direction: Direction::LeftRight,
+            direction_explicit: false,
+            entities: vec![make_entity("A"), make_entity("B")],
+            relationships: vec![Relationship {
+                left: "A".into(),
+                right: "B".into(),
+                left_card: Cardinality::ExactlyOne,
+                right_card: Cardinality::ZeroOrMany,
+                identifying: true,
+                label: None,
+            }],
+        };
+        let chart = to_flowchart(&mut diag, 40);
+        let layout = crate::mermaid::layout::layout(&chart);
+        let lines = crate::mermaid::ascii::render(&layout);
+        let joined = lines.join("\n");
+        assert!(
+            joined.contains("||"),
+            "missing one-and-only-one glyph:\n{}",
+            joined
+        );
+        assert!(
+            joined.contains("o{"),
+            "missing zero-or-many glyph:\n{}",
             joined
         );
     }

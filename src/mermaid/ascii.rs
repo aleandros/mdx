@@ -586,6 +586,10 @@ fn color_edge_segments(canvas: &mut Canvas, edge: &PositionedEdge) {
 }
 
 fn draw_arrowhead(canvas: &mut Canvas, edge: &PositionedEdge) {
+    // ER edges use crow's foot glyphs at endpoints instead of arrowheads.
+    if edge.er_meta.is_some() {
+        return;
+    }
     let draw_arrow = matches!(
         edge.style,
         EdgeStyle::Arrow | EdgeStyle::Dotted | EdgeStyle::Thick
@@ -738,6 +742,12 @@ pub fn render(layout: &LayoutResult) -> Vec<String> {
             crate::mermaid::er::ascii::paint_entity(&mut lines, node);
         }
     }
+    // 8b. Paint crow's foot cardinality glyphs at ER edge endpoints.
+    for edge in &layout.edges {
+        if edge.er_meta.is_some() {
+            crate::mermaid::er::ascii::paint_cardinality(&mut lines, edge);
+        }
+    }
     let mut lines: Vec<String> = lines
         .into_iter()
         .map(|l| l.trim_end().to_string())
@@ -817,35 +827,65 @@ pub fn render_styled(layout: &LayoutResult) -> Vec<StyledLine> {
     //    entity boxes are deferred to Task 13.
     let entity_nodes: Vec<&PositionedNode> =
         layout.nodes.iter().filter(|n| n.entity.is_some()).collect();
+    let er_edges: Vec<&PositionedEdge> = layout
+        .edges
+        .iter()
+        .filter(|e| e.er_meta.is_some())
+        .collect();
     let mut lines = canvas.to_styled_lines();
-    if !entity_nodes.is_empty() {
+    if !entity_nodes.is_empty() || !er_edges.is_empty() {
         let mut plain = canvas_to_padded_lines(&canvas);
         for node in &entity_nodes {
             crate::mermaid::er::ascii::paint_entity(&mut plain, node);
         }
+        for edge in &er_edges {
+            crate::mermaid::er::ascii::paint_cardinality(&mut plain, edge);
+        }
         // Replace styled rows that fall inside any entity box with the
         // post-processed plain text, default-styled.
+        let mut rows_to_replace: std::collections::BTreeSet<usize> =
+            std::collections::BTreeSet::new();
         for node in &entity_nodes {
             for dy in 0..node.height {
-                let y = node.y + dy;
-                if y >= plain.len() {
-                    break;
-                }
-                let row_text: String = plain[y].trim_end().to_string();
-                while lines.len() <= y {
-                    lines.push(StyledLine::empty());
-                }
-                lines[y] = StyledLine {
-                    spans: if row_text.is_empty() {
-                        Vec::new()
-                    } else {
-                        vec![StyledSpan {
-                            text: row_text,
-                            style: SpanStyle::default(),
-                        }]
-                    },
-                };
+                rows_to_replace.insert(node.y + dy);
             }
+        }
+        // Cardinality glyphs may be painted just outside entity boxes (one cell
+        // past the endpoint). Replace the rows touched by edge endpoints too.
+        for edge in &er_edges {
+            if edge.points.len() < 2 {
+                continue;
+            }
+            let start = edge.points[0];
+            let end = *edge.points.last().unwrap();
+            // Glyph spans up to one cell along the segment direction. Conservatively
+            // mark the endpoint row plus the row above and below.
+            for &(_, y) in &[start, end] {
+                rows_to_replace.insert(y);
+                if y > 0 {
+                    rows_to_replace.insert(y - 1);
+                }
+                rows_to_replace.insert(y + 1);
+            }
+        }
+        for y in rows_to_replace {
+            if y >= plain.len() {
+                continue;
+            }
+            let row_text: String = plain[y].trim_end().to_string();
+            while lines.len() <= y {
+                lines.push(StyledLine::empty());
+            }
+            lines[y] = StyledLine {
+                spans: if row_text.is_empty() {
+                    Vec::new()
+                } else {
+                    vec![StyledSpan {
+                        text: row_text,
+                        style: SpanStyle::default(),
+                    }]
+                },
+            };
         }
     }
     while lines.last().map(|l| l.spans.is_empty()).unwrap_or(false) {
@@ -1010,6 +1050,7 @@ mod tests {
             style: EdgeStyle::Arrow,
             points: vec![(3, 3), (3, 7)],
             edge_style: None,
+            er_meta: None,
         };
 
         let layout = LayoutResult {
@@ -1127,6 +1168,7 @@ mod tests {
             style: EdgeStyle::Arrow,
             points: vec![(3, 3), (3, 10)],
             edge_style: None,
+            er_meta: None,
         };
 
         let layout = LayoutResult {

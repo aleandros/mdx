@@ -30,6 +30,8 @@ pub struct PositionedEdge {
     pub style: super::EdgeStyle,
     pub points: Vec<(usize, usize)>,
     pub edge_style: Option<super::MermaidEdgeStyle>,
+    /// Set only for ER relationship edges; carries cardinality + identifying flag.
+    pub er_meta: Option<super::er::ErEdgeMeta>,
 }
 
 #[derive(Debug, Clone)]
@@ -788,6 +790,7 @@ pub fn layout(chart: &FlowChart) -> LayoutResult {
                 style: edge.style.clone(),
                 points,
                 edge_style: edge.edge_style.clone(),
+                er_meta: edge.er_meta.clone(),
             })
         })
         .collect();
