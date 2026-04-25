@@ -47,32 +47,77 @@ pub fn to_flowchart(diagram: &mut ErDiagram, max_box_width: usize) -> FlowChart 
     }
 }
 
+fn key_str(k: super::KeyKind) -> &'static str {
+    match k {
+        super::KeyKind::None => "",
+        super::KeyKind::Pk => "PK",
+        super::KeyKind::Fk => "FK",
+        super::KeyKind::PkFk => "PK,FK",
+    }
+}
+
 fn layout_entity(entity: &mut super::Entity, _max_box_width: usize) {
-    // Header row: " Name " (1 padding cell on each side of the name)
-    let header = format!(" {} ", entity.name);
-    let inner_w = header.len();
-    let width = inner_w + 2; // 1 border on each side
+    let key_w = entity
+        .attributes
+        .iter()
+        .map(|a| key_str(a.key).len())
+        .max()
+        .unwrap_or(0);
+    let ty_w = entity
+        .attributes
+        .iter()
+        .map(|a| a.ty.len())
+        .max()
+        .unwrap_or(0);
+    let name_w = entity
+        .attributes
+        .iter()
+        .map(|a| a.name.len())
+        .max()
+        .unwrap_or(0);
+
+    let header_text = format!(" {} ", entity.name);
+
+    let attr_rows: Vec<String> = entity
+        .attributes
+        .iter()
+        .map(|a| {
+            format!(
+                " {:<kw$} {:<tw$} {:<nw$} ",
+                key_str(a.key),
+                a.ty,
+                a.name,
+                kw = key_w,
+                tw = ty_w,
+                nw = name_w,
+            )
+        })
+        .collect();
+
+    let inner_w = std::iter::once(header_text.len())
+        .chain(attr_rows.iter().map(|r| r.len()))
+        .max()
+        .unwrap_or(0);
+    let width = inner_w + 2;
     let height = if entity.attributes.is_empty() {
-        3 // top border + header + bottom border
+        3
     } else {
-        // Attribute rows arrive in Task 9; reserve placeholder space.
-        3 + 1 + entity.attributes.len()
+        3 + 1 + attr_rows.len()
     };
 
     let mut lines = vec![EntityLine {
         kind: EntityLineKind::Header,
-        text: header,
+        text: pad_to(&header_text, inner_w),
     }];
     if !entity.attributes.is_empty() {
         lines.push(EntityLine {
             kind: EntityLineKind::Separator,
             text: "-".repeat(inner_w),
         });
-        for a in &entity.attributes {
-            // Placeholder text; full row format lands in Task 9.
+        for r in attr_rows {
             lines.push(EntityLine {
                 kind: EntityLineKind::AttrRow,
-                text: format!(" {} {} ", a.ty, a.name),
+                text: pad_to(&r, inner_w),
             });
         }
     }
@@ -80,6 +125,14 @@ fn layout_entity(entity: &mut super::Entity, _max_box_width: usize) {
     entity.rendered_lines = lines;
     entity.width = width;
     entity.height = height;
+}
+
+fn pad_to(s: &str, width: usize) -> String {
+    if s.len() >= width {
+        s.to_string()
+    } else {
+        format!("{}{}", s, " ".repeat(width - s.len()))
+    }
 }
 
 #[cfg(test)]
@@ -141,6 +194,59 @@ mod tests {
         assert_eq!(meta.left_card, Cardinality::ExactlyOne);
         assert_eq!(meta.right_card, Cardinality::ZeroOrMany);
         assert!(meta.identifying);
+    }
+
+    #[test]
+    fn test_to_flowchart_attribute_columns_aligned() {
+        use crate::mermaid::er::{Attribute, EntityLineKind, KeyKind};
+        let mut diag = ErDiagram {
+            direction: Direction::TopDown,
+            direction_explicit: false,
+            entities: vec![Entity {
+                name: "Foo".into(),
+                attributes: vec![
+                    Attribute {
+                        ty: "string".into(),
+                        name: "id".into(),
+                        key: KeyKind::Pk,
+                        comment: None,
+                    },
+                    Attribute {
+                        ty: "int".into(),
+                        name: "ttlMillis".into(),
+                        key: KeyKind::None,
+                        comment: None,
+                    },
+                ],
+                rendered_lines: Vec::new(),
+                width: 0,
+                height: 0,
+            }],
+            relationships: Vec::new(),
+        };
+        let _ = to_flowchart(&mut diag, 50);
+        let entity = diag.entities[0].clone();
+        let attr_rows: Vec<&str> = entity
+            .rendered_lines
+            .iter()
+            .filter(|l| l.kind == EntityLineKind::AttrRow)
+            .map(|l| l.text.as_str())
+            .collect();
+        assert_eq!(attr_rows.len(), 2);
+        let r0 = attr_rows[0];
+        let r1 = attr_rows[1];
+        let ty_col_0 = r0.find("string").unwrap();
+        let ty_col_1 = r1.find("int").unwrap();
+        assert_eq!(
+            ty_col_0, ty_col_1,
+            "type column not aligned: `{}` vs `{}`",
+            r0, r1
+        );
+        let name_col_0 = r0.find("id").unwrap();
+        let name_col_1 = r1.find("ttlMillis").unwrap();
+        assert_eq!(name_col_0, name_col_1, "name column not aligned");
+        assert!(r0.contains("PK"));
+        assert!(!r1.contains("PK"));
     }
 
     #[test]
