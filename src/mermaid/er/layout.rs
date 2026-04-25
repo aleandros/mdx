@@ -56,7 +56,7 @@ fn key_str(k: super::KeyKind) -> &'static str {
     }
 }
 
-fn layout_entity(entity: &mut super::Entity, _max_box_width: usize) {
+fn layout_entity(entity: &mut super::Entity, max_box_width: usize) {
     let key_w = entity
         .attributes
         .iter()
@@ -78,32 +78,73 @@ fn layout_entity(entity: &mut super::Entity, _max_box_width: usize) {
 
     let header_text = format!(" {} ", entity.name);
 
-    let attr_rows: Vec<String> = entity
-        .attributes
-        .iter()
-        .map(|a| {
-            format!(
-                " {:<kw$} {:<tw$} {:<nw$} ",
-                key_str(a.key),
-                a.ty,
-                a.name,
-                kw = key_w,
-                tw = ty_w,
-                nw = name_w,
-            )
-        })
-        .collect();
+    // ` KEY TY NAME ` widths: leading space + key + space + ty + space + name + trailing space
+    let attr_prefix_w = 1 + key_w + 1 + ty_w + 1 + name_w + 1;
+    let inner_max = max_box_width.saturating_sub(2);
+    let inline_comment_budget = inner_max.saturating_sub(attr_prefix_w);
+    // Continuation rows align under the NAME column. NAME starts at:
+    let continuation_indent = 1 + key_w + 1 + ty_w + 1;
+    // Available width for wrapped comment text on a continuation row:
+    let continuation_budget = inner_max
+        .saturating_sub(continuation_indent + 1) // +1 for trailing space pad
+        .max(1);
+
+    let mut row_lines: Vec<EntityLine> = Vec::new();
+    let mut max_row_w = 0usize;
+
+    for a in &entity.attributes {
+        let base = format!(
+            " {:<kw$} {:<tw$} {:<nw$} ",
+            key_str(a.key),
+            a.ty,
+            a.name,
+            kw = key_w,
+            tw = ty_w,
+            nw = name_w,
+        );
+        match &a.comment {
+            None => {
+                max_row_w = max_row_w.max(base.len());
+                row_lines.push(EntityLine {
+                    kind: EntityLineKind::AttrRow,
+                    text: base,
+                });
+            }
+            Some(c) => {
+                if c.len() <= inline_comment_budget && inline_comment_budget > 0 {
+                    let combined = format!("{}{} ", base, c);
+                    max_row_w = max_row_w.max(combined.len());
+                    row_lines.push(EntityLine {
+                        kind: EntityLineKind::AttrRow,
+                        text: combined,
+                    });
+                } else {
+                    max_row_w = max_row_w.max(base.len());
+                    row_lines.push(EntityLine {
+                        kind: EntityLineKind::AttrRow,
+                        text: base,
+                    });
+                    let pad = " ".repeat(continuation_indent);
+                    for chunk in wrap_words(c, continuation_budget) {
+                        let line = format!("{}{} ", pad, chunk);
+                        max_row_w = max_row_w.max(line.len());
+                        row_lines.push(EntityLine {
+                            kind: EntityLineKind::CommentRow,
+                            text: line,
+                        });
+                    }
+                }
+            }
+        }
+    }
 
     let inner_w = std::iter::once(header_text.len())
-        .chain(attr_rows.iter().map(|r| r.len()))
+        .chain(std::iter::once(max_row_w))
         .max()
-        .unwrap_or(0);
+        .unwrap_or(0)
+        .min(inner_max.max(header_text.len()));
+
     let width = inner_w + 2;
-    let height = if entity.attributes.is_empty() {
-        3
-    } else {
-        3 + 1 + attr_rows.len()
-    };
 
     let mut lines = vec![EntityLine {
         kind: EntityLineKind::Header,
@@ -114,17 +155,58 @@ fn layout_entity(entity: &mut super::Entity, _max_box_width: usize) {
             kind: EntityLineKind::Separator,
             text: "-".repeat(inner_w),
         });
-        for r in attr_rows {
-            lines.push(EntityLine {
-                kind: EntityLineKind::AttrRow,
-                text: pad_to(&r, inner_w),
-            });
+        for mut r in row_lines {
+            r.text = pad_to(&r.text, inner_w);
+            lines.push(r);
         }
     }
 
+    entity.height = lines.len() + 2; // top + bottom borders
     entity.rendered_lines = lines;
     entity.width = width;
-    entity.height = height;
+}
+
+fn wrap_words(text: &str, max_w: usize) -> Vec<String> {
+    if max_w == 0 {
+        return vec![text.to_string()];
+    }
+    let mut out: Vec<String> = Vec::new();
+    let mut current = String::new();
+    for word in text.split_whitespace() {
+        if current.is_empty() {
+            if word.len() > max_w {
+                let mut w = word;
+                while w.len() > max_w {
+                    let (head, tail) = w.split_at(max_w);
+                    out.push(head.to_string());
+                    w = tail;
+                }
+                current = w.to_string();
+            } else {
+                current = word.to_string();
+            }
+        } else if current.len() + 1 + word.len() <= max_w {
+            current.push(' ');
+            current.push_str(word);
+        } else {
+            out.push(std::mem::take(&mut current));
+            if word.len() > max_w {
+                let mut w = word;
+                while w.len() > max_w {
+                    let (head, tail) = w.split_at(max_w);
+                    out.push(head.to_string());
+                    w = tail;
+                }
+                current = w.to_string();
+            } else {
+                current = word.to_string();
+            }
+        }
+    }
+    if !current.is_empty() {
+        out.push(current);
+    }
+    out
 }
 
 fn pad_to(s: &str, width: usize) -> String {
@@ -247,6 +329,87 @@ mod tests {
         assert_eq!(name_col_0, name_col_1, "name column not aligned");
         assert!(r0.contains("PK"));
         assert!(!r1.contains("PK"));
+    }
+
+    #[test]
+    fn test_to_flowchart_short_comment_inlined() {
+        use crate::mermaid::er::{Attribute, EntityLineKind, KeyKind};
+        let mut diag = ErDiagram {
+            direction: Direction::TopDown,
+            direction_explicit: false,
+            entities: vec![Entity {
+                name: "Foo".into(),
+                attributes: vec![Attribute {
+                    ty: "string".into(),
+                    name: "id".into(),
+                    key: KeyKind::Pk,
+                    comment: Some("primary".into()),
+                }],
+                rendered_lines: Vec::new(),
+                width: 0,
+                height: 0,
+            }],
+            relationships: Vec::new(),
+        };
+        to_flowchart(&mut diag, 50);
+        let lines = &diag.entities[0].rendered_lines;
+        let attr = lines
+            .iter()
+            .find(|l| l.kind == EntityLineKind::AttrRow)
+            .unwrap();
+        assert!(
+            attr.text.contains("primary"),
+            "expected inlined comment, got `{}`",
+            attr.text
+        );
+        assert_eq!(
+            lines
+                .iter()
+                .filter(|l| l.kind == EntityLineKind::CommentRow)
+                .count(),
+            0
+        );
+    }
+
+    #[test]
+    fn test_to_flowchart_long_comment_wraps_to_subsequent_rows() {
+        use crate::mermaid::er::{Attribute, EntityLineKind, KeyKind};
+        let mut diag = ErDiagram {
+            direction: Direction::TopDown,
+            direction_explicit: false,
+            entities: vec![Entity {
+                name: "Foo".into(),
+                attributes: vec![Attribute {
+                    ty: "int".into(),
+                    name: "ttlMs".into(),
+                    key: KeyKind::None,
+                    comment: Some(
+                        "max age before discard, default ten days, applied at send time".into(),
+                    ),
+                }],
+                rendered_lines: Vec::new(),
+                width: 0,
+                height: 0,
+            }],
+            relationships: Vec::new(),
+        };
+        to_flowchart(&mut diag, 40);
+        let lines = &diag.entities[0].rendered_lines;
+        let comment_rows: Vec<&str> = lines
+            .iter()
+            .filter(|l| l.kind == EntityLineKind::CommentRow)
+            .map(|l| l.text.as_str())
+            .collect();
+        assert!(
+            comment_rows.len() >= 2,
+            "expected wrapping, got {} rows",
+            comment_rows.len()
+        );
+        assert!(
+            diag.entities[0].width <= 40,
+            "box width {} exceeds max 40",
+            diag.entities[0].width
+        );
     }
 
     #[test]
