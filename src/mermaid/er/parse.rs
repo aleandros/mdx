@@ -418,4 +418,33 @@ mod tests {
         assert_eq!(d.entities[1].attributes.len(), 0);
         assert_eq!(d.relationships.len(), 1);
     }
+
+    #[test]
+    fn test_parse_attribute_with_comment() {
+        let src = "erDiagram\n  Foo {\n    string name \"the slug, lowercase\"\n  }\n";
+        let d = parse_er(src).unwrap();
+        let a = &d.entities[0].attributes[0];
+        assert_eq!(a.ty, "string");
+        assert_eq!(a.name, "name");
+        assert_eq!(a.comment.as_deref(), Some("the slug, lowercase"));
+    }
+
+    #[test]
+    fn test_parse_attribute_pk_with_comment() {
+        let src = "erDiagram\n  Foo {\n    string id PK \"primary key\"\n  }\n";
+        let d = parse_er(src).unwrap();
+        let a = &d.entities[0].attributes[0];
+        assert_eq!(a.key, KeyKind::Pk);
+        assert_eq!(a.comment.as_deref(), Some("primary key"));
+    }
+
+    #[test]
+    fn test_parse_attribute_unterminated_comment_errors() {
+        let src = "erDiagram\n  Foo {\n    string id PK \"oops\n  }\n";
+        let err = parse_er(src).unwrap_err();
+        assert!(
+            err.to_string().contains("Unterminated") || err.to_string().contains("comment"),
+            "unexpected error: {err}"
+        );
+    }
 }
