@@ -1,0 +1,16 @@
+---
+source: tests/snapshots.rs
+expression: output
+---
+[1;38;2;210;140;40m# ER identifying vs non-identifying[0m
+
++---+      +---+
+| A |||───o{ B |
++---+      +---+
+
+
+
+
++---+      +---+
+| C |||eako{ D |
++---+      +---+

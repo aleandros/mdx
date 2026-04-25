@@ -1,0 +1,72 @@
+---
+source: tests/snapshots.rs
+expression: output
+---
+[1;38;2;210;140;40m# ER full[0m
+
+                                                                                                             +------------------------------------------------+
+                                                                                                             | NotificationBusinessPreferenceHistory          |
+                                                                                                             |------------------------------------------------|
+                                                                                                             | PK string   id                                 |
+                                                     +------------------------------------------------+      | FK string   notificationBusinessPreferenceId   |
+                                                     | NotificationBusinessPreference                 |      |             → NotificationBusinessPreference   |
+                                                     |------------------------------------------------|      |    enum     channel                            |
+                                                     | PK string id                                   |      |             EMAIL | SMS                        |
+                                                     | FK string businessId     → Business            |      |    bool     enabled                            |
+                                                     | FK string notificationId → Notification        |    ┌o{             value at the time of the change    |
+                                                     |    enum   channel                              |    │ |    array    roles                              |
+                                                     |           EMAIL | SMS — preference is per      |    │a|             UserType[] value at the time of    |
+                                                     |           channel                              |    │ |             the change — null if not           |
+                                                     |    bool   enabled                              |    │ |             overridden                         |
+                                                   ┌o{           false = all users in this business   |||──┘ |    string   actorUserId                        |
+                                                   │ |           are suppressed for this channel      |      |             agent, owner, or system that made  |
+                                                   │ |    array  roles                                |      |             the change                         |
+                                                   │ |           UserType[] — overrides               |      |    datetime changedAt                          |
+                                                   │ |           defaultRoles for this business; null |      +------------------------------------------------+
+                                                   │ |           = use default                        |
+                                                   │ |    string actorUserId                          |
++---------------------------------------------+    │ |           last actor — read by trigger to      |
+| Notification                                |    │ |           write history row                    |
+|---------------------------------------------|    │p+------------------------------------------------+      +----------------------------------------------+
+| PK string id                                |    │                                                         | NotificationUserPreferenceHistory            |
+|    string name                              |    │                                                         |----------------------------------------------|
+|           unique slug, e.g.                 |    │                                                         | PK string   id                               |
+|           card-transaction-cardholder       |    │                                                         | FK string   notificationUserPreferenceId     |
+|    string description                       |    │ +---------------------------------------------+         |             → NotificationUserPreference     |
+|    enum   category                          |    │ | NotificationUserPreference                  |         |    enum     channel                          |
+|           NotificationCategory              |    │ |---------------------------------------------|    ┌───o{             EMAIL | SMS                      |
+|    bool   enabled                           |    │ | PK string id                                |    │    |    bool     enabled                          |
+|           global kill switch @default(true) |||─┬┘ | FK string userId         → User             |    │audi|             value at the time of the change  |
+|    bool   allowUserOptOut                   |   │pe| FK string notificationId → Notification     |    │    |    string   actorUserId                      |
+|           user can disable in preference    |   │  |    enum   channel                           |    │    |             user, agent, or system that made |
+|           center @default(true)             |   ├─o{           EMAIL | SMS — preference is per   |||──┘    |             the change                       |
+|    bool   allowUserOverride                 |   │  |           channel                           |         |    datetime changedAt                        |
+|           user can bypass business gate if  |   │  |    bool   enabled                           |         +----------------------------------------------+
+|           opted in @default(false)          |   │  |    string actorUserId                       |
+|    int    ttlMs                             |   │  |           last actor — read by trigger to   |
+|           max age before deliverEmail() /   |   │  |           write history row                 |
+|           deliverSms() discard the event    |   │  +---------------------------------------------+
+|           @default(864000000) — 10 days     |   │send attempts                                             +------------------------------------------------+
++---------------------------------------------+   │                                                          | NotificationDelivery                           |
+                                                  │                                                          |------------------------------------------------|
+                                                  │                                                          | PK string   id                                 |
+                                                  │  +---------------------------------------------+         | FK string   notificationLogId                  |
+                                                  │  | NotificationLog                             |         |             → NotificationLog                  |
+                                                  │  |---------------------------------------------|         |    string   userId            recipient        |
+                                                  │  | PK string   id                              |         |    enum     channel           EMAIL | SMS      |
+                                                  │  | FK string   notificationId → Notification   |         |    enum     status                             |
+                                                  │  |    string   businessId                      |         |             SENT | FAILED | EXPIRED |          |
+                                                  │  |             context for gating and queue    |         |             SUPPRESSED                         |
+                                                  └─o{             ordering                        |||──────o{    string   externalId                         |
+                                                     |    json     payload                         |         |             provider message ID — null when    |
+                                                     |             validated once at send() —      |         |             not SENT                           |
+                                                     |             shared across all recipients    |         |    string   statusDescription                  |
+                                                     |    datetime enqueuedAt                      |         |             error detail (FAILED) or gate      |
+                                                     |             used for TTL check in           |         |             reason (SUPPRESSED)                |
+                                                     |             deliverEmail() / deliverSms()   |         |    int      attemptCount                       |
+                                                     +---------------------------------------------+         |             starts at 1, incremented on each   |
+                                                                                                             |             DLQ retry                          |
+                                                                                                             |    datetime sentAt                             |
+                                                                                                             |             null until SENT or FAILED terminal |
+                                                                                                             |             write                              |
+                                                                                                             +------------------------------------------------+

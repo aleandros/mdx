@@ -1,0 +1,93 @@
+---
+source: tests/snapshots.rs
+expression: output
+---
+[1;38;2;210;140;40m# ER full[0m
+
+                                              +--------------------------------------+
+                                              | Notification                         |
+                                              |--------------------------------------|
+                                              | PK string id                         |
+                                              |    string name                       |
+                                              |           unique slug, e.g.          |
+                                              |           card-transaction-cardholde |
+                                              |           r                          |
+                                              |    string description                |
+                                              |    enum   category                   |
+                                              |           NotificationCategory       |
+                                              |    bool   enabled                    |
+                                              |           global kill switch         |
+                                              |           @default(true)             |
+                                              |    bool   allowUserOptOut            |
+                                              |           user can disable in        |
+                                              |           preference center          |
+                                              |           @default(true)             |
+                                              |    bool   allowUserOverride          |
+                                              |           user can bypass business   |
+                                              |           gate if opted in           |
+                                              |           @default(false)            |
+                                              |    int    ttlMs                      |
+                                              |           max age before             |
+                                              |           deliverEmail() /           |
+                                              |           deliverSms() discard the   |
+                                              |           event @default(864000000)  |
+                                              |           — 10 days                  |
+                                              +--------------------------------------+
+                                                                  |
+                                 per-business opt-out             |               send attempts
+                    [38;2;120;160;80m┌─────────────────────────────────────────────┼[0m[38;2;130;140;110mper-user per-channel[0m[38;2;120;160;80m─────────────────────────┐[0m
+                    o                                             o                                             o
++-------------------{------------------+      +-------------------{------------------+      +-------------------{------------------+
+| NotificationBusinessPreference       |      | NotificationUserPreference           |      | NotificationLog                      |
+|--------------------------------------|      |--------------------------------------|      |--------------------------------------|
+| PK string id                         |      | PK string id                         |      | PK string   id                       |
+| FK string businessId     → Business  |      | FK string userId         → User      |      | FK string   notificationId           |
+| FK string notificationId             |      | FK string notificationId             |      |             → Notification           |
+|           → Notification             |      |           → Notification             |      |    string   businessId               |
+|    enum   channel                    |      |    enum   channel                    |      |             context for gating and   |
+|           EMAIL | SMS — preference   |      |           EMAIL | SMS — preference   |      |             queue ordering           |
+|           is per channel             |      |           is per channel             |      |    json     payload                  |
+|    bool   enabled                    |      |    bool   enabled                    |      |             validated once at send() |
+|           false = all users in this  |      |    string actorUserId                |      |             — shared across all      |
+|           business are suppressed    |      |           last actor — read by       |      |             recipients               |
+|           for this channel           |      |           trigger to write history   |      |    datetime enqueuedAt               |
+|    array  roles                      |      |           row                        |      |             used for TTL check in    |
+|           UserType[] — overrides     |      +--------------------------------------+      |             deliverEmail() /         |
+|           defaultRoles for this      |                          |                         |             deliverSms()             |
+|           business; null = use       |                          |                         +--------------------------------------+
+|           default                    |                          │                                             |
+|    string actorUserId                |                          │                                             |
+|           last actor — read by       |                          │                                             │
+|           trigger to write history   |                          │                                             │
+|           row                        |                          │audit                                        │
++--------------------------------------+                          │                                             │per-recipient deliveries
+                    |                                             │                                             │
+                    |                                             │                                             │
+                    [38;2;120;160;80m│[0m[38;2;130;140;110maudit[0m                                        [38;2;120;160;80m│[0m                                             [38;2;120;160;80m│[0m
+                    o                                             o                                             o
++-------------------{-------------------+      +------------------{-------------------+      +------------------{-------------------+
+| NotificationBusinessPreferenceHistory |      | NotificationUserPreferenceHistory    |      | NotificationDelivery                 |
+|---------------------------------------|      |--------------------------------------|      |--------------------------------------|
+| PK string   id                        |      | PK string   id                       |      | PK string   id                       |
+| FK string   notificationBusinessPrefer|      | FK string   notificationUserPreferenc|      | FK string   notificationLogId        |
+|             →                         |      |             →                        |      |             → NotificationLog        |
+|             NotificationBusinessPref  |      |             NotificationUserPreferen |      |    string   userId                   |
+|             erence                    |      |             ce                       |      |             recipient                |
+|    enum     channel                   |      |    enum     channel                  |      |    enum     channel                  |
+|             EMAIL | SMS               |      |             EMAIL | SMS              |      |             EMAIL | SMS              |
+|    bool     enabled                   |      |    bool     enabled                  |      |    enum     status                   |
+|             value at the time of the  |      |             value at the time of the |      |             SENT | FAILED | EXPIRED  |
+|             change                    |      |             change                   |      |             | SUPPRESSED             |
+|    array    roles                     |      |    string   actorUserId              |      |    string   externalId               |
+|             UserType[] value at the   |      |             user, agent, or system   |      |             provider message ID —    |
+|             time of the change —      |      |             that made the change     |      |             null when not SENT       |
+|             null if not overridden    |      |    datetime changedAt                |      |    string   statusDescription        |
+|    string   actorUserId               |      +--------------------------------------+      |             error detail (FAILED) or |
+|             agent, owner, or system   |                                                    |             gate reason (SUPPRESSED) |
+|             that made the change      |                                                    |    int      attemptCount             |
+|    datetime changedAt                 |                                                    |             starts at 1, incremented |
++---------------------------------------+                                                    |             on each DLQ retry        |
+                                                                                             |    datetime sentAt                   |
+                                                                                             |             null until SENT or       |
+                                                                                             |             FAILED terminal write    |
+                                                                                             +--------------------------------------+
