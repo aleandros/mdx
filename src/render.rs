@@ -262,34 +262,37 @@ pub fn render_blocks(
                     MermaidMode::Raw => {
                         out.push(render_as_code());
                     }
-                    MermaidMode::Render => match mermaid::render_mermaid(content, theme) {
-                        Ok((lines, node_count, edge_count)) => {
-                            out.push(RenderedBlock::Diagram {
-                                lines,
-                                node_count,
-                                edge_count,
-                            });
+                    MermaidMode::Render => {
+                        match mermaid::render_mermaid(content, theme, width as usize) {
+                            Ok((lines, node_count, edge_count)) => {
+                                out.push(RenderedBlock::Diagram {
+                                    lines,
+                                    node_count,
+                                    edge_count,
+                                });
+                            }
+                            Err(_) => {
+                                let warning_line = StyledLine {
+                                    spans: vec![StyledSpan {
+                                        text: "[mermaid: parse error]".to_string(),
+                                        style: SpanStyle {
+                                            fg: Some(Color::Red),
+                                            ..Default::default()
+                                        },
+                                    }],
+                                };
+                                let code_lines =
+                                    render_code_block_lines(&None, content, highlighter);
+                                let mut all_lines = vec![warning_line];
+                                all_lines.extend(code_lines);
+                                all_lines.push(StyledLine::empty());
+                                out.push(RenderedBlock::Lines(all_lines));
+                            }
                         }
-                        Err(_) => {
-                            let warning_line = StyledLine {
-                                spans: vec![StyledSpan {
-                                    text: "[mermaid: parse error]".to_string(),
-                                    style: SpanStyle {
-                                        fg: Some(Color::Red),
-                                        ..Default::default()
-                                    },
-                                }],
-                            };
-                            let code_lines = render_code_block_lines(&None, content, highlighter);
-                            let mut all_lines = vec![warning_line];
-                            all_lines.extend(code_lines);
-                            all_lines.push(StyledLine::empty());
-                            out.push(RenderedBlock::Lines(all_lines));
-                        }
-                    },
+                    }
                     MermaidMode::Split => {
                         out.push(render_as_code());
-                        match mermaid::render_mermaid(content, theme) {
+                        match mermaid::render_mermaid(content, theme, width as usize) {
                             Ok((lines, node_count, edge_count)) => {
                                 out.push(RenderedBlock::Diagram {
                                     lines,

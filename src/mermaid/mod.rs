@@ -87,7 +87,9 @@ pub struct FlowChart {
 pub fn render_mermaid(
     content: &str,
     theme: &crate::theme::Theme,
+    terminal_width: usize,
 ) -> anyhow::Result<(Vec<crate::render::StyledLine>, usize, usize)> {
+    let _ = terminal_width;
     let first_line = content
         .lines()
         .map(|l| l.trim())
@@ -225,7 +227,7 @@ mod tests {
     fn test_render_mermaid_with_theme_returns_styled_lines() {
         let input = "graph TD\n    A[Start] --> B[End]\n    style A stroke:#ff0000\n";
         let theme = Theme::default_theme();
-        let (lines, node_count, edge_count) = render_mermaid(input, theme).unwrap();
+        let (lines, node_count, edge_count) = render_mermaid(input, theme, 120).unwrap();
         assert_eq!(node_count, 2);
         assert_eq!(edge_count, 1);
         let has_color = lines
@@ -239,7 +241,7 @@ mod tests {
         // Unstyled diagrams now use theme default colors for node borders/text.
         let input = "graph TD\n    A --> B\n";
         let theme = Theme::default_theme();
-        let (lines, _, _) = render_mermaid(input, theme).unwrap();
+        let (lines, _, _) = render_mermaid(input, theme, 120).unwrap();
         let has_color = lines
             .iter()
             .any(|line| line.spans.iter().any(|s| s.style.fg.is_some()));
@@ -253,7 +255,7 @@ mod tests {
     fn test_render_styled_flowchart_end_to_end() {
         let input = "graph TD\n    A[Start] --> B[End]\n    style A stroke:#ff0000\n    classDef blue fill:#0000ff\n    class B blue\n    linkStyle 0 stroke:#00ff00\n";
         let theme = Theme::default_theme();
-        let (lines, node_count, edge_count) = render_mermaid(input, theme).unwrap();
+        let (lines, node_count, edge_count) = render_mermaid(input, theme, 120).unwrap();
         assert_eq!(node_count, 2);
         assert_eq!(edge_count, 1);
         assert!(!lines.is_empty());
@@ -279,7 +281,7 @@ mod tests {
     fn test_render_styled_sequence_end_to_end() {
         let input = "sequenceDiagram\n    participant A\n    participant B\n    A->>B: Hello\n    style A stroke:#ff0000\n    linkStyle 0 stroke:#00ff00\n";
         let theme = Theme::default_theme();
-        let (lines, participant_count, event_count) = render_mermaid(input, theme).unwrap();
+        let (lines, participant_count, event_count) = render_mermaid(input, theme, 120).unwrap();
         assert_eq!(participant_count, 2);
         assert_eq!(event_count, 1);
         assert!(!lines.is_empty());
