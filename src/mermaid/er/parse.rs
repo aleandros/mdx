@@ -86,6 +86,63 @@ fn parse_relationship_line(line: &str) -> Result<Option<Relationship>> {
     }))
 }
 
+fn parse_entity_opener(line: &str) -> Option<String> {
+    // Matches `Name {` or `Name{` (after trimming).
+    let line = line.trim_end();
+    let line = line.strip_suffix('{')?;
+    let name = line.trim();
+    if name.is_empty() {
+        return None;
+    }
+    if !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+        return None;
+    }
+    Some(name.to_string())
+}
+
+fn parse_attribute_line(line: &str) -> Result<super::Attribute> {
+    // Format: TYPE NAME [PK | FK | PK,FK | FK,PK] ["comment"]
+    let mut rest = line.trim();
+    let comment = if let Some(open) = rest.find('"') {
+        let after = &rest[open + 1..];
+        let close = after
+            .find('"')
+            .ok_or_else(|| anyhow::anyhow!("Unterminated comment in attribute: `{}`", line))?;
+        let c = after[..close].to_string();
+        rest = rest[..open].trim();
+        Some(c)
+    } else {
+        None
+    };
+
+    let mut parts = rest.split_whitespace();
+    let ty = parts
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("Empty attribute line"))?
+        .to_string();
+    let name = parts
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("Attribute missing name: `{}`", line))?
+        .to_string();
+    let key_token = parts.next();
+    if parts.next().is_some() {
+        bail!("Unexpected extra tokens in attribute: `{}`", line);
+    }
+    let key = match key_token {
+        None => super::KeyKind::None,
+        Some("PK") => super::KeyKind::Pk,
+        Some("FK") => super::KeyKind::Fk,
+        Some("PK,FK") | Some("FK,PK") => super::KeyKind::PkFk,
+        Some(other) => bail!("Unknown key marker: `{}`", other),
+    };
+    Ok(super::Attribute {
+        ty,
+        name,
+        key,
+        comment,
+    })
+}
+
 pub fn parse_er(input: &str) -> Result<ErDiagram> {
     let mut lines = input.lines().peekable();
 
@@ -132,8 +189,11 @@ pub fn parse_er(input: &str) -> Result<ErDiagram> {
         }
     }
 
-    for line in lines {
-        let trimmed = line.trim();
+    let body_lines: Vec<&str> = lines.collect();
+    let mut i = 0;
+    while i < body_lines.len() {
+        let trimmed = body_lines[i].trim();
+        i += 1;
         if trimmed.is_empty() || trimmed.starts_with("%%") {
             continue;
         }
@@ -154,13 +214,37 @@ pub fn parse_er(input: &str) -> Result<ErDiagram> {
             relationships.push(rel);
             continue;
         }
+        if let Some(name) = parse_entity_opener(trimmed) {
+            let mut attrs: Vec<super::Attribute> = Vec::new();
+            let mut closed = false;
+            while i < body_lines.len() {
+                let inner = body_lines[i].trim();
+                i += 1;
+                if inner.is_empty() || inner.starts_with("%%") {
+                    continue;
+                }
+                if inner == "}" {
+                    closed = true;
+                    break;
+                }
+                let attr = parse_attribute_line(inner)?;
+                attrs.push(attr);
+            }
+            if !closed {
+                bail!("Unclosed entity block for `{}`", name);
+            }
+            ensure_entity(&name, &mut entity_order, &mut entities);
+            let e = entities.get_mut(&name).unwrap();
+            e.attributes = attrs;
+            continue;
+        }
 
         // A line containing `--` or `..` that didn't parse as a relationship is an error.
         if trimmed.contains("--") || trimmed.contains("..") {
             bail!("Unrecognized cardinality token: `{}`", trimmed);
         }
 
-        // Other lines: ignored. Entity blocks land in Task 6.
+        // Other lines: silently ignored to match Mermaid's leniency.
     }
 
     let entities_vec: Vec<Entity> = entity_order
@@ -181,6 +265,7 @@ mod tests {
     use super::*;
     use crate::mermaid::Direction;
     use crate::mermaid::er::Cardinality;
+    use crate::mermaid::er::KeyKind;
 
     #[test]
     fn test_parse_empty_diagram() {
@@ -283,5 +368,54 @@ mod tests {
     fn test_parse_unknown_cardinality_token_errors() {
         let err = parse_er("erDiagram\n    A xx--yy B\n").unwrap_err();
         assert!(err.to_string().contains("cardinality") || err.to_string().contains("xx"));
+    }
+
+    #[test]
+    fn test_parse_entity_block_basic() {
+        let src = "erDiagram\n  Foo {\n    string id\n    int count\n  }\n";
+        let d = parse_er(src).unwrap();
+        assert_eq!(d.entities.len(), 1);
+        let e = &d.entities[0];
+        assert_eq!(e.name, "Foo");
+        assert_eq!(e.attributes.len(), 2);
+        assert_eq!(e.attributes[0].ty, "string");
+        assert_eq!(e.attributes[0].name, "id");
+        assert_eq!(e.attributes[0].key, KeyKind::None);
+        assert_eq!(e.attributes[1].ty, "int");
+        assert_eq!(e.attributes[1].name, "count");
+    }
+
+    #[test]
+    fn test_parse_entity_block_pk_fk() {
+        let src = "erDiagram\n  Foo {\n    string id PK\n    string parentId FK\n  }\n";
+        let d = parse_er(src).unwrap();
+        assert_eq!(d.entities[0].attributes[0].key, KeyKind::Pk);
+        assert_eq!(d.entities[0].attributes[1].key, KeyKind::Fk);
+    }
+
+    #[test]
+    fn test_parse_entity_block_pk_and_fk() {
+        let src = "erDiagram\n  Foo {\n    string id PK,FK\n  }\n";
+        let d = parse_er(src).unwrap();
+        assert_eq!(d.entities[0].attributes[0].key, KeyKind::PkFk);
+    }
+
+    #[test]
+    fn test_parse_unclosed_entity_block_errors() {
+        let src = "erDiagram\n  Foo {\n    string id\n";
+        let err = parse_er(src).unwrap_err();
+        assert!(err.to_string().contains("Foo") || err.to_string().contains("nclosed"));
+    }
+
+    #[test]
+    fn test_parse_entity_block_then_relationship() {
+        let src = "erDiagram\n  Foo {\n    string id\n  }\n  Foo ||--o{ Bar : has\n";
+        let d = parse_er(src).unwrap();
+        assert_eq!(d.entities.len(), 2);
+        assert_eq!(d.entities[0].name, "Foo");
+        assert_eq!(d.entities[0].attributes.len(), 1);
+        assert_eq!(d.entities[1].name, "Bar");
+        assert_eq!(d.entities[1].attributes.len(), 0);
+        assert_eq!(d.relationships.len(), 1);
     }
 }
