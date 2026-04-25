@@ -89,7 +89,6 @@ pub fn render_mermaid(
     theme: &crate::theme::Theme,
     terminal_width: usize,
 ) -> anyhow::Result<(Vec<crate::render::StyledLine>, usize, usize)> {
-    let _ = terminal_width;
     let first_line = content
         .lines()
         .map(|l| l.trim())
@@ -97,9 +96,49 @@ pub fn render_mermaid(
         .unwrap_or("");
 
     if first_line == "erDiagram" {
-        let _diagram = er::parse::parse_er(content)?;
-        // Layout / paint wired in Task 13; for now propagate parse errors.
-        anyhow::bail!("ER rendering not yet implemented");
+        let mut diagram = er::parse::parse_er(content)?;
+        let entity_count = diagram.entities.len();
+        let rel_count = diagram.relationships.len();
+
+        let max_box_width = (terminal_width / 3).clamp(20, 50);
+        let mut chart = er::layout::to_flowchart(&mut diagram, max_box_width);
+
+        // Honor explicit direction; otherwise try LR and fall back to TD.
+        let mut positioned = if diagram.direction_explicit {
+            chart.direction = diagram.direction.clone();
+            layout::layout(&chart)
+        } else {
+            chart.direction = Direction::LeftRight;
+            let lr = layout::layout(&chart);
+            if lr.width > terminal_width {
+                chart.direction = Direction::TopDown;
+                layout::layout(&chart)
+            } else {
+                lr
+            }
+        };
+
+        // Apply theme defaults to ER nodes/edges (no explicit styles in v1).
+        for node in &mut positioned.nodes {
+            if node.node_style.is_none() {
+                node.node_style = Some(NodeStyle {
+                    fill: None,
+                    stroke: Some(color::resolve_color(&theme.diagram_node_border, theme)),
+                    color: Some(color::resolve_color(&theme.diagram_node_text, theme)),
+                });
+            }
+        }
+        for edge in &mut positioned.edges {
+            if edge.edge_style.is_none() {
+                edge.edge_style = Some(MermaidEdgeStyle {
+                    stroke: Some(color::resolve_color(&theme.diagram_edge_stroke, theme)),
+                    label_color: Some(color::resolve_color(&theme.diagram_edge_label, theme)),
+                });
+            }
+        }
+
+        let lines = ascii::render_styled(&positioned);
+        return Ok((lines, entity_count, rel_count));
     }
 
     if first_line == "sequenceDiagram" {
@@ -285,14 +324,33 @@ mod tests {
 
     #[test]
     fn test_render_mermaid_dispatches_er_diagram() {
-        let input = "erDiagram\n    A ||--o{ B : has\n";
+        // Invalid cardinality token; the ER dispatch should engage and surface a
+        // parser error rather than a flowchart-direction error.
+        let input = "erDiagram\n    A xx--yy B\n";
         let theme = Theme::default_theme();
-        // For now, ER dispatch returns the unimplemented bail from parse_er.
         let err = render_mermaid(input, theme, 120).unwrap_err();
+        let msg = err.to_string();
         assert!(
-            err.to_string().contains("not implemented") || err.to_string().contains("ER"),
-            "unexpected error: {err}"
+            msg.contains("cardinality") || msg.contains("xx") || msg.contains("Unrecognized"),
+            "expected ER parser error, got: {msg}"
         );
+    }
+
+    #[test]
+    fn test_render_er_diagram_end_to_end() {
+        let input = "erDiagram\n    A ||--o{ B : has\n    A {\n      string id PK\n    }\n";
+        let theme = Theme::default_theme();
+        let (lines, n_entities, n_rels) = render_mermaid(input, theme, 200).unwrap();
+        assert_eq!(n_entities, 2, "should report 2 entities");
+        assert_eq!(n_rels, 1, "should report 1 relationship");
+        let body: String = lines
+            .iter()
+            .flat_map(|l| l.spans.iter().map(|s| s.text.as_str()))
+            .collect();
+        assert!(body.contains("A"));
+        assert!(body.contains("B"));
+        assert!(body.contains("PK"));
+        assert!(body.contains("||") || body.contains("o{"));
     }
 
     #[test]
