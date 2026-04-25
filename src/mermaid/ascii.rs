@@ -345,6 +345,11 @@ fn draw_node(canvas: &mut Canvas, node: &PositionedNode) {
                 draw_diamond(canvas, node);
             }
         }
+        NodeShape::EntityBox => {
+            // ER painter is implemented in a later task; fall back to a rect so callers
+            // that wire entities into the flowchart layout still produce visible output.
+            draw_rect(canvas, node);
+        }
     }
 }
 

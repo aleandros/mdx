@@ -1,5 +1,8 @@
 pub mod ascii;
 pub mod color;
+// The `er` module is scaffolded; subsequent tasks fill in functionality.
+#[allow(dead_code)]
+pub mod er;
 pub mod layout;
 pub mod parse;
 pub mod sequence;
@@ -18,6 +21,9 @@ pub enum NodeShape {
     Rounded,
     Diamond,
     Circle,
+    /// ER entity (table-like multi-row box). Constructed in a later task.
+    #[allow(dead_code)]
+    EntityBox,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -47,6 +53,8 @@ pub struct Node {
     pub label: String,
     pub shape: NodeShape,
     pub node_style: Option<NodeStyle>,
+    /// Set only for ER entity boxes; None for flowchart nodes.
+    pub entity: Option<er::Entity>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -56,6 +64,8 @@ pub struct Edge {
     pub label: Option<String>,
     pub style: EdgeStyle,
     pub edge_style: Option<MermaidEdgeStyle>,
+    /// Set only for ER edges; None for flowchart edges.
+    pub er_meta: Option<er::ErEdgeMeta>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
