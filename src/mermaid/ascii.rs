@@ -346,9 +346,11 @@ fn draw_node(canvas: &mut Canvas, node: &PositionedNode) {
             }
         }
         NodeShape::EntityBox => {
-            // ER painter is implemented in a later task; fall back to a rect so callers
-            // that wire entities into the flowchart layout still produce visible output.
-            draw_rect(canvas, node);
+            // Entity boxes are painted in a post-processing pass after the
+            // canvas is converted to lines (see `render` / `render_styled`).
+            // Just clear the area here so any underlying edge artifacts don't
+            // bleed through.
+            clear_node_area(canvas, node);
         }
     }
 }
@@ -729,12 +731,30 @@ pub fn render(layout: &LayoutResult) -> Vec<String> {
         draw_edge_label(&mut canvas, edge);
     }
 
-    // Trim trailing empty lines
-    let mut lines = canvas.to_lines();
+    // 8. Paint entity boxes by post-processing the line buffer.
+    let mut lines = canvas_to_padded_lines(&canvas);
+    for node in &layout.nodes {
+        if node.entity.is_some() {
+            crate::mermaid::er::ascii::paint_entity(&mut lines, node);
+        }
+    }
+    let mut lines: Vec<String> = lines
+        .into_iter()
+        .map(|l| l.trim_end().to_string())
+        .collect();
+
     while lines.last().map(|l: &String| l.is_empty()).unwrap_or(false) {
         lines.pop();
     }
     lines
+}
+
+/// Convert a Canvas to lines without trimming trailing spaces, so post-
+/// processing painters have a fixed-width buffer to overwrite.
+fn canvas_to_padded_lines(canvas: &Canvas) -> Vec<String> {
+    (0..canvas.height)
+        .map(|y| canvas.grid[y].iter().map(|c| c.ch).collect())
+        .collect()
 }
 
 pub fn render_styled(layout: &LayoutResult) -> Vec<StyledLine> {
@@ -792,7 +812,42 @@ pub fn render_styled(layout: &LayoutResult) -> Vec<StyledLine> {
         draw_edge_label(&mut canvas, edge);
     }
 
+    // 8. Paint entity boxes onto a plain line buffer, then merge those rows
+    //    into the styled output as default-styled spans. Theme colors for
+    //    entity boxes are deferred to Task 13.
+    let entity_nodes: Vec<&PositionedNode> =
+        layout.nodes.iter().filter(|n| n.entity.is_some()).collect();
     let mut lines = canvas.to_styled_lines();
+    if !entity_nodes.is_empty() {
+        let mut plain = canvas_to_padded_lines(&canvas);
+        for node in &entity_nodes {
+            crate::mermaid::er::ascii::paint_entity(&mut plain, node);
+        }
+        // Replace styled rows that fall inside any entity box with the
+        // post-processed plain text, default-styled.
+        for node in &entity_nodes {
+            for dy in 0..node.height {
+                let y = node.y + dy;
+                if y >= plain.len() {
+                    break;
+                }
+                let row_text: String = plain[y].trim_end().to_string();
+                while lines.len() <= y {
+                    lines.push(StyledLine::empty());
+                }
+                lines[y] = StyledLine {
+                    spans: if row_text.is_empty() {
+                        Vec::new()
+                    } else {
+                        vec![StyledSpan {
+                            text: row_text,
+                            style: SpanStyle::default(),
+                        }]
+                    },
+                };
+            }
+        }
+    }
     while lines.last().map(|l| l.spans.is_empty()).unwrap_or(false) {
         lines.pop();
     }
@@ -827,6 +882,7 @@ mod tests {
             height,
             compact: false,
             node_style: None,
+            entity: None,
         }
     }
 
@@ -1124,6 +1180,7 @@ mod tests {
                 stroke: Some(Color::Rgb(180, 90, 60)),
                 color: Some(Color::Rgb(190, 180, 160)),
             }),
+            entity: None,
         };
         let layout = LayoutResult {
             nodes: vec![node],

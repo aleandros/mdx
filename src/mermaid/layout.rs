@@ -16,6 +16,8 @@ pub struct PositionedNode {
     /// Use compact rendering (3-row hexagon) for diamonds in LR/RL direction
     pub compact: bool,
     pub node_style: Option<super::NodeStyle>,
+    /// Set only for ER entity boxes; carries pre-rendered attribute rows.
+    pub entity: Option<super::er::Entity>,
 }
 
 #[derive(Debug, Clone)]
@@ -719,6 +721,7 @@ pub fn layout(chart: &FlowChart) -> LayoutResult {
             height: node_height[i],
             compact: is_lr && node.shape == NodeShape::Diamond,
             node_style: node.node_style.clone(),
+            entity: node.entity.clone(),
         })
         .collect();
 
