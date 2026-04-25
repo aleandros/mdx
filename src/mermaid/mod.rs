@@ -1,7 +1,5 @@
 pub mod ascii;
 pub mod color;
-// The `er` module is scaffolded; subsequent tasks fill in functionality.
-#[allow(dead_code)]
 pub mod er;
 pub mod layout;
 pub mod parse;
@@ -21,8 +19,7 @@ pub enum NodeShape {
     Rounded,
     Diamond,
     Circle,
-    /// ER entity (table-like multi-row box). Constructed in a later task.
-    #[allow(dead_code)]
+    /// ER entity (table-like multi-row box).
     EntityBox,
 }
 
