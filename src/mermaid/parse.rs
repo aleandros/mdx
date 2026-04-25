@@ -118,11 +118,28 @@ pub fn parse_flowchart(input: &str) -> anyhow::Result<FlowChart> {
         parse_statement(trimmed, &mut node_order, &mut node_map, &mut edges)
             .with_context(|| format!("Failed to parse line: {:?}", trimmed))?;
 
-        // Any newly added nodes belong to the current subgraph (if any)
+        // Any newly added nodes belong to the current subgraph (if any).
+        // Also handle already-existing nodes listed inside a subgraph block.
         if !subgraph_stack.is_empty() {
             let new_ids: Vec<String> = node_order[before_len..].to_vec();
             if let Some(top) = subgraph_stack.last_mut() {
-                top.2.extend(new_ids);
+                if !new_ids.is_empty() {
+                    top.2.extend(new_ids);
+                } else {
+                    // Node already existed — extract its ID from the line and add to membership.
+                    // This handles the pattern where edges appear before subgraph blocks,
+                    // so nodes are pre-created but still need to be assigned to the subgraph.
+                    let first_id: String = trimmed
+                        .chars()
+                        .take_while(|c| c.is_alphanumeric() || *c == '_')
+                        .collect();
+                    if !first_id.is_empty()
+                        && node_map.contains_key(&first_id)
+                        && !top.2.contains(&first_id)
+                    {
+                        top.2.push(first_id);
+                    }
+                }
             }
         }
     }
@@ -862,5 +879,23 @@ mod tests {
         // A is added outside the subgraph
         assert!(!sg.node_ids.contains(&"A".to_string()));
         assert!(sg.node_ids.contains(&"B".to_string()));
+    }
+
+    #[test]
+    fn test_parse_subgraph_membership_edges_before_subgraph() {
+        // Nodes created by edges BEFORE the subgraph block must still be
+        // assigned to the subgraph when listed inside it.
+        let input = "flowchart LR\n    A --> B\n    B --> C\n    subgraph SG1[\"Group 1\"]\n        A\n        B\n    end\n    subgraph SG2[\"Group 2\"]\n        C\n    end\n";
+        let chart = flowchart(input);
+        assert_eq!(chart.subgraphs.len(), 2);
+        let sg1 = chart.subgraphs.iter().find(|s| s.id == "SG1").unwrap();
+        let sg2 = chart.subgraphs.iter().find(|s| s.id == "SG2").unwrap();
+        assert!(sg1.node_ids.contains(&"A".to_string()), "A must be in SG1");
+        assert!(sg1.node_ids.contains(&"B".to_string()), "B must be in SG1");
+        assert!(sg2.node_ids.contains(&"C".to_string()), "C must be in SG2");
+        assert!(
+            !sg2.node_ids.contains(&"A".to_string()),
+            "A must not be in SG2"
+        );
     }
 }

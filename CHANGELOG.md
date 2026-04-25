@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.7] - 2026-04-25
+
+### Added
+- Mermaid compound graph layout: subgraph members now occupy contiguous rank bands so bounding boxes are compact and non-overlapping
+- Cyclic subgraphs (bidirectional inter-cluster edges) are detected via SCC and stacked in separate vertical bands, giving a clear top-stack arrangement for tightly-coupled clusters
+- Declaration-order-based internal rank assignment within each cluster, correctly handling retry back-edges without disrupting the intended visual flow
+
+### Fixed
+- Subgraph nodes declared after edges in the mermaid source are now correctly assigned to subgraph membership (parser fix)
+- Arrows crossing subgraph box walls now have breathing room (`H_PAD` 2 → 3), replacing `│►│` with `│─►│`
+- Upward-going edges in LR diagrams use a short horizontal step before the vertical, avoiding the edge running along the box bottom border
+
 ## [0.1.6] - 2026-04-23
 
 ### Fixed

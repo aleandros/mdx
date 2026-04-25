@@ -93,11 +93,184 @@ fn route_edge(
         // TD/BT: vertical first, then horizontal
         let mid_y = (start.1 + end.1) / 2;
         vec![start, (start.0, mid_y), (end.0, mid_y), end]
+    } else if start.1 > end.1 {
+        // LR/RL upward edge: short horizontal step first, then vertical, then horizontal.
+        // Keeps the horizontal segment at start.y short to avoid running along box bottom
+        // borders, while keeping the vertical segment away from the source node border.
+        const UPWARD_STEP: usize = 4;
+        if end.0.saturating_sub(start.0) > UPWARD_STEP {
+            let mid_x = start.0 + UPWARD_STEP;
+            vec![start, (mid_x, start.1), (mid_x, end.1), end]
+        } else {
+            vec![start, (start.0, end.1), end]
+        }
     } else {
-        // LR/RL: horizontal first, then vertical
+        // LR/RL level/downward edge: horizontal first, then vertical
         let mid_x = (start.0 + end.0) / 2;
         vec![start, (mid_x, start.1), (mid_x, end.1), end]
     }
+}
+
+/// Returns a rank for each cluster ID. Subgraphs are clusters; free nodes each get
+/// a synthetic singleton cluster ID `"__free__<node_id>"`.
+/// Uses Kosaraju's SCC so cyclic clusters (bidirectional inter-cluster edges) share the same rank.
+fn assign_cluster_ranks(chart: &FlowChart) -> std::collections::HashMap<String, usize> {
+    let mut node_to_cluster: std::collections::HashMap<&str, String> =
+        std::collections::HashMap::new();
+    for sg in &chart.subgraphs {
+        for nid in &sg.node_ids {
+            node_to_cluster.insert(nid.as_str(), sg.id.clone());
+        }
+    }
+    for node in &chart.nodes {
+        node_to_cluster
+            .entry(node.id.as_str())
+            .or_insert_with(|| format!("__free__{}", node.id));
+    }
+
+    let mut seen = std::collections::HashSet::new();
+    let mut cluster_ids: Vec<String> = Vec::new();
+    for sg in &chart.subgraphs {
+        if seen.insert(sg.id.clone()) {
+            cluster_ids.push(sg.id.clone());
+        }
+    }
+    for node in &chart.nodes {
+        let cid = node_to_cluster[node.id.as_str()].clone();
+        if seen.insert(cid.clone()) {
+            cluster_ids.push(cid);
+        }
+    }
+
+    let cluster_index: std::collections::HashMap<String, usize> = cluster_ids
+        .iter()
+        .enumerate()
+        .map(|(i, id)| (id.clone(), i))
+        .collect();
+    let nc = cluster_ids.len();
+
+    let mut inter_edges: std::collections::HashSet<(usize, usize)> =
+        std::collections::HashSet::new();
+    for edge in &chart.edges {
+        let fc = node_to_cluster.get(edge.from.as_str());
+        let tc = node_to_cluster.get(edge.to.as_str());
+        if let (Some(fc), Some(tc)) = (fc, tc)
+            && fc != tc
+            && let (Some(&fi), Some(&ti)) = (cluster_index.get(fc), cluster_index.get(tc))
+        {
+            inter_edges.insert((fi, ti));
+        }
+    }
+
+    // Build successor list for Kosaraju phase 1
+    let mut successors: Vec<Vec<usize>> = vec![vec![]; nc];
+    for &(f, t) in &inter_edges {
+        successors[f].push(t);
+    }
+
+    // Kosaraju phase 1: iterative DFS, record finish order
+    let mut finished: Vec<usize> = Vec::new();
+    let mut visited = vec![false; nc];
+    for start in 0..nc {
+        if visited[start] {
+            continue;
+        }
+        let mut stack: Vec<(usize, usize)> = vec![(start, 0)];
+        visited[start] = true;
+        while let Some((u, ni)) = stack.last_mut() {
+            let u = *u;
+            if *ni < successors[u].len() {
+                let v = successors[u][*ni];
+                *ni += 1;
+                if !visited[v] {
+                    visited[v] = true;
+                    stack.push((v, 0));
+                }
+            } else {
+                stack.pop();
+                finished.push(u);
+            }
+        }
+    }
+
+    // Kosaraju phase 2: DFS on reverse graph in reverse finish order → SCCs
+    let mut rev_successors: Vec<Vec<usize>> = vec![vec![]; nc];
+    for &(f, t) in &inter_edges {
+        rev_successors[t].push(f);
+    }
+    let mut scc_id = vec![0usize; nc];
+    let mut scc_count = 0usize;
+    let mut visited2 = vec![false; nc];
+    for &start in finished.iter().rev() {
+        if visited2[start] {
+            continue;
+        }
+        let mut stack = vec![start];
+        visited2[start] = true;
+        while let Some(u) = stack.pop() {
+            scc_id[u] = scc_count;
+            for &v in &rev_successors[u] {
+                if !visited2[v] {
+                    visited2[v] = true;
+                    stack.push(v);
+                }
+            }
+        }
+        scc_count += 1;
+    }
+
+    // Build SCC DAG and run Kahn + longest-path (no cycles by construction)
+    let mut scc_edges: std::collections::HashSet<(usize, usize)> = std::collections::HashSet::new();
+    for &(f, t) in &inter_edges {
+        let sf = scc_id[f];
+        let st = scc_id[t];
+        if sf != st {
+            scc_edges.insert((sf, st));
+        }
+    }
+
+    let mut scc_in_degree = vec![0usize; scc_count];
+    let mut scc_successors: Vec<Vec<usize>> = vec![vec![]; scc_count];
+    for &(f, t) in &scc_edges {
+        scc_successors[f].push(t);
+        scc_in_degree[t] += 1;
+    }
+
+    let mut scc_ranks = vec![0usize; scc_count];
+    let mut queue = std::collections::VecDeque::new();
+    for (i, &deg) in scc_in_degree.iter().enumerate() {
+        if deg == 0 {
+            queue.push_back(i);
+        }
+    }
+    let mut remaining = scc_in_degree.clone();
+    let mut processed = vec![false; scc_count];
+    loop {
+        while let Some(idx) = queue.pop_front() {
+            processed[idx] = true;
+            for &succ in &scc_successors[idx] {
+                if !processed[succ] && scc_ranks[succ] < scc_ranks[idx] + 1 {
+                    scc_ranks[succ] = scc_ranks[idx] + 1;
+                }
+                remaining[succ] = remaining[succ].saturating_sub(1);
+                if remaining[succ] == 0 && !processed[succ] {
+                    queue.push_back(succ);
+                }
+            }
+        }
+        if let Some(i) = (0..scc_count).find(|&i| !processed[i]) {
+            remaining[i] = 0;
+            queue.push_back(i);
+        } else {
+            break;
+        }
+    }
+
+    cluster_ids
+        .iter()
+        .enumerate()
+        .map(|(i, id)| (id.clone(), scc_ranks[scc_id[i]]))
+        .collect()
 }
 
 pub fn layout(chart: &FlowChart) -> LayoutResult {
@@ -121,59 +294,136 @@ pub fn layout(chart: &FlowChart) -> LayoutResult {
 
     let n = chart.nodes.len();
 
-    // Phase 1: Rank assignment (Kahn's algorithm + longest path)
-    let mut in_degree = vec![0usize; n];
-    let mut successors: Vec<Vec<usize>> = vec![vec![]; n];
-    let mut predecessors: Vec<Vec<usize>> = vec![vec![]; n];
+    // Phase 1: Cluster-aware rank assignment
+    let cluster_rank_map = assign_cluster_ranks(chart);
 
+    // node id -> cluster id (same logic as assign_cluster_ranks)
+    let mut node_to_cluster: std::collections::HashMap<&str, String> =
+        std::collections::HashMap::new();
+    for sg in &chart.subgraphs {
+        for nid in &sg.node_ids {
+            node_to_cluster.insert(nid.as_str(), sg.id.clone());
+        }
+    }
+    for node in &chart.nodes {
+        node_to_cluster
+            .entry(node.id.as_str())
+            .or_insert_with(|| format!("__free__{}", node.id));
+    }
+
+    // Group node indices by cluster
+    let mut cluster_members: std::collections::HashMap<String, Vec<usize>> =
+        std::collections::HashMap::new();
+    for (i, node) in chart.nodes.iter().enumerate() {
+        let cid = node_to_cluster[node.id.as_str()].clone();
+        cluster_members.entry(cid).or_default().push(i);
+    }
+
+    // Per-cluster internal rank via Kahn + longest-path (intra-cluster edges only)
+    let mut internal_ranks = vec![0usize; n];
+    let mut max_internal_depth = 0usize;
+
+    for (cid, members) in &cluster_members {
+        if members.len() == 1 {
+            internal_ranks[members[0]] = 0;
+            continue;
+        }
+
+        // Build declaration-position map: node global index → position in subgraph.node_ids
+        let decl_pos: std::collections::HashMap<usize, usize> =
+            if let Some(sg) = chart.subgraphs.iter().find(|s| s.id == cid.as_str()) {
+                members
+                    .iter()
+                    .map(|&gi| {
+                        let pos = sg
+                            .node_ids
+                            .iter()
+                            .position(|nid| nid == chart.nodes[gi].id.as_str())
+                            .unwrap_or(0);
+                        (gi, pos)
+                    })
+                    .collect()
+            } else {
+                members
+                    .iter()
+                    .enumerate()
+                    .map(|(li, &gi)| (gi, li))
+                    .collect()
+            };
+
+        // Start from declaration order as the base rank
+        for &gi in members.iter() {
+            internal_ranks[gi] = decl_pos[&gi];
+        }
+
+        // Apply forward-edge constraints: only propagate rank for edges where
+        // the "from" node appears before the "to" node in declaration order.
+        // Backward edges (e.g. DLQ -.retry.-> CQ) are intentionally ignored.
+        for _ in 0..members.len() {
+            for edge in &chart.edges {
+                if let (Some(&fi), Some(&ti)) = (
+                    node_index.get(edge.from.as_str()),
+                    node_index.get(edge.to.as_str()),
+                ) && node_to_cluster.get(edge.from.as_str()) == Some(cid)
+                    && node_to_cluster.get(edge.to.as_str()) == Some(cid)
+                {
+                    let from_decl = decl_pos.get(&fi).copied().unwrap_or(0);
+                    let to_decl = decl_pos.get(&ti).copied().unwrap_or(0);
+                    if from_decl <= to_decl && internal_ranks[ti] < internal_ranks[fi] + 1 {
+                        internal_ranks[ti] = internal_ranks[fi] + 1;
+                    }
+                }
+            }
+        }
+
+        let depth = members
+            .iter()
+            .map(|&gi| internal_ranks[gi])
+            .max()
+            .unwrap_or(0);
+        if depth > max_internal_depth {
+            max_internal_depth = depth;
+        }
+    }
+
+    // Combine cluster rank + internal rank into global ranks
+    let band_size = max_internal_depth + 1;
+    let mut ranks = vec![0usize; n];
+    for (i, node) in chart.nodes.iter().enumerate() {
+        let cid = &node_to_cluster[node.id.as_str()];
+        let cr = cluster_rank_map.get(cid).copied().unwrap_or(0);
+        ranks[i] = cr * band_size + internal_ranks[i];
+    }
+
+    // Rebuild predecessors for Phase 2 barycenter
+    let mut predecessors: Vec<Vec<usize>> = vec![vec![]; n];
     for edge in &chart.edges {
         if let (Some(&from_idx), Some(&to_idx)) = (
             node_index.get(edge.from.as_str()),
             node_index.get(edge.to.as_str()),
         ) {
-            successors[from_idx].push(to_idx);
             predecessors[to_idx].push(from_idx);
-            in_degree[to_idx] += 1;
         }
     }
 
-    let mut ranks = vec![0usize; n];
-    let mut queue = std::collections::VecDeque::new();
-
-    for (i, &deg) in in_degree.iter().enumerate() {
-        if deg == 0 {
-            queue.push_back(i);
-        }
+    // Phase 1.5: Assign secondary band index to each cluster.
+    // Clusters with the same cluster_rank (e.g. due to SCC) get stacked vertically.
+    // Only named subgraphs get separate bands; free-node clusters stay in band 0.
+    let mut rank_sg_counter: std::collections::HashMap<usize, usize> =
+        std::collections::HashMap::new();
+    let mut cluster_secondary_band: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
+    for sg in &chart.subgraphs {
+        let cr = cluster_rank_map.get(&sg.id).copied().unwrap_or(0);
+        let cnt = rank_sg_counter.entry(cr).or_insert(0);
+        cluster_secondary_band.insert(sg.id.clone(), *cnt);
+        *cnt += 1;
     }
-
-    // We need a remaining in-degree counter to process topologically
-    let mut remaining_in = in_degree.clone();
-    let mut processed = vec![false; n];
-
-    // Process nodes, breaking cycles by forcing unprocessed nodes as sources
-    loop {
-        while let Some(idx) = queue.pop_front() {
-            processed[idx] = true;
-            for &succ in &successors[idx] {
-                // Only update rank for unprocessed nodes (skip back-edges)
-                if !processed[succ] && ranks[succ] < ranks[idx] + 1 {
-                    ranks[succ] = ranks[idx] + 1;
-                }
-                remaining_in[succ] = remaining_in[succ].saturating_sub(1);
-                if remaining_in[succ] == 0 && !processed[succ] {
-                    queue.push_back(succ);
-                }
-            }
-        }
-
-        // If cycle nodes remain, force the first unprocessed node as source
-        if let Some(i) = (0..n).find(|&i| !processed[i]) {
-            remaining_in[i] = 0;
-            queue.push_back(i);
-        } else {
-            break;
-        }
+    for node in &chart.nodes {
+        let cid = node_to_cluster[node.id.as_str()].clone();
+        cluster_secondary_band.entry(cid).or_insert(0);
     }
+    let max_secondary_band = *cluster_secondary_band.values().max().unwrap_or(&0);
 
     // Phase 2: Order within ranks (barycenter heuristic)
     let max_rank = *ranks.iter().max().unwrap_or(&0);
@@ -215,7 +465,24 @@ pub fn layout(chart: &FlowChart) -> LayoutResult {
             })
             .collect();
 
-        barycenters.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap().then(a.0.cmp(&b.0)));
+        barycenters.sort_by(|a, b| {
+            let cid_a = node_to_cluster
+                .get(chart.nodes[a.0].id.as_str())
+                .map(|s| s.as_str())
+                .unwrap_or("");
+            let cid_b = node_to_cluster
+                .get(chart.nodes[b.0].id.as_str())
+                .map(|s| s.as_str())
+                .unwrap_or("");
+            let cr_a = cluster_rank_map.get(cid_a).copied().unwrap_or(0);
+            let cr_b = cluster_rank_map.get(cid_b).copied().unwrap_or(0);
+            let sb_a = cluster_secondary_band.get(cid_a).copied().unwrap_or(0);
+            let sb_b = cluster_secondary_band.get(cid_b).copied().unwrap_or(0);
+            cr_a.cmp(&cr_b)
+                .then(sb_a.cmp(&sb_b))
+                .then(a.1.partial_cmp(&b.1).unwrap())
+                .then(a.0.cmp(&b.0))
+        });
 
         rank_groups[r] = barycenters.iter().map(|(idx, _)| *idx).collect();
 
@@ -275,12 +542,9 @@ pub fn layout(chart: &FlowChart) -> LayoutResult {
         })
         .collect();
 
-    let mut max_secondary_extent = *rank_secondary_extents.iter().max().unwrap_or(&0);
-
     // When subgraphs are present, reserve top margin on the secondary axis so
     // the subgraph box top border (label row) has room above the first node row.
     let sg_top_margin: usize = if chart.subgraphs.is_empty() { 0 } else { 2 };
-    max_secondary_extent += sg_top_margin;
 
     // Primary offsets per rank
     let rank_max_primary: Vec<usize> = rank_groups
@@ -301,21 +565,82 @@ pub fn layout(chart: &FlowChart) -> LayoutResult {
         current_primary += rank_max_primary[r] + primary_spacing;
     }
 
-    // Assign primary/secondary coordinate to each node
-    let mut node_primary = vec![0usize; n];
-    let mut node_secondary = vec![0usize; n];
+    // When multiple named subgraphs share the same cluster rank (SCC cycle case),
+    // stack them in separate vertical bands instead of centering all nodes together.
+    let node_primary;
+    let node_secondary;
+    let final_secondary_extent;
 
-    for (r, group) in rank_groups.iter().enumerate() {
-        // Center this rank along the secondary axis
-        let rank_extent = rank_secondary_extents[r];
-        let secondary_offset = (max_secondary_extent - rank_extent) / 2;
-
-        let mut cur_secondary = secondary_offset + sg_top_margin;
-        for &idx in group {
-            node_primary[idx] = rank_primary_offsets[r];
-            node_secondary[idx] = cur_secondary;
-            cur_secondary += node_secondary_size[idx] + secondary_spacing;
+    if max_secondary_band > 0 {
+        // Compute max secondary extent per band across all ranks
+        let mut band_max_extents: Vec<usize> = vec![0; max_secondary_band + 1];
+        for group in &rank_groups {
+            let mut band_totals: std::collections::HashMap<usize, (usize, usize)> =
+                std::collections::HashMap::new();
+            for &idx in group {
+                let cid = &node_to_cluster[chart.nodes[idx].id.as_str()];
+                let sb = cluster_secondary_band
+                    .get(cid.as_str())
+                    .copied()
+                    .unwrap_or(0);
+                let e = band_totals.entry(sb).or_insert((0, 0));
+                e.0 += node_secondary_size[idx];
+                e.1 += 1;
+            }
+            for (sb, (total, count)) in band_totals {
+                let extent = total + count.saturating_sub(1) * secondary_spacing;
+                band_max_extents[sb] = band_max_extents[sb].max(extent);
+            }
         }
+
+        // Stack bands with sg_top_margin above each band and secondary_spacing between bands
+        let mut band_offsets: Vec<usize> = vec![0; max_secondary_band + 1];
+        let mut current_y = 0usize;
+        for sb in 0..=max_secondary_band {
+            band_offsets[sb] = current_y;
+            current_y += band_max_extents[sb] + sg_top_margin + secondary_spacing;
+        }
+        final_secondary_extent = current_y.saturating_sub(secondary_spacing);
+
+        let mut np = vec![0usize; n];
+        let mut ns = vec![0usize; n];
+        for (r, group) in rank_groups.iter().enumerate() {
+            let mut band_cursors: Vec<usize> = (0..=max_secondary_band)
+                .map(|sb| band_offsets[sb] + sg_top_margin)
+                .collect();
+            for &idx in group {
+                let cid = &node_to_cluster[chart.nodes[idx].id.as_str()];
+                let sb = cluster_secondary_band
+                    .get(cid.as_str())
+                    .copied()
+                    .unwrap_or(0);
+                np[idx] = rank_primary_offsets[r];
+                ns[idx] = band_cursors[sb];
+                band_cursors[sb] += node_secondary_size[idx] + secondary_spacing;
+            }
+        }
+        node_primary = np;
+        node_secondary = ns;
+    } else {
+        // Original centering: no co-ranked subgraphs
+        let mut max_secondary_extent = *rank_secondary_extents.iter().max().unwrap_or(&0);
+        max_secondary_extent += sg_top_margin;
+        final_secondary_extent = max_secondary_extent;
+
+        let mut np = vec![0usize; n];
+        let mut ns = vec![0usize; n];
+        for (r, group) in rank_groups.iter().enumerate() {
+            let rank_extent = rank_secondary_extents[r];
+            let secondary_offset = (max_secondary_extent - rank_extent) / 2;
+            let mut cur_secondary = secondary_offset + sg_top_margin;
+            for &idx in group {
+                np[idx] = rank_primary_offsets[r];
+                ns[idx] = cur_secondary;
+                cur_secondary += node_secondary_size[idx] + secondary_spacing;
+            }
+        }
+        node_primary = np;
+        node_secondary = ns;
     }
 
     // Map primary/secondary → x/y based on direction.
@@ -389,11 +714,11 @@ pub fn layout(chart: &FlowChart) -> LayoutResult {
     let total_height = match chart.direction {
         Direction::TopDown => total_primary,
         Direction::BottomTop => total_primary,
-        Direction::LeftRight | Direction::RightLeft => max_secondary_extent,
+        Direction::LeftRight | Direction::RightLeft => final_secondary_extent,
     };
 
     let total_width = match chart.direction {
-        Direction::TopDown | Direction::BottomTop => max_secondary_extent,
+        Direction::TopDown | Direction::BottomTop => final_secondary_extent,
         Direction::LeftRight | Direction::RightLeft => total_primary,
     };
 
@@ -453,7 +778,7 @@ pub fn layout(chart: &FlowChart) -> LayoutResult {
         .collect();
 
     // Compute bounding boxes for subgraphs
-    const H_PAD: usize = 2;
+    const H_PAD: usize = 3;
     const V_PAD: usize = 2;
 
     // Build a lookup from node id to PositionedNode for fast access
@@ -500,12 +825,25 @@ pub fn layout(chart: &FlowChart) -> LayoutResult {
         })
         .collect();
 
+    let result_width = subgraph_boxes
+        .iter()
+        .map(|b| b.x + b.width)
+        .max()
+        .unwrap_or(0)
+        .max(total_width);
+    let result_height = subgraph_boxes
+        .iter()
+        .map(|b| b.y + b.height)
+        .max()
+        .unwrap_or(0)
+        .max(total_height);
+
     LayoutResult {
         nodes: positioned_nodes,
         edges: positioned_edges,
         subgraph_boxes,
-        width: total_width,
-        height: total_height,
+        width: result_width,
+        height: result_height,
     }
 }
 
@@ -878,5 +1216,452 @@ mod tests {
         // All at same y
         assert_eq!(a.y, b.y, "RL: A and B should have same y");
         assert_eq!(b.y, c.y, "RL: B and C should have same y");
+    }
+
+    /// Two subgraphs with inter-cluster edge: Pkg (Send, Dispatch, Deliver) and MQ (DQ, CQ, DLQ).
+    /// The layout should arrange nodes such that all nodes from one subgraph occupy a contiguous
+    /// x-range that does not overlap with the other subgraph's x-range.
+    #[test]
+    fn test_subgraph_members_contiguous_ranks() {
+        use crate::mermaid::Subgraph;
+
+        let nodes = vec![
+            Node {
+                id: "Send".into(),
+                label: "Send".into(),
+                shape: NodeShape::Rect,
+                node_style: None,
+            },
+            Node {
+                id: "Dispatch".into(),
+                label: "Dispatch".into(),
+                shape: NodeShape::Rect,
+                node_style: None,
+            },
+            Node {
+                id: "Deliver".into(),
+                label: "Deliver".into(),
+                shape: NodeShape::Rect,
+                node_style: None,
+            },
+            Node {
+                id: "DQ".into(),
+                label: "DQ".into(),
+                shape: NodeShape::Rect,
+                node_style: None,
+            },
+            Node {
+                id: "CQ".into(),
+                label: "CQ".into(),
+                shape: NodeShape::Rect,
+                node_style: None,
+            },
+            Node {
+                id: "DLQ".into(),
+                label: "DLQ".into(),
+                shape: NodeShape::Rect,
+                node_style: None,
+            },
+        ];
+        let edges = vec![
+            Edge {
+                from: "Send".into(),
+                to: "Dispatch".into(),
+                label: None,
+                style: EdgeStyle::Arrow,
+                edge_style: None,
+            },
+            Edge {
+                from: "Dispatch".into(),
+                to: "Deliver".into(),
+                label: None,
+                style: EdgeStyle::Arrow,
+                edge_style: None,
+            },
+            Edge {
+                from: "DQ".into(),
+                to: "CQ".into(),
+                label: None,
+                style: EdgeStyle::Arrow,
+                edge_style: None,
+            },
+            Edge {
+                from: "CQ".into(),
+                to: "DLQ".into(),
+                label: None,
+                style: EdgeStyle::Arrow,
+                edge_style: None,
+            },
+            Edge {
+                from: "Send".into(),
+                to: "DQ".into(),
+                label: None,
+                style: EdgeStyle::Arrow,
+                edge_style: None,
+            },
+        ];
+        let subgraphs = vec![
+            Subgraph {
+                id: "Pkg".into(),
+                label: "packages/notifications".into(),
+                node_ids: vec!["Send".into(), "Dispatch".into(), "Deliver".into()],
+            },
+            Subgraph {
+                id: "MQ".into(),
+                label: "RabbitMQ".into(),
+                node_ids: vec!["DQ".into(), "CQ".into(), "DLQ".into()],
+            },
+        ];
+        let chart = FlowChart {
+            direction: Direction::LeftRight,
+            nodes,
+            edges,
+            subgraphs,
+        };
+        let result = layout(&chart);
+
+        let pkg_ids = ["Send", "Dispatch", "Deliver"];
+        let mq_ids = ["DQ", "CQ", "DLQ"];
+        let find_x = |id: &str| result.nodes.iter().find(|n| n.id == id).unwrap().x;
+        let pkg_xs: Vec<usize> = pkg_ids.iter().map(|id| find_x(id)).collect();
+        let mq_xs: Vec<usize> = mq_ids.iter().map(|id| find_x(id)).collect();
+        let pkg_max = pkg_xs.iter().max().unwrap();
+        let mq_min = mq_xs.iter().min().unwrap();
+        let pkg_min = pkg_xs.iter().min().unwrap();
+        let mq_max = mq_xs.iter().max().unwrap();
+        assert!(
+            pkg_max < mq_min || mq_max < pkg_min,
+            "Pkg and MQ x-ranges must not overlap. Pkg xs: {:?}, MQ xs: {:?}",
+            pkg_xs,
+            mq_xs
+        );
+    }
+
+    #[test]
+    fn test_subgraph_secondary_axis_grouping() {
+        // Two subgraphs each with 2 nodes, inter-cluster edge A1->B1.
+        // After compound layout: SGA members must be in the same rank column (same x),
+        // SGB members must be in the same rank column, and the two columns must differ.
+        use crate::mermaid::{Direction, Edge, EdgeStyle, FlowChart, Node, NodeShape, Subgraph};
+        let nodes = vec![
+            Node {
+                id: "A1".into(),
+                label: "A1".into(),
+                shape: NodeShape::Rect,
+                node_style: None,
+            },
+            Node {
+                id: "A2".into(),
+                label: "A2".into(),
+                shape: NodeShape::Rect,
+                node_style: None,
+            },
+            Node {
+                id: "B1".into(),
+                label: "B1".into(),
+                shape: NodeShape::Rect,
+                node_style: None,
+            },
+            Node {
+                id: "B2".into(),
+                label: "B2".into(),
+                shape: NodeShape::Rect,
+                node_style: None,
+            },
+        ];
+        let edges = vec![Edge {
+            from: "A1".into(),
+            to: "B1".into(),
+            label: None,
+            style: EdgeStyle::Arrow,
+            edge_style: None,
+        }];
+        let subgraphs = vec![
+            Subgraph {
+                id: "SGA".into(),
+                label: "Group A".into(),
+                node_ids: vec!["A1".into(), "A2".into()],
+            },
+            Subgraph {
+                id: "SGB".into(),
+                label: "Group B".into(),
+                node_ids: vec!["B1".into(), "B2".into()],
+            },
+        ];
+        let chart = FlowChart {
+            direction: Direction::LeftRight,
+            nodes,
+            edges,
+            subgraphs,
+        };
+        let result = layout(&chart);
+
+        let find = |id: &str| result.nodes.iter().find(|n| n.id == id).unwrap().clone();
+        let a1 = find("A1");
+        let a2 = find("A2");
+        let b1 = find("B1");
+        let b2 = find("B2");
+
+        // With declaration-order internal ranks, A1 and A2 are at consecutive x positions.
+        // Both SGA columns must appear before both SGB columns (x-range non-overlap).
+        let a_max_x = a1.x.max(a2.x);
+        let b_min_x = b1.x.min(b2.x);
+        let a_min_x = a1.x.min(a2.x);
+        let b_max_x = b1.x.max(b2.x);
+        assert!(
+            a_max_x < b_min_x || b_max_x < a_min_x,
+            "SGA and SGB x-ranges must not overlap. SGA xs: [{},{}], SGB xs: [{},{}]",
+            a_min_x,
+            a_max_x,
+            b_min_x,
+            b_max_x
+        );
+        // SGA (rank 0) must come before SGB (rank 1) in LR mode
+        assert!(
+            a_min_x < b_min_x,
+            "SGA columns must be left of SGB columns in LR mode"
+        );
+    }
+
+    #[test]
+    fn test_subgraph_box_compact() {
+        use crate::mermaid::{Direction, Edge, EdgeStyle, FlowChart, Node, NodeShape, Subgraph};
+        let nodes = vec![
+            Node {
+                id: "S".into(),
+                label: "Send".into(),
+                shape: NodeShape::Rect,
+                node_style: None,
+            },
+            Node {
+                id: "D".into(),
+                label: "Dispatch".into(),
+                shape: NodeShape::Rect,
+                node_style: None,
+            },
+            Node {
+                id: "Q".into(),
+                label: "Queue".into(),
+                shape: NodeShape::Rect,
+                node_style: None,
+            },
+            Node {
+                id: "C".into(),
+                label: "Consume".into(),
+                shape: NodeShape::Rect,
+                node_style: None,
+            },
+        ];
+        let edges = vec![
+            Edge {
+                from: "S".into(),
+                to: "D".into(),
+                label: None,
+                style: EdgeStyle::Arrow,
+                edge_style: None,
+            },
+            Edge {
+                from: "S".into(),
+                to: "Q".into(),
+                label: None,
+                style: EdgeStyle::Arrow,
+                edge_style: None,
+            },
+            Edge {
+                from: "Q".into(),
+                to: "C".into(),
+                label: None,
+                style: EdgeStyle::Arrow,
+                edge_style: None,
+            },
+        ];
+        let subgraphs = vec![
+            Subgraph {
+                id: "SGA".into(),
+                label: "App".into(),
+                node_ids: vec!["S".into(), "D".into()],
+            },
+            Subgraph {
+                id: "SGB".into(),
+                label: "Broker".into(),
+                node_ids: vec!["Q".into(), "C".into()],
+            },
+        ];
+        let chart = FlowChart {
+            direction: Direction::LeftRight,
+            nodes,
+            edges,
+            subgraphs,
+        };
+        let result = layout(&chart);
+        for sg_box in &result.subgraph_boxes {
+            assert!(
+                sg_box.width <= result.width,
+                "SubgraphBox '{}' width {} > diagram width {}",
+                sg_box.label,
+                sg_box.width,
+                result.width
+            );
+            assert!(
+                sg_box.height <= result.height,
+                "SubgraphBox '{}' height {} > diagram height {}",
+                sg_box.label,
+                sg_box.height,
+                result.height
+            );
+        }
+    }
+
+    #[test]
+    fn test_free_nodes_with_subgraphs() {
+        use crate::mermaid::{Direction, Edge, EdgeStyle, FlowChart, Node, NodeShape, Subgraph};
+        let nodes = vec![
+            Node {
+                id: "Free".into(),
+                label: "Free".into(),
+                shape: NodeShape::Rect,
+                node_style: None,
+            },
+            Node {
+                id: "A".into(),
+                label: "A".into(),
+                shape: NodeShape::Rect,
+                node_style: None,
+            },
+            Node {
+                id: "B".into(),
+                label: "B".into(),
+                shape: NodeShape::Rect,
+                node_style: None,
+            },
+            Node {
+                id: "C".into(),
+                label: "C".into(),
+                shape: NodeShape::Rect,
+                node_style: None,
+            },
+            Node {
+                id: "D".into(),
+                label: "D".into(),
+                shape: NodeShape::Rect,
+                node_style: None,
+            },
+        ];
+        let edges = vec![
+            Edge {
+                from: "A".into(),
+                to: "B".into(),
+                label: None,
+                style: EdgeStyle::Arrow,
+                edge_style: None,
+            },
+            Edge {
+                from: "C".into(),
+                to: "D".into(),
+                label: None,
+                style: EdgeStyle::Arrow,
+                edge_style: None,
+            },
+            Edge {
+                from: "A".into(),
+                to: "C".into(),
+                label: None,
+                style: EdgeStyle::Arrow,
+                edge_style: None,
+            },
+        ];
+        let subgraphs = vec![
+            Subgraph {
+                id: "SGA".into(),
+                label: "G1".into(),
+                node_ids: vec!["A".into(), "B".into()],
+            },
+            Subgraph {
+                id: "SGB".into(),
+                label: "G2".into(),
+                node_ids: vec!["C".into(), "D".into()],
+            },
+        ];
+        let chart = FlowChart {
+            direction: Direction::LeftRight,
+            nodes,
+            edges,
+            subgraphs,
+        };
+        let result = layout(&chart);
+        let find_x = |id: &str| result.nodes.iter().find(|n| n.id == id).unwrap().x;
+        let a_x = find_x("A");
+        let b_x = find_x("B");
+        let c_x = find_x("C");
+        let d_x = find_x("D");
+        let sga_max = a_x.max(b_x);
+        let sgb_min = c_x.min(d_x);
+        let sga_min = a_x.min(b_x);
+        let sgb_max = c_x.max(d_x);
+        assert!(
+            sga_max < sgb_min || sgb_max < sga_min,
+            "SGA and SGB x-ranges must not overlap. SGA: [{},{}], SGB: [{},{}]",
+            sga_min,
+            sga_max,
+            sgb_min,
+            sgb_max
+        );
+        assert_eq!(result.nodes.len(), 5);
+    }
+
+    #[test]
+    fn test_single_subgraph_no_regression() {
+        use crate::mermaid::{Direction, Edge, EdgeStyle, FlowChart, Node, NodeShape, Subgraph};
+        let nodes = vec![
+            Node {
+                id: "A".into(),
+                label: "A".into(),
+                shape: NodeShape::Rect,
+                node_style: None,
+            },
+            Node {
+                id: "B".into(),
+                label: "B".into(),
+                shape: NodeShape::Rect,
+                node_style: None,
+            },
+            Node {
+                id: "C".into(),
+                label: "C".into(),
+                shape: NodeShape::Rect,
+                node_style: None,
+            },
+        ];
+        let edges = vec![
+            Edge {
+                from: "A".into(),
+                to: "B".into(),
+                label: None,
+                style: EdgeStyle::Arrow,
+                edge_style: None,
+            },
+            Edge {
+                from: "B".into(),
+                to: "C".into(),
+                label: None,
+                style: EdgeStyle::Arrow,
+                edge_style: None,
+            },
+        ];
+        let subgraphs = vec![Subgraph {
+            id: "SG".into(),
+            label: "All".into(),
+            node_ids: vec!["A".into(), "B".into(), "C".into()],
+        }];
+        let chart = FlowChart {
+            direction: Direction::LeftRight,
+            nodes,
+            edges,
+            subgraphs,
+        };
+        let result = layout(&chart);
+        let find_x = |id: &str| result.nodes.iter().find(|n| n.id == id).unwrap().x;
+        assert!(find_x("A") < find_x("B"), "A.x should be less than B.x");
+        assert!(find_x("B") < find_x("C"), "B.x should be less than C.x");
     }
 }
