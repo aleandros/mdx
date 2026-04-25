@@ -96,6 +96,12 @@ pub fn render_mermaid(
         .find(|l| !l.is_empty() && !l.starts_with("%%"))
         .unwrap_or("");
 
+    if first_line == "erDiagram" {
+        let _diagram = er::parse::parse_er(content)?;
+        // Layout / paint wired in Task 13; for now propagate parse errors.
+        anyhow::bail!("ER rendering not yet implemented");
+    }
+
     if first_line == "sequenceDiagram" {
         let mut diagram = sequence::parse::parse_sequence(content)?;
         let participant_count = diagram.participants.len();
@@ -275,6 +281,18 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn test_render_mermaid_dispatches_er_diagram() {
+        let input = "erDiagram\n    A ||--o{ B : has\n";
+        let theme = Theme::default_theme();
+        // For now, ER dispatch returns the unimplemented bail from parse_er.
+        let err = render_mermaid(input, theme, 120).unwrap_err();
+        assert!(
+            err.to_string().contains("not implemented") || err.to_string().contains("ER"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]
