@@ -13,7 +13,7 @@ pub fn to_flowchart(diagram: &mut ErDiagram, max_box_width: usize) -> FlowChart 
             id: e.name.clone(),
             label: e.name.clone(),
             shape: NodeShape::EntityBox,
-            node_style: None,
+            node_style: e.node_style.clone(),
             entity: Some(e.clone()),
         })
         .collect();
@@ -230,6 +230,7 @@ mod tests {
             rendered_lines: Vec::new(),
             width: 0,
             height: 0,
+            node_style: None,
         }
     }
 
@@ -303,6 +304,7 @@ mod tests {
                 rendered_lines: Vec::new(),
                 width: 0,
                 height: 0,
+                node_style: None,
             }],
             relationships: Vec::new(),
         };
@@ -348,6 +350,7 @@ mod tests {
                 rendered_lines: Vec::new(),
                 width: 0,
                 height: 0,
+                node_style: None,
             }],
             relationships: Vec::new(),
         };
@@ -390,6 +393,7 @@ mod tests {
                 rendered_lines: Vec::new(),
                 width: 0,
                 height: 0,
+                node_style: None,
             }],
             relationships: Vec::new(),
         };
@@ -410,6 +414,32 @@ mod tests {
             "box width {} exceeds max 40",
             diag.entities[0].width
         );
+    }
+
+    #[test]
+    fn test_to_flowchart_propagates_node_style() {
+        use crate::mermaid::NodeStyle;
+        use crate::render::Color;
+        let style = NodeStyle {
+            fill: None,
+            stroke: Some(Color::Red),
+            color: Some(Color::Blue),
+        };
+        let mut diag = ErDiagram {
+            direction: Direction::TopDown,
+            direction_explicit: false,
+            entities: vec![Entity {
+                name: "Foo".into(),
+                attributes: Vec::new(),
+                rendered_lines: Vec::new(),
+                width: 0,
+                height: 0,
+                node_style: Some(style.clone()),
+            }],
+            relationships: Vec::new(),
+        };
+        let chart = to_flowchart(&mut diag, 50);
+        assert_eq!(chart.nodes[0].node_style, Some(style));
     }
 
     #[test]

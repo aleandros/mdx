@@ -172,6 +172,7 @@ mod tests {
             rendered_lines: Vec::new(),
             width: 0,
             height: 0,
+            node_style: None,
         }
     }
 
@@ -229,6 +230,7 @@ mod tests {
                 rendered_lines: Vec::new(),
                 width: 0,
                 height: 0,
+                node_style: None,
             }],
             relationships: Vec::new(),
         };

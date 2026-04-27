@@ -184,6 +184,7 @@ pub fn parse_er(input: &str) -> Result<ErDiagram> {
                     rendered_lines: Vec::new(),
                     width: 0,
                     height: 0,
+                    node_style: None,
                 },
             );
         }

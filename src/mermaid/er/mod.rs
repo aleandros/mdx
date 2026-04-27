@@ -20,6 +20,8 @@ pub struct Entity {
     pub rendered_lines: Vec<EntityLine>,
     pub width: usize,
     pub height: usize,
+    /// User-supplied or class-derived style. None means "use theme defaults".
+    pub node_style: Option<crate::mermaid::NodeStyle>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
