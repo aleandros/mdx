@@ -1,5 +1,6 @@
 use crate::mermaid::er::{Cardinality, EntityLineKind};
 use crate::mermaid::layout::{PositionedEdge, PositionedNode};
+use crate::render::{Color, SpanStyle, StyledLine, StyledSpan};
 
 /// Paints the borders and inner content of an entity box at its positioned
 /// coordinates onto `canvas_lines` (one String per row). Caller has already
@@ -40,6 +41,116 @@ pub fn paint_entity(canvas_lines: &mut [String], node: &PositionedNode) {
         };
         paint_text(canvas_lines, node.x + 1, row_y, &inner, w.saturating_sub(2));
     }
+}
+
+/// Recolors an entity's bounding-box region within `rows` cell-by-cell.
+/// Border cells (`+`, `-`, `|` along the four edges of the box AND the
+/// in-box separator row) take `node_style.stroke` (or `fill` as fallback).
+/// Inner text cells take `node_style.color`. Cells outside the box keep
+/// whatever color they already had.
+///
+/// The caller must have already painted the plain glyph content of the entity
+/// into the rows (via `paint_entity` on a plain buffer that was then promoted
+/// to single default-styled spans, or equivalent) so this function can read
+/// the existing characters.
+#[allow(dead_code)]
+pub fn paint_entity_styled(rows: &mut [StyledLine], node: &crate::mermaid::layout::PositionedNode) {
+    let Some(entity) = node.entity.as_ref() else {
+        return;
+    };
+    let Some(style) = node.node_style.as_ref() else {
+        return;
+    };
+    let stroke = style.stroke.clone().or_else(|| style.fill.clone());
+    let text_color = style.color.clone();
+
+    let w = node.width;
+    let h = node.height;
+    if w < 2 || h < 2 {
+        return;
+    }
+
+    for dy in 0..h {
+        let y = node.y + dy;
+        if y >= rows.len() {
+            continue;
+        }
+        let row_text = row_text_string(&rows[y]);
+        let row_chars: Vec<char> = row_text.chars().collect();
+
+        let mut new_spans: Vec<StyledSpan> = Vec::new();
+        let mut current_text = String::new();
+        let mut current_fg: Option<Color> = None;
+        let mut started = false;
+
+        for (x, ch) in row_chars.iter().enumerate() {
+            let in_box_x = x >= node.x && x < node.x + w;
+            let cell_fg =
+                if in_box_x && (dy == 0 || dy == h - 1 || x == node.x || x == node.x + w - 1) {
+                    // Outer-edge cell of the box.
+                    stroke.clone()
+                } else if in_box_x && dy >= 1 && dy < h - 1 {
+                    // Inner content cell. If this row corresponds to a Separator
+                    // entry in rendered_lines, treat it as a border (stroke).
+                    let inner_y = dy.saturating_sub(1);
+                    let kind = entity.rendered_lines.get(inner_y).map(|l| l.kind);
+                    if matches!(kind, Some(crate::mermaid::er::EntityLineKind::Separator)) {
+                        stroke.clone()
+                    } else {
+                        text_color.clone()
+                    }
+                } else {
+                    // Outside the box: preserve existing color.
+                    find_existing_fg(&rows[y], x)
+                };
+
+            if !started {
+                current_fg = cell_fg.clone();
+                current_text.push(*ch);
+                started = true;
+            } else if cell_fg == current_fg {
+                current_text.push(*ch);
+            } else {
+                new_spans.push(StyledSpan {
+                    text: std::mem::take(&mut current_text),
+                    style: SpanStyle {
+                        fg: current_fg.clone(),
+                        ..Default::default()
+                    },
+                });
+                current_fg = cell_fg;
+                current_text.push(*ch);
+            }
+        }
+        if started && !current_text.is_empty() {
+            new_spans.push(StyledSpan {
+                text: current_text,
+                style: SpanStyle {
+                    fg: current_fg,
+                    ..Default::default()
+                },
+            });
+        }
+        rows[y] = StyledLine { spans: new_spans };
+    }
+}
+
+#[allow(dead_code)]
+fn row_text_string(line: &StyledLine) -> String {
+    line.spans.iter().map(|s| s.text.as_str()).collect()
+}
+
+#[allow(dead_code)]
+fn find_existing_fg(line: &StyledLine, x: usize) -> Option<Color> {
+    let mut col = 0usize;
+    for span in &line.spans {
+        let len = span.text.chars().count();
+        if x < col + len {
+            return span.style.fg.clone();
+        }
+        col += len;
+    }
+    None
 }
 
 fn set_cell(canvas_lines: &mut [String], x: usize, y: usize, ch: char) {
@@ -310,5 +421,116 @@ mod tests {
             "expected box side border:\n{}",
             joined
         );
+    }
+
+    #[test]
+    fn test_paint_entity_styled_borders_use_stroke_color() {
+        use crate::mermaid::NodeStyle;
+        use crate::mermaid::layout::PositionedNode;
+        use crate::render::{Color, StyledLine, StyledSpan};
+
+        let mut entity = make_entity("Foo");
+        crate::mermaid::er::layout::layout_entity_for_test(&mut entity, 30);
+        let node = PositionedNode {
+            id: "Foo".into(),
+            label: "Foo".into(),
+            shape: crate::mermaid::NodeShape::EntityBox,
+            x: 0,
+            y: 0,
+            width: entity.width,
+            height: entity.height,
+            compact: false,
+            node_style: Some(NodeStyle {
+                fill: None,
+                stroke: Some(Color::Red),
+                color: Some(Color::Blue),
+            }),
+            entity: Some(entity.clone()),
+        };
+        let mut rows: Vec<StyledLine> = (0..node.height)
+            .map(|_| StyledLine {
+                spans: vec![StyledSpan {
+                    text: " ".repeat(node.width),
+                    style: Default::default(),
+                }],
+            })
+            .collect();
+        // First paint plain glyphs so the cell content (`+`, `-`, `|`, "Foo") exists.
+        let mut plain: Vec<String> = (0..node.height).map(|_| " ".repeat(node.width)).collect();
+        crate::mermaid::er::ascii::paint_entity(&mut plain, &node);
+        // Promote plain rows back into styled rows as a single default-styled span each.
+        for (i, line) in plain.into_iter().enumerate() {
+            rows[i] = StyledLine {
+                spans: vec![StyledSpan {
+                    text: line,
+                    style: Default::default(),
+                }],
+            };
+        }
+        // Now recolor.
+        crate::mermaid::er::ascii::paint_entity_styled(&mut rows, &node);
+
+        // Top border row contains '+' / '-' cells with fg = Red.
+        let top: String = rows[0].spans.iter().map(|s| s.text.as_str()).collect();
+        assert!(top.contains('+') && top.contains('-'), "top row: `{top}`");
+        let dash_span = rows[0]
+            .spans
+            .iter()
+            .find(|s| s.text.contains('-'))
+            .expect("expected dash span on border row");
+        assert_eq!(dash_span.style.fg, Some(Color::Red));
+    }
+
+    #[test]
+    fn test_paint_entity_styled_text_uses_color() {
+        use crate::mermaid::NodeStyle;
+        use crate::mermaid::layout::PositionedNode;
+        use crate::render::{Color, StyledLine, StyledSpan};
+
+        let mut entity = make_entity("Foo");
+        crate::mermaid::er::layout::layout_entity_for_test(&mut entity, 30);
+        let node = PositionedNode {
+            id: "Foo".into(),
+            label: "Foo".into(),
+            shape: crate::mermaid::NodeShape::EntityBox,
+            x: 0,
+            y: 0,
+            width: entity.width,
+            height: entity.height,
+            compact: false,
+            node_style: Some(NodeStyle {
+                fill: None,
+                stroke: Some(Color::Red),
+                color: Some(Color::Blue),
+            }),
+            entity: Some(entity.clone()),
+        };
+        let mut rows: Vec<StyledLine> = (0..node.height)
+            .map(|_| StyledLine {
+                spans: vec![StyledSpan {
+                    text: " ".repeat(node.width),
+                    style: Default::default(),
+                }],
+            })
+            .collect();
+        let mut plain: Vec<String> = (0..node.height).map(|_| " ".repeat(node.width)).collect();
+        crate::mermaid::er::ascii::paint_entity(&mut plain, &node);
+        for (i, line) in plain.into_iter().enumerate() {
+            rows[i] = StyledLine {
+                spans: vec![StyledSpan {
+                    text: line,
+                    style: Default::default(),
+                }],
+            };
+        }
+        crate::mermaid::er::ascii::paint_entity_styled(&mut rows, &node);
+
+        // Header row (y=1) contains "Foo" — the spans should mark "Foo" with fg = Blue.
+        let foo_span = rows[1]
+            .spans
+            .iter()
+            .find(|s| s.text.contains("Foo"))
+            .expect("expected Foo span on header row");
+        assert_eq!(foo_span.style.fg, Some(Color::Blue));
     }
 }

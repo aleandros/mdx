@@ -461,3 +461,8 @@ mod tests {
         assert_eq!(chart.edges[0].style, crate::mermaid::EdgeStyle::Dotted);
     }
 }
+
+#[cfg(test)]
+pub fn layout_entity_for_test(entity: &mut super::Entity, max_box_width: usize) {
+    layout_entity(entity, max_box_width)
+}
