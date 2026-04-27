@@ -211,6 +211,218 @@ fn right_glyph(c: Cardinality) -> &'static str {
     }
 }
 
+#[cfg(test)]
+pub fn paint_cardinality_plain_for_test(
+    rows: &mut [StyledLine],
+    edge: &crate::mermaid::layout::PositionedEdge,
+) {
+    // Build plain rows from the styled rows, run the plain painter, write back
+    // as single default-styled spans. Tests use this to seed the glyph cells
+    // before exercising paint_cardinality_styled.
+    let mut plain: Vec<String> = rows
+        .iter()
+        .map(|l| l.spans.iter().map(|s| s.text.as_str()).collect::<String>())
+        .collect();
+    paint_cardinality(&mut plain, edge);
+    for (i, line) in plain.into_iter().enumerate() {
+        if i < rows.len() {
+            rows[i] = StyledLine {
+                spans: vec![StyledSpan {
+                    text: line,
+                    style: Default::default(),
+                }],
+            };
+        }
+    }
+}
+
+/// Recolors the two endpoint glyph cells of an ER edge using the resolved
+/// `edge_style.stroke`. Caller has already painted the plain glyphs onto the
+/// rows.
+#[allow(dead_code)]
+pub fn paint_cardinality_styled(
+    rows: &mut [StyledLine],
+    edge: &crate::mermaid::layout::PositionedEdge,
+) {
+    let Some(meta) = edge.er_meta.as_ref() else {
+        return;
+    };
+    if edge.points.len() < 2 {
+        return;
+    }
+    let stroke = edge.edge_style.as_ref().and_then(|s| s.stroke.clone());
+    if stroke.is_none() {
+        return; // No color set — leave defaults.
+    }
+
+    let start = edge.points[0];
+    let end = *edge.points.last().unwrap();
+    let next_after_start = edge.points[1];
+    let next_before_end = edge.points[edge.points.len() - 2];
+
+    let l_glyph_len = left_glyph(meta.left_card).chars().count();
+    let r_glyph_len = right_glyph(meta.right_card).chars().count();
+
+    color_glyph_cells(rows, start, next_after_start, l_glyph_len, &stroke);
+    color_glyph_cells(rows, end, next_before_end, r_glyph_len, &stroke);
+}
+
+#[allow(dead_code)]
+fn color_glyph_cells(
+    rows: &mut [StyledLine],
+    endpoint: (usize, usize),
+    next: (usize, usize),
+    glyph_len: usize,
+    fg: &Option<Color>,
+) {
+    if glyph_len != 2 {
+        return;
+    }
+    let (x, y) = endpoint;
+    let dx = next.0 as isize - endpoint.0 as isize;
+    let dy = next.1 as isize - endpoint.1 as isize;
+    let cells: [(usize, usize); 2] = if dx.abs() > dy.abs() {
+        if dx > 0 {
+            [(x, y), (x + 1, y)]
+        } else if x >= 1 {
+            [(x - 1, y), (x, y)]
+        } else {
+            return;
+        }
+    } else if dy != 0 {
+        if dy > 0 {
+            [(x, y), (x, y + 1)]
+        } else if y >= 1 {
+            [(x, y - 1), (x, y)]
+        } else {
+            return;
+        }
+    } else {
+        return;
+    };
+    // If both cells are on the same row and contiguous in x, recolor as a
+    // single range so the resulting span carries both glyph chars together.
+    if cells[0].1 == cells[1].1 && cells[1].0 == cells[0].0 + 1 {
+        let y = cells[0].1;
+        if y < rows.len() {
+            recolor_range(&mut rows[y], cells[0].0, 2, fg);
+        }
+        return;
+    }
+    for (cx, cy) in cells {
+        if cy >= rows.len() {
+            continue;
+        }
+        recolor_cell(&mut rows[cy], cx, fg);
+    }
+}
+
+/// Splits a `StyledLine`'s spans so the contiguous range `[x, x+len)` becomes
+/// one span styled with `fg`. Used so two adjacent glyph cells (e.g. "||")
+/// land in a single span instead of being split.
+#[allow(dead_code)]
+fn recolor_range(line: &mut StyledLine, x: usize, len: usize, fg: &Option<Color>) {
+    if len == 0 {
+        return;
+    }
+    let mut new_spans: Vec<StyledSpan> = Vec::new();
+    let mut col = 0usize;
+    let mut middle_text = String::new();
+    let end = x + len;
+    for span in line.spans.drain(..) {
+        let span_len = span.text.chars().count();
+        let span_start = col;
+        let span_end = col + span_len;
+        if span_end <= x || span_start >= end {
+            // Entirely outside the range.
+            new_spans.push(span);
+            col += span_len;
+            continue;
+        }
+        let chars: Vec<char> = span.text.chars().collect();
+        // Left slice (before x)
+        if span_start < x {
+            let local = x - span_start;
+            new_spans.push(StyledSpan {
+                text: chars[..local].iter().collect(),
+                style: span.style.clone(),
+            });
+        }
+        // Middle slice (overlap with [x, end))
+        let mid_start = x.saturating_sub(span_start);
+        let mid_end = (end - span_start).min(span_len);
+        for ch in &chars[mid_start..mid_end] {
+            middle_text.push(*ch);
+        }
+        // If the middle ends inside this span, flush + emit right slice.
+        if span_end >= end {
+            new_spans.push(StyledSpan {
+                text: std::mem::take(&mut middle_text),
+                style: SpanStyle {
+                    fg: fg.clone(),
+                    ..Default::default()
+                },
+            });
+            if mid_end < span_len {
+                new_spans.push(StyledSpan {
+                    text: chars[mid_end..].iter().collect(),
+                    style: span.style,
+                });
+            }
+        }
+        col += span_len;
+    }
+    // If the range extended past all spans (shouldn't normally happen) flush.
+    if !middle_text.is_empty() {
+        new_spans.push(StyledSpan {
+            text: middle_text,
+            style: SpanStyle {
+                fg: fg.clone(),
+                ..Default::default()
+            },
+        });
+    }
+    line.spans = new_spans;
+}
+
+/// Splits a `StyledLine`'s spans so the cell at column `x` gets `fg`.
+#[allow(dead_code)]
+fn recolor_cell(line: &mut StyledLine, x: usize, fg: &Option<Color>) {
+    let mut new_spans: Vec<StyledSpan> = Vec::new();
+    let mut col = 0usize;
+    for span in line.spans.drain(..) {
+        let span_len = span.text.chars().count();
+        if x < col || x >= col + span_len {
+            new_spans.push(span);
+            col += span_len;
+            continue;
+        }
+        let local = x - col;
+        let chars: Vec<char> = span.text.chars().collect();
+        if local > 0 {
+            new_spans.push(StyledSpan {
+                text: chars[..local].iter().collect(),
+                style: span.style.clone(),
+            });
+        }
+        new_spans.push(StyledSpan {
+            text: chars[local].to_string(),
+            style: SpanStyle {
+                fg: fg.clone(),
+                ..Default::default()
+            },
+        });
+        if local + 1 < chars.len() {
+            new_spans.push(StyledSpan {
+                text: chars[local + 1..].iter().collect(),
+                style: span.style,
+            });
+        }
+        col += span_len;
+    }
+    line.spans = new_spans;
+}
+
 pub fn paint_cardinality(canvas_lines: &mut [String], edge: &PositionedEdge) {
     let Some(meta) = edge.er_meta.as_ref() else {
         return;
@@ -532,5 +744,53 @@ mod tests {
             .find(|s| s.text.contains("Foo"))
             .expect("expected Foo span on header row");
         assert_eq!(foo_span.style.fg, Some(Color::Blue));
+    }
+
+    #[test]
+    fn test_paint_cardinality_styled_uses_edge_stroke() {
+        use crate::mermaid::er::{Cardinality, ErEdgeMeta};
+        use crate::mermaid::layout::PositionedEdge;
+        use crate::mermaid::{EdgeStyle, MermaidEdgeStyle};
+        use crate::render::{Color, StyledLine, StyledSpan};
+
+        // Horizontal edge from (0, 1) to (10, 1).
+        let edge = PositionedEdge {
+            from: "A".into(),
+            to: "B".into(),
+            label: None,
+            style: EdgeStyle::Arrow,
+            points: vec![(0, 1), (10, 1)],
+            edge_style: Some(MermaidEdgeStyle {
+                stroke: Some(Color::Green),
+                label_color: None,
+            }),
+            er_meta: Some(ErEdgeMeta {
+                left_card: Cardinality::ExactlyOne,
+                right_card: Cardinality::ZeroOrMany,
+                identifying: true,
+            }),
+        };
+        let mut rows: Vec<StyledLine> = (0..3)
+            .map(|_| StyledLine {
+                spans: vec![StyledSpan {
+                    text: " ".repeat(16),
+                    style: Default::default(),
+                }],
+            })
+            .collect();
+        crate::mermaid::er::ascii::paint_cardinality_plain_for_test(&mut rows, &edge);
+        crate::mermaid::er::ascii::paint_cardinality_styled(&mut rows, &edge);
+
+        let row1_text: String = rows[1].spans.iter().map(|s| s.text.as_str()).collect();
+        assert!(
+            row1_text.contains("||"),
+            "expected || glyph painted: `{row1_text}`"
+        );
+        let bar_span = rows[1]
+            .spans
+            .iter()
+            .find(|s| s.text.contains("||"))
+            .expect("expected || span");
+        assert_eq!(bar_span.style.fg, Some(Color::Green));
     }
 }
