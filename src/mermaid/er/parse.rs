@@ -169,6 +169,9 @@ pub fn parse_er(input: &str) -> Result<ErDiagram> {
     let mut entities: std::collections::HashMap<String, Entity> = std::collections::HashMap::new();
     let mut relationships: Vec<Relationship> = Vec::new();
     let mut node_styles: Vec<(String, crate::mermaid::NodeStyle)> = Vec::new();
+    let mut class_defs: std::collections::HashMap<String, crate::mermaid::NodeStyle> =
+        std::collections::HashMap::new();
+    let mut class_assignments: Vec<(Vec<String>, String)> = Vec::new();
 
     fn ensure_entity(
         name: &str,
@@ -217,6 +220,20 @@ pub fn parse_er(input: &str) -> Result<ErDiagram> {
             }
             continue;
         }
+        if let Some(rest) = trimmed.strip_prefix("classDef ") {
+            if let Some((name, props)) = rest.split_once(char::is_whitespace) {
+                let style = crate::mermaid::color::parse_node_style_props(props.trim());
+                class_defs.insert(name.trim().to_string(), style);
+            }
+            continue;
+        }
+        if let Some(rest) = trimmed.strip_prefix("class ") {
+            if let Some((ids_str, class_name)) = rest.rsplit_once(char::is_whitespace) {
+                let ids: Vec<String> = ids_str.split(',').map(|s| s.trim().to_string()).collect();
+                class_assignments.push((ids, class_name.trim().to_string()));
+            }
+            continue;
+        }
         if let Some(rel) = parse_relationship_line(trimmed)? {
             ensure_entity(&rel.left, &mut entity_order, &mut entities);
             ensure_entity(&rel.right, &mut entity_order, &mut entities);
@@ -256,6 +273,19 @@ pub fn parse_er(input: &str) -> Result<ErDiagram> {
         // Other lines: silently ignored to match Mermaid's leniency.
     }
 
+    // Apply class assignments first (so explicit `style` lines override class).
+    for (entity_ids, cls) in &class_assignments {
+        if let Some(style) = class_defs.get(cls) {
+            for id in entity_ids {
+                ensure_entity(id, &mut entity_order, &mut entities);
+                let e = entities.get_mut(id).unwrap();
+                e.node_style = Some(style.clone());
+            }
+        }
+        // Unknown class: silently ignored.
+    }
+    // Explicit `style` lines (already accumulated by T2; replaces class-applied
+    // style on overlapping entities).
     for (id, style) in &node_styles {
         ensure_entity(id, &mut entity_order, &mut entities);
         let e = entities.get_mut(id).unwrap();
@@ -487,5 +517,54 @@ mod tests {
             a.node_style.as_ref().unwrap().stroke,
             Some(Color::Rgb(255, 0, 0))
         );
+    }
+
+    #[test]
+    fn test_parse_class_def_and_assignment() {
+        use crate::render::Color;
+        let src =
+            "erDiagram\n  A {\n    string id\n  }\n  classDef bar fill:#ff00ff\n  class A bar\n";
+        let d = parse_er(src).unwrap();
+        let a = &d.entities[0];
+        assert_eq!(
+            a.node_style.as_ref().unwrap().fill,
+            Some(Color::Rgb(255, 0, 255))
+        );
+    }
+
+    #[test]
+    fn test_parse_class_assignment_multiple_entities() {
+        use crate::render::Color;
+        let src = "erDiagram\n  A {\n    string id\n  }\n  B {\n    string id\n  }\n  C {\n    string id\n  }\n  classDef bar fill:#ff00ff\n  class A,B,C bar\n";
+        let d = parse_er(src).unwrap();
+        for entity in &d.entities {
+            assert_eq!(
+                entity.node_style.as_ref().unwrap().fill,
+                Some(Color::Rgb(255, 0, 255)),
+                "entity {} missing class fill",
+                entity.name
+            );
+        }
+    }
+
+    #[test]
+    fn test_parse_style_overrides_class() {
+        use crate::render::Color;
+        // class sets fill, then explicit style sets stroke. Style line REPLACES the
+        // class-applied style on the entity (matches flowchart's apply order: class
+        // first, style second). Final node_style has only stroke set.
+        let src = "erDiagram\n  A {\n    string id\n  }\n  classDef bar fill:#ff00ff\n  class A bar\n  style A stroke:#00ff00\n";
+        let d = parse_er(src).unwrap();
+        let a = &d.entities[0];
+        let style = a.node_style.as_ref().unwrap();
+        assert_eq!(style.stroke, Some(Color::Rgb(0, 255, 0)));
+        assert_eq!(style.fill, None);
+    }
+
+    #[test]
+    fn test_parse_unknown_class_silently_ignored() {
+        let src = "erDiagram\n  A {\n    string id\n  }\n  class A nonexistent\n";
+        let d = parse_er(src).unwrap();
+        assert!(d.entities[0].node_style.is_none());
     }
 }
