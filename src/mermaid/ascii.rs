@@ -868,15 +868,15 @@ pub fn render_styled(layout: &LayoutResult) -> Vec<StyledLine> {
                 rows_to_replace.insert(y + 1);
             }
         }
-        for y in rows_to_replace {
-            if y >= plain.len() {
+        for y in &rows_to_replace {
+            if *y >= plain.len() {
                 continue;
             }
-            let row_text: String = plain[y].trim_end().to_string();
-            while lines.len() <= y {
+            let row_text: String = plain[*y].trim_end().to_string();
+            while lines.len() <= *y {
                 lines.push(StyledLine::empty());
             }
-            lines[y] = StyledLine {
+            lines[*y] = StyledLine {
                 spans: if row_text.is_empty() {
                     Vec::new()
                 } else {
@@ -886,6 +886,13 @@ pub fn render_styled(layout: &LayoutResult) -> Vec<StyledLine> {
                     }]
                 },
             };
+        }
+        // Recolor cells using node_style / edge_style.
+        for node in &entity_nodes {
+            crate::mermaid::er::ascii::paint_entity_styled(&mut lines, node);
+        }
+        for edge in &er_edges {
+            crate::mermaid::er::ascii::paint_cardinality_styled(&mut lines, edge);
         }
     }
     while lines.last().map(|l| l.spans.is_empty()).unwrap_or(false) {
@@ -1243,5 +1250,45 @@ mod tests {
             "Border should have stroke color, got: {:?}",
             top_line.spans
         );
+    }
+
+    #[test]
+    fn test_render_styled_er_applies_node_style_colors() {
+        use crate::mermaid::Direction;
+        use crate::mermaid::NodeStyle;
+        use crate::mermaid::er::layout::to_flowchart;
+        use crate::mermaid::er::{Entity, ErDiagram};
+        use crate::render::Color;
+
+        let mut diag = ErDiagram {
+            direction: Direction::LeftRight,
+            direction_explicit: false,
+            entities: vec![Entity {
+                name: "Foo".into(),
+                attributes: Vec::new(),
+                rendered_lines: Vec::new(),
+                width: 0,
+                height: 0,
+                node_style: Some(NodeStyle {
+                    fill: None,
+                    stroke: Some(Color::Red),
+                    color: Some(Color::Blue),
+                }),
+            }],
+            relationships: Vec::new(),
+        };
+        let chart = to_flowchart(&mut diag, 30);
+        let layout = crate::mermaid::layout::layout(&chart);
+        let lines = crate::mermaid::ascii::render_styled(&layout);
+        let any_red = lines
+            .iter()
+            .flat_map(|l| l.spans.iter())
+            .any(|s| s.style.fg == Some(Color::Red));
+        assert!(any_red, "expected at least one Red-colored span (border)");
+        let any_blue = lines
+            .iter()
+            .flat_map(|l| l.spans.iter())
+            .any(|s| s.style.fg == Some(Color::Blue));
+        assert!(any_blue, "expected at least one Blue-colored span (text)");
     }
 }

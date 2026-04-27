@@ -53,7 +53,6 @@ pub fn paint_entity(canvas_lines: &mut [String], node: &PositionedNode) {
 /// into the rows (via `paint_entity` on a plain buffer that was then promoted
 /// to single default-styled spans, or equivalent) so this function can read
 /// the existing characters.
-#[allow(dead_code)]
 pub fn paint_entity_styled(rows: &mut [StyledLine], node: &crate::mermaid::layout::PositionedNode) {
     let Some(entity) = node.entity.as_ref() else {
         return;
@@ -135,12 +134,10 @@ pub fn paint_entity_styled(rows: &mut [StyledLine], node: &crate::mermaid::layou
     }
 }
 
-#[allow(dead_code)]
 fn row_text_string(line: &StyledLine) -> String {
     line.spans.iter().map(|s| s.text.as_str()).collect()
 }
 
-#[allow(dead_code)]
 fn find_existing_fg(line: &StyledLine, x: usize) -> Option<Color> {
     let mut col = 0usize;
     for span in &line.spans {
@@ -239,7 +236,6 @@ pub fn paint_cardinality_plain_for_test(
 /// Recolors the two endpoint glyph cells of an ER edge using the resolved
 /// `edge_style.stroke`. Caller has already painted the plain glyphs onto the
 /// rows.
-#[allow(dead_code)]
 pub fn paint_cardinality_styled(
     rows: &mut [StyledLine],
     edge: &crate::mermaid::layout::PositionedEdge,
@@ -267,7 +263,6 @@ pub fn paint_cardinality_styled(
     color_glyph_cells(rows, end, next_before_end, r_glyph_len, &stroke);
 }
 
-#[allow(dead_code)]
 fn color_glyph_cells(
     rows: &mut [StyledLine],
     endpoint: (usize, usize),
@@ -320,7 +315,6 @@ fn color_glyph_cells(
 /// Splits a `StyledLine`'s spans so the contiguous range `[x, x+len)` becomes
 /// one span styled with `fg`. Used so two adjacent glyph cells (e.g. "||")
 /// land in a single span instead of being split.
-#[allow(dead_code)]
 fn recolor_range(line: &mut StyledLine, x: usize, len: usize, fg: &Option<Color>) {
     if len == 0 {
         return;
@@ -386,7 +380,6 @@ fn recolor_range(line: &mut StyledLine, x: usize, len: usize, fg: &Option<Color>
 }
 
 /// Splits a `StyledLine`'s spans so the cell at column `x` gets `fg`.
-#[allow(dead_code)]
 fn recolor_cell(line: &mut StyledLine, x: usize, fg: &Option<Color>) {
     let mut new_spans: Vec<StyledSpan> = Vec::new();
     let mut col = 0usize;
