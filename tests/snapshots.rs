@@ -135,3 +135,6 @@ snapshot_test!(
 // er-full.md
 snapshot_test!(snapshot_er_full_w120, "docs/examples/er-full.md", 120);
 snapshot_test!(snapshot_er_full_w200, "docs/examples/er-full.md", 200);
+
+// er-styled.md
+snapshot_test!(snapshot_er_styled_w120, "docs/examples/er-styled.md", 120);

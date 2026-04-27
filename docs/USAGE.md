@@ -281,6 +281,33 @@ erDiagram
 | Zero or many  | `}o`   | `o{`   |
 | One or many   | `}\|`  | `\|{`  |
 
+### Styling
+
+ER diagrams support the same `style`, `classDef`, and `class` directives
+as flowcharts. Place them inside the `erDiagram` block:
+
+```
+erDiagram
+    Notification ||--o{ Pref : has
+    classDef audit fill:#666
+    classDef config fill:#fc0
+    Notification {
+      string id PK
+    }
+    Pref {
+      string id PK
+    }
+    class Notification config
+    class Pref audit
+    style Notification stroke:#f00
+```
+
+- `style ENTITY <props>` sets per-entity color. Properties: `fill`, `stroke`, `color`.
+- `classDef NAME <props>` defines a reusable style.
+- `class ENTITY[,ENTITY...] NAME` applies the named class to one or more entities.
+- An explicit `style` line replaces any class-applied style on the same entity.
+- Border cells (and crow's foot glyphs at edge endpoints) use `stroke` (or `fill` if `stroke` is not set). Inner text uses `color`.
+
 ## Updating
 
 ```bash
