@@ -645,3 +645,32 @@ fn test_cli_flag_overrides_config() {
         String::from_utf8_lossy(&output.stderr)
     );
 }
+
+#[test]
+fn integration_renders_er_diagram() {
+    let output = Command::new(env!("CARGO_BIN_EXE_mdx"))
+        .arg("docs/examples/er-minimal.md")
+        .arg("--no-pager")
+        .arg("--width")
+        .arg("120")
+        .output()
+        .expect("failed to spawn mdx");
+    assert!(
+        output.status.success(),
+        "mdx failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("User"), "missing User entity:\n{}", stdout);
+    assert!(
+        stdout.contains("Order"),
+        "missing Order entity:\n{}",
+        stdout
+    );
+    assert!(stdout.contains("PK"), "missing PK marker:\n{}", stdout);
+    assert!(
+        stdout.contains("||") || stdout.contains("o{"),
+        "missing crow's foot glyph:\n{}",
+        stdout
+    );
+}

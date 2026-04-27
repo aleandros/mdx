@@ -254,6 +254,7 @@ fn parse_statement(
             label,
             style,
             edge_style: None,
+            er_meta: None,
         });
 
         prev_node = next_node;
@@ -297,6 +298,7 @@ fn parse_node_term(chars: &[char], pos: &mut usize) -> anyhow::Result<Node> {
             label: id,
             shape: NodeShape::Rect,
             node_style: None,
+            entity: None,
         });
     }
 
@@ -309,6 +311,7 @@ fn parse_node_term(chars: &[char], pos: &mut usize) -> anyhow::Result<Node> {
                 label: clean_label(&raw),
                 shape: NodeShape::Rect,
                 node_style: None,
+                entity: None,
             })
         }
         '(' => {
@@ -327,6 +330,7 @@ fn parse_node_term(chars: &[char], pos: &mut usize) -> anyhow::Result<Node> {
                     label: clean_label(&raw),
                     shape: NodeShape::Circle,
                     node_style: None,
+                    entity: None,
                 })
             } else {
                 // Rounded: (label)
@@ -336,6 +340,7 @@ fn parse_node_term(chars: &[char], pos: &mut usize) -> anyhow::Result<Node> {
                     label: clean_label(&raw),
                     shape: NodeShape::Rounded,
                     node_style: None,
+                    entity: None,
                 })
             }
         }
@@ -347,6 +352,7 @@ fn parse_node_term(chars: &[char], pos: &mut usize) -> anyhow::Result<Node> {
                 label: clean_label(&raw),
                 shape: NodeShape::Diamond,
                 node_style: None,
+                entity: None,
             })
         }
         _ => {
@@ -356,6 +362,7 @@ fn parse_node_term(chars: &[char], pos: &mut usize) -> anyhow::Result<Node> {
                 label: id,
                 shape: NodeShape::Rect,
                 node_style: None,
+                entity: None,
             })
         }
     }

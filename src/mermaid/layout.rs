@@ -16,6 +16,8 @@ pub struct PositionedNode {
     /// Use compact rendering (3-row hexagon) for diamonds in LR/RL direction
     pub compact: bool,
     pub node_style: Option<super::NodeStyle>,
+    /// Set only for ER entity boxes; carries pre-rendered attribute rows.
+    pub entity: Option<super::er::Entity>,
 }
 
 #[derive(Debug, Clone)]
@@ -28,6 +30,8 @@ pub struct PositionedEdge {
     pub style: super::EdgeStyle,
     pub points: Vec<(usize, usize)>,
     pub edge_style: Option<super::MermaidEdgeStyle>,
+    /// Set only for ER relationship edges; carries cardinality + identifying flag.
+    pub er_meta: Option<super::er::ErEdgeMeta>,
 }
 
 #[derive(Debug, Clone)]
@@ -50,8 +54,20 @@ pub struct LayoutResult {
     pub height: usize,
 }
 
-fn node_dimensions(label: &str, shape: &NodeShape, compact_diamond: bool) -> (usize, usize) {
+fn node_dimensions(
+    label: &str,
+    shape: &NodeShape,
+    compact_diamond: bool,
+    entity: Option<&super::er::Entity>,
+) -> (usize, usize) {
     match shape {
+        NodeShape::EntityBox => {
+            if let Some(e) = entity {
+                (e.width, e.height)
+            } else {
+                (label.len() + 4, 3)
+            }
+        }
         NodeShape::Rect | NodeShape::Rounded | NodeShape::Circle => (label.len() + 4, 3),
         NodeShape::Diamond => {
             if compact_diamond {
@@ -499,7 +515,7 @@ pub fn layout(chart: &FlowChart) -> LayoutResult {
     let dims: Vec<(usize, usize)> = chart
         .nodes
         .iter()
-        .map(|n| node_dimensions(&n.label, &n.shape, is_lr))
+        .map(|n| node_dimensions(&n.label, &n.shape, is_lr, n.entity.as_ref()))
         .collect();
 
     // For LR/RL: ranks go left→right (x-axis), within-rank nodes go top→bottom (y-axis).
@@ -707,6 +723,7 @@ pub fn layout(chart: &FlowChart) -> LayoutResult {
             height: node_height[i],
             compact: is_lr && node.shape == NodeShape::Diamond,
             node_style: node.node_style.clone(),
+            entity: node.entity.clone(),
         })
         .collect();
 
@@ -773,6 +790,7 @@ pub fn layout(chart: &FlowChart) -> LayoutResult {
                 style: edge.style.clone(),
                 points,
                 edge_style: edge.edge_style.clone(),
+                er_meta: edge.er_meta.clone(),
             })
         })
         .collect();
@@ -858,6 +876,7 @@ mod tests {
             label: label.to_string(),
             shape: NodeShape::Rect,
             node_style: None,
+            entity: None,
         }
     }
 
@@ -868,6 +887,7 @@ mod tests {
             label: None,
             style: EdgeStyle::Arrow,
             edge_style: None,
+            er_meta: None,
         }
     }
 
@@ -973,6 +993,7 @@ mod tests {
             label: label.to_string(),
             shape: NodeShape::Diamond,
             node_style: None,
+            entity: None,
         };
         let chart = simple_chart(vec![node], vec![]);
         let result = layout(&chart);
@@ -1231,36 +1252,42 @@ mod tests {
                 label: "Send".into(),
                 shape: NodeShape::Rect,
                 node_style: None,
+                entity: None,
             },
             Node {
                 id: "Dispatch".into(),
                 label: "Dispatch".into(),
                 shape: NodeShape::Rect,
                 node_style: None,
+                entity: None,
             },
             Node {
                 id: "Deliver".into(),
                 label: "Deliver".into(),
                 shape: NodeShape::Rect,
                 node_style: None,
+                entity: None,
             },
             Node {
                 id: "DQ".into(),
                 label: "DQ".into(),
                 shape: NodeShape::Rect,
                 node_style: None,
+                entity: None,
             },
             Node {
                 id: "CQ".into(),
                 label: "CQ".into(),
                 shape: NodeShape::Rect,
                 node_style: None,
+                entity: None,
             },
             Node {
                 id: "DLQ".into(),
                 label: "DLQ".into(),
                 shape: NodeShape::Rect,
                 node_style: None,
+                entity: None,
             },
         ];
         let edges = vec![
@@ -1270,6 +1297,7 @@ mod tests {
                 label: None,
                 style: EdgeStyle::Arrow,
                 edge_style: None,
+                er_meta: None,
             },
             Edge {
                 from: "Dispatch".into(),
@@ -1277,6 +1305,7 @@ mod tests {
                 label: None,
                 style: EdgeStyle::Arrow,
                 edge_style: None,
+                er_meta: None,
             },
             Edge {
                 from: "DQ".into(),
@@ -1284,6 +1313,7 @@ mod tests {
                 label: None,
                 style: EdgeStyle::Arrow,
                 edge_style: None,
+                er_meta: None,
             },
             Edge {
                 from: "CQ".into(),
@@ -1291,6 +1321,7 @@ mod tests {
                 label: None,
                 style: EdgeStyle::Arrow,
                 edge_style: None,
+                er_meta: None,
             },
             Edge {
                 from: "Send".into(),
@@ -1298,6 +1329,7 @@ mod tests {
                 label: None,
                 style: EdgeStyle::Arrow,
                 edge_style: None,
+                er_meta: None,
             },
         ];
         let subgraphs = vec![
@@ -1349,24 +1381,28 @@ mod tests {
                 label: "A1".into(),
                 shape: NodeShape::Rect,
                 node_style: None,
+                entity: None,
             },
             Node {
                 id: "A2".into(),
                 label: "A2".into(),
                 shape: NodeShape::Rect,
                 node_style: None,
+                entity: None,
             },
             Node {
                 id: "B1".into(),
                 label: "B1".into(),
                 shape: NodeShape::Rect,
                 node_style: None,
+                entity: None,
             },
             Node {
                 id: "B2".into(),
                 label: "B2".into(),
                 shape: NodeShape::Rect,
                 node_style: None,
+                entity: None,
             },
         ];
         let edges = vec![Edge {
@@ -1375,6 +1411,7 @@ mod tests {
             label: None,
             style: EdgeStyle::Arrow,
             edge_style: None,
+            er_meta: None,
         }];
         let subgraphs = vec![
             Subgraph {
@@ -1432,24 +1469,28 @@ mod tests {
                 label: "Send".into(),
                 shape: NodeShape::Rect,
                 node_style: None,
+                entity: None,
             },
             Node {
                 id: "D".into(),
                 label: "Dispatch".into(),
                 shape: NodeShape::Rect,
                 node_style: None,
+                entity: None,
             },
             Node {
                 id: "Q".into(),
                 label: "Queue".into(),
                 shape: NodeShape::Rect,
                 node_style: None,
+                entity: None,
             },
             Node {
                 id: "C".into(),
                 label: "Consume".into(),
                 shape: NodeShape::Rect,
                 node_style: None,
+                entity: None,
             },
         ];
         let edges = vec![
@@ -1459,6 +1500,7 @@ mod tests {
                 label: None,
                 style: EdgeStyle::Arrow,
                 edge_style: None,
+                er_meta: None,
             },
             Edge {
                 from: "S".into(),
@@ -1466,6 +1508,7 @@ mod tests {
                 label: None,
                 style: EdgeStyle::Arrow,
                 edge_style: None,
+                er_meta: None,
             },
             Edge {
                 from: "Q".into(),
@@ -1473,6 +1516,7 @@ mod tests {
                 label: None,
                 style: EdgeStyle::Arrow,
                 edge_style: None,
+                er_meta: None,
             },
         ];
         let subgraphs = vec![
@@ -1521,30 +1565,35 @@ mod tests {
                 label: "Free".into(),
                 shape: NodeShape::Rect,
                 node_style: None,
+                entity: None,
             },
             Node {
                 id: "A".into(),
                 label: "A".into(),
                 shape: NodeShape::Rect,
                 node_style: None,
+                entity: None,
             },
             Node {
                 id: "B".into(),
                 label: "B".into(),
                 shape: NodeShape::Rect,
                 node_style: None,
+                entity: None,
             },
             Node {
                 id: "C".into(),
                 label: "C".into(),
                 shape: NodeShape::Rect,
                 node_style: None,
+                entity: None,
             },
             Node {
                 id: "D".into(),
                 label: "D".into(),
                 shape: NodeShape::Rect,
                 node_style: None,
+                entity: None,
             },
         ];
         let edges = vec![
@@ -1554,6 +1603,7 @@ mod tests {
                 label: None,
                 style: EdgeStyle::Arrow,
                 edge_style: None,
+                er_meta: None,
             },
             Edge {
                 from: "C".into(),
@@ -1561,6 +1611,7 @@ mod tests {
                 label: None,
                 style: EdgeStyle::Arrow,
                 edge_style: None,
+                er_meta: None,
             },
             Edge {
                 from: "A".into(),
@@ -1568,6 +1619,7 @@ mod tests {
                 label: None,
                 style: EdgeStyle::Arrow,
                 edge_style: None,
+                er_meta: None,
             },
         ];
         let subgraphs = vec![
@@ -1618,18 +1670,21 @@ mod tests {
                 label: "A".into(),
                 shape: NodeShape::Rect,
                 node_style: None,
+                entity: None,
             },
             Node {
                 id: "B".into(),
                 label: "B".into(),
                 shape: NodeShape::Rect,
                 node_style: None,
+                entity: None,
             },
             Node {
                 id: "C".into(),
                 label: "C".into(),
                 shape: NodeShape::Rect,
                 node_style: None,
+                entity: None,
             },
         ];
         let edges = vec![
@@ -1639,6 +1694,7 @@ mod tests {
                 label: None,
                 style: EdgeStyle::Arrow,
                 edge_style: None,
+                er_meta: None,
             },
             Edge {
                 from: "B".into(),
@@ -1646,6 +1702,7 @@ mod tests {
                 label: None,
                 style: EdgeStyle::Arrow,
                 edge_style: None,
+                er_meta: None,
             },
         ];
         let subgraphs = vec![Subgraph {

@@ -115,3 +115,26 @@ snapshot_test!(
     "docs/examples/test-seq-complex.md",
     120
 );
+
+// er-minimal.md
+snapshot_test!(snapshot_er_minimal_w80, "docs/examples/er-minimal.md", 80);
+snapshot_test!(snapshot_er_minimal_w120, "docs/examples/er-minimal.md", 120);
+
+// er-identifying.md
+snapshot_test!(
+    snapshot_er_identifying_w80,
+    "docs/examples/er-identifying.md",
+    80
+);
+snapshot_test!(
+    snapshot_er_identifying_w120,
+    "docs/examples/er-identifying.md",
+    120
+);
+
+// er-full.md
+snapshot_test!(snapshot_er_full_w120, "docs/examples/er-full.md", 120);
+snapshot_test!(snapshot_er_full_w200, "docs/examples/er-full.md", 200);
+
+// er-styled.md
+snapshot_test!(snapshot_er_styled_w120, "docs/examples/er-styled.md", 120);
