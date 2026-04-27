@@ -168,6 +168,7 @@ pub fn parse_er(input: &str) -> Result<ErDiagram> {
     let mut entity_order: Vec<String> = Vec::new();
     let mut entities: std::collections::HashMap<String, Entity> = std::collections::HashMap::new();
     let mut relationships: Vec<Relationship> = Vec::new();
+    let mut node_styles: Vec<(String, crate::mermaid::NodeStyle)> = Vec::new();
 
     fn ensure_entity(
         name: &str,
@@ -209,6 +210,13 @@ pub fn parse_er(input: &str) -> Result<ErDiagram> {
             direction_explicit = true;
             continue;
         }
+        if let Some(rest) = trimmed.strip_prefix("style ") {
+            if let Some((id, props)) = rest.split_once(char::is_whitespace) {
+                let style = crate::mermaid::color::parse_node_style_props(props.trim());
+                node_styles.push((id.trim().to_string(), style));
+            }
+            continue;
+        }
         if let Some(rel) = parse_relationship_line(trimmed)? {
             ensure_entity(&rel.left, &mut entity_order, &mut entities);
             ensure_entity(&rel.right, &mut entity_order, &mut entities);
@@ -246,6 +254,12 @@ pub fn parse_er(input: &str) -> Result<ErDiagram> {
         }
 
         // Other lines: silently ignored to match Mermaid's leniency.
+    }
+
+    for (id, style) in &node_styles {
+        ensure_entity(id, &mut entity_order, &mut entities);
+        let e = entities.get_mut(id).unwrap();
+        e.node_style = Some(style.clone());
     }
 
     let entities_vec: Vec<Entity> = entity_order
@@ -446,6 +460,32 @@ mod tests {
         assert!(
             err.to_string().contains("Unterminated") || err.to_string().contains("comment"),
             "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn test_parse_style_directive() {
+        use crate::mermaid::NodeStyle;
+        use crate::render::Color;
+        let _ = NodeStyle::default(); // suppress unused if NodeStyle isn't otherwise referenced
+        let src = "erDiagram\n  Foo {\n    string id\n  }\n  style Foo fill:#ff0000,stroke:#00ff00,color:#0000ff\n";
+        let d = parse_er(src).unwrap();
+        let style = d.entities[0].node_style.as_ref().unwrap();
+        assert_eq!(style.fill, Some(Color::Rgb(255, 0, 0)));
+        assert_eq!(style.stroke, Some(Color::Rgb(0, 255, 0)));
+        assert_eq!(style.color, Some(Color::Rgb(0, 0, 255)));
+    }
+
+    #[test]
+    fn test_parse_style_on_implicit_entity() {
+        use crate::render::Color;
+        // Entity referenced only by relationship + style line; no { } block.
+        let src = "erDiagram\n  A ||--o{ B : has\n  style A stroke:#ff0000\n";
+        let d = parse_er(src).unwrap();
+        let a = d.entities.iter().find(|e| e.name == "A").unwrap();
+        assert_eq!(
+            a.node_style.as_ref().unwrap().stroke,
+            Some(Color::Rgb(255, 0, 0))
         );
     }
 }
