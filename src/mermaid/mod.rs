@@ -100,6 +100,20 @@ pub fn render_mermaid(
         let max_box_width = (terminal_width / 3).clamp(20, 50);
         let mut chart = er::layout::to_flowchart(&mut diagram, max_box_width);
 
+        // Resolve any user-supplied colors (from `style` / `classDef` / `class`)
+        // to the nearest theme palette match. Matches flowchart parity at
+        // `chart.nodes` / `chart.edges` below the `graph` branch.
+        for node in &mut chart.nodes {
+            if let Some(ref mut style) = node.node_style {
+                resolve_node_style(style, theme);
+            }
+        }
+        for edge in &mut chart.edges {
+            if let Some(ref mut style) = edge.edge_style {
+                resolve_edge_style(style, theme);
+            }
+        }
+
         // Honor explicit direction; otherwise try LR and fall back to TD.
         let mut positioned = if diagram.direction_explicit {
             chart.direction = diagram.direction.clone();
@@ -115,7 +129,7 @@ pub fn render_mermaid(
             }
         };
 
-        // Apply theme defaults to ER nodes/edges (no explicit styles in v1).
+        // Apply theme defaults to ER nodes/edges that have no explicit style.
         for node in &mut positioned.nodes {
             if node.node_style.is_none() {
                 node.node_style = Some(NodeStyle {
@@ -348,6 +362,26 @@ mod tests {
         assert!(body.contains("B"));
         assert!(body.contains("PK"));
         assert!(body.contains("||") || body.contains("o{"));
+    }
+
+    #[test]
+    fn test_render_er_user_style_resolves_to_theme_palette() {
+        // A raw user color must be quantized to the nearest theme palette
+        // entry, not passed through as-is. Matches flowchart parity (see
+        // test_render_styled_flowchart_end_to_end).
+        let input = "erDiagram\n    A {\n      string id PK\n    }\n    style A stroke:#ff0000\n";
+        let theme = Theme::default_theme();
+        let (lines, _, _) = render_mermaid(input, theme, 200).unwrap();
+        for line in &lines {
+            for span in &line.spans {
+                if let Some(crate::render::Color::Rgb(r, g, b)) = &span.style.fg {
+                    assert!(
+                        !(*r == 255 && *g == 0 && *b == 0),
+                        "Raw red leaked into ER output; should have been quantized to theme palette",
+                    );
+                }
+            }
+        }
     }
 
     #[test]
