@@ -19,7 +19,8 @@ use ratatui::{
     widgets::Paragraph,
 };
 
-use crate::render::{Color, RenderedBlock, StyledLine, StyledSpan};
+use crate::render::{Color, DiagramKind, RenderedBlock, SpanStyle, StyledLine, StyledSpan};
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 /// Ensures terminal cleanup runs on all exit paths (error propagation, panic, normal return).
 /// Without this, an I/O error from `terminal.draw()` or `event::read()` would skip cleanup
@@ -140,6 +141,7 @@ pub(crate) enum FlatLine {
         block_index: usize,
         node_count: usize,
         edge_count: usize,
+        kind: DiagramKind,
     },
     #[allow(dead_code)]
     ImagePlaceholder {
@@ -147,6 +149,129 @@ pub(crate) enum FlatLine {
         url: String,
         block_index: usize,
     },
+}
+
+/// Word-wrap a styled line at `width` columns, preserving span styles.
+/// Continuation lines are prefixed with the original leading-space indent
+/// (capped) so wrapped paragraphs and list items keep their visual rhythm.
+fn wrap_styled_line(line: &StyledLine, width: usize) -> Vec<StyledLine> {
+    if width < 4 {
+        return vec![line.clone()];
+    }
+    let total: usize = line
+        .spans
+        .iter()
+        .map(|s| UnicodeWidthStr::width(s.text.as_str()))
+        .sum();
+    if total <= width {
+        return vec![line.clone()];
+    }
+
+    // Detect leading indent (count of leading space chars across spans).
+    let mut indent_chars: usize = 0;
+    'outer: for span in &line.spans {
+        for c in span.text.chars() {
+            if c == ' ' {
+                indent_chars += 1;
+            } else {
+                break 'outer;
+            }
+        }
+    }
+    let indent = indent_chars.min(width.saturating_sub(4));
+
+    // Flatten line into char/style pairs for easier walking.
+    let mut chars: Vec<(char, SpanStyle)> = Vec::with_capacity(total);
+    for span in &line.spans {
+        for ch in span.text.chars() {
+            chars.push((ch, span.style.clone()));
+        }
+    }
+
+    let mut lines: Vec<Vec<(char, SpanStyle)>> = vec![Vec::new()];
+    let mut cur_w: usize = 0;
+    let mut last_break: Option<usize> = None; // index in current line at last whitespace
+    let mut is_first_line = true;
+
+    let push_continuation = |lines: &mut Vec<Vec<(char, SpanStyle)>>, cur_w: &mut usize| {
+        let mut new_line: Vec<(char, SpanStyle)> = Vec::new();
+        for _ in 0..indent {
+            new_line.push((' ', SpanStyle::default()));
+        }
+        lines.push(new_line);
+        *cur_w = indent;
+    };
+
+    let mut i = 0;
+    while i < chars.len() {
+        let (ch, style) = chars[i].clone();
+        let cw = UnicodeWidthChar::width(ch).unwrap_or(0);
+
+        // Skip leading whitespace on continuation lines (we already laid an indent).
+        if !is_first_line && cur_w == indent && ch == ' ' {
+            i += 1;
+            continue;
+        }
+
+        if cur_w + cw > width && cur_w > 0 {
+            let cur = lines.last_mut().unwrap();
+            if let Some(brk) = last_break {
+                let tail: Vec<(char, SpanStyle)> = cur.drain(brk..).collect();
+                // Drop the leading whitespace from tail
+                let tail: Vec<(char, SpanStyle)> =
+                    tail.into_iter().skip_while(|(c, _)| *c == ' ').collect();
+                push_continuation(&mut lines, &mut cur_w);
+                is_first_line = false;
+                let cur = lines.last_mut().unwrap();
+                for entry in tail {
+                    cur.push(entry);
+                }
+                cur_w = lines
+                    .last()
+                    .unwrap()
+                    .iter()
+                    .map(|(c, _)| UnicodeWidthChar::width(*c).unwrap_or(0))
+                    .sum::<usize>();
+                last_break = None;
+            } else {
+                // Hard break (no whitespace seen on this line).
+                push_continuation(&mut lines, &mut cur_w);
+                is_first_line = false;
+                last_break = None;
+            }
+        }
+
+        let cur = lines.last_mut().unwrap();
+        cur.push((ch, style));
+        cur_w += cw;
+        if ch == ' ' {
+            last_break = Some(cur.len() - 1);
+        }
+        i += 1;
+    }
+
+    // Recombine each line's chars into spans, merging consecutive same-style runs.
+    let mut out: Vec<StyledLine> = Vec::with_capacity(lines.len());
+    for line_chars in lines {
+        let mut spans: Vec<StyledSpan> = Vec::new();
+        for (ch, style) in line_chars {
+            if let Some(last) = spans.last_mut()
+                && last.style == style
+            {
+                last.text.push(ch);
+                continue;
+            }
+            spans.push(StyledSpan {
+                text: ch.to_string(),
+                style,
+            });
+        }
+        out.push(StyledLine { spans });
+    }
+    if out.is_empty() {
+        out.push(line.clone());
+    }
+    out
 }
 
 // ─── Interactive block tracking ───────────────────────────────────────────
@@ -223,13 +348,16 @@ impl PagerState {
             match block {
                 RenderedBlock::Lines(lines) => {
                     for line in lines {
-                        self.flat_lines.push(FlatLine::Styled(line.clone()));
+                        for wrapped in wrap_styled_line(line, width_limit) {
+                            self.flat_lines.push(FlatLine::Styled(wrapped));
+                        }
                     }
                 }
                 RenderedBlock::Diagram {
                     lines,
                     node_count,
                     edge_count,
+                    kind,
                 } => {
                     // Collapse only when genuinely unmanageable: taller than
                     // the full terminal height, or more than twice as wide.
@@ -238,12 +366,18 @@ impl PagerState {
                         l.spans.iter().map(|s| s.text.len()).sum::<usize>() > width_limit * 2
                     });
                     let is_large = is_tall || is_wide;
+
+                    // Pad with a blank line above so collapsed indicators (and
+                    // expanded diagrams) don't run flush against neighboring text.
+                    self.flat_lines.push(FlatLine::Styled(StyledLine::empty()));
+
                     if is_large && !self.expanded.contains(&block_index) {
                         let flat_line_index = self.flat_lines.len();
                         self.flat_lines.push(FlatLine::DiagramCollapsed {
                             block_index,
                             node_count: *node_count,
                             edge_count: *edge_count,
+                            kind: *kind,
                         });
                         self.interactive_blocks.push(InteractiveEntry {
                             block_index,
@@ -265,6 +399,9 @@ impl PagerState {
                             self.flat_lines.push(FlatLine::DiagramAscii(line.clone()));
                         }
                     }
+
+                    // Trailing blank for breathing room below the diagram.
+                    self.flat_lines.push(FlatLine::Styled(StyledLine::empty()));
                 }
                 RenderedBlock::Image { alt, url } => {
                     let flat_line_index = self.flat_lines.len();
@@ -408,19 +545,23 @@ impl PagerState {
             FlatLine::DiagramCollapsed {
                 node_count,
                 edge_count,
+                kind,
                 ..
             } => {
+                let (n_noun, e_noun) = kind.count_nouns();
+                let body = format!(
+                    "[{}: {} {}, {} {} — Enter to expand]",
+                    kind.label(),
+                    node_count,
+                    n_noun,
+                    edge_count,
+                    e_noun,
+                );
                 if self.is_active_indicator_line(flat_line_index) {
-                    let text = format!(
-                        "▸ [Flowchart: {} nodes, {} edges — Enter to expand]",
-                        node_count, edge_count
-                    );
+                    let text = format!("▸ {}", body);
                     Line::from(Span::styled(text, Style::default().fg(collapsed_color)))
                 } else {
-                    let text = format!(
-                        "  [Flowchart: {} nodes, {} edges — Enter to expand]",
-                        node_count, edge_count
-                    );
+                    let text = format!("  {}", body);
                     Line::from(Span::styled(
                         text,
                         Style::default()
@@ -479,9 +620,18 @@ impl PagerState {
             FlatLine::DiagramCollapsed {
                 node_count,
                 edge_count,
+                kind,
                 ..
             } => {
-                format!("Flowchart: {} nodes, {} edges", node_count, edge_count)
+                let (n_noun, e_noun) = kind.count_nouns();
+                format!(
+                    "{}: {} {}, {} {}",
+                    kind.label(),
+                    node_count,
+                    n_noun,
+                    edge_count,
+                    e_noun
+                )
             }
             FlatLine::ImagePlaceholder { alt, .. } => alt.clone(),
         }
@@ -876,4 +1026,97 @@ pub fn run_pager(content: Vec<RenderedBlock>, theme: &'static crate::theme::Them
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::render::{SpanStyle, StyledLine, StyledSpan};
+
+    fn line_text(line: &StyledLine) -> String {
+        line.spans.iter().map(|s| s.text.as_str()).collect()
+    }
+
+    #[test]
+    fn wrap_short_line_unchanged() {
+        let line = StyledLine {
+            spans: vec![StyledSpan::plain("hello world")],
+        };
+        let out = wrap_styled_line(&line, 80);
+        assert_eq!(out.len(), 1);
+        assert_eq!(line_text(&out[0]), "hello world");
+    }
+
+    #[test]
+    fn wrap_breaks_at_word_boundary() {
+        let line = StyledLine {
+            spans: vec![StyledSpan::plain("the quick brown fox jumps over")],
+        };
+        let out = wrap_styled_line(&line, 12);
+        assert!(out.len() >= 2, "expected multiple wrapped lines");
+        for l in &out {
+            let w = unicode_width::UnicodeWidthStr::width(line_text(l).as_str());
+            assert!(w <= 12, "line `{}` width {} exceeds 12", line_text(l), w);
+        }
+    }
+
+    #[test]
+    fn wrap_preserves_leading_indent_on_continuation() {
+        let line = StyledLine {
+            spans: vec![StyledSpan::plain(
+                "  * a list item with enough text to need wrapping at this width",
+            )],
+        };
+        let out = wrap_styled_line(&line, 20);
+        assert!(out.len() >= 2);
+        // Continuation lines should start with at least 2 spaces of indent.
+        for l in out.iter().skip(1) {
+            let t = line_text(l);
+            assert!(t.starts_with("  "), "continuation lacks indent: `{}`", t);
+        }
+    }
+
+    #[test]
+    fn wrap_preserves_span_styles() {
+        let line = StyledLine {
+            spans: vec![
+                StyledSpan {
+                    text: "bold word ".to_string(),
+                    style: SpanStyle {
+                        bold: true,
+                        ..Default::default()
+                    },
+                },
+                StyledSpan {
+                    text: "and italic that wraps around".to_string(),
+                    style: SpanStyle {
+                        italic: true,
+                        ..Default::default()
+                    },
+                },
+            ],
+        };
+        let out = wrap_styled_line(&line, 12);
+        assert!(out.len() >= 2);
+        let saw_bold = out
+            .iter()
+            .flat_map(|l| l.spans.iter())
+            .any(|s| s.style.bold);
+        let saw_italic = out
+            .iter()
+            .flat_map(|l| l.spans.iter())
+            .any(|s| s.style.italic);
+        assert!(saw_bold && saw_italic, "styles dropped during wrap");
+    }
+
+    #[test]
+    fn diagram_kind_label_uses_kind_specific_nouns() {
+        assert_eq!(DiagramKind::Flowchart.count_nouns(), ("nodes", "edges"));
+        assert_eq!(DiagramKind::Er.count_nouns(), ("entities", "relationships"));
+        assert_eq!(
+            DiagramKind::Sequence.count_nouns(),
+            ("participants", "events")
+        );
+        assert_eq!(DiagramKind::Er.label(), "ER Diagram");
+    }
 }

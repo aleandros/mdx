@@ -54,6 +54,45 @@ impl StyledLine {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DiagramKind {
+    Flowchart,
+    Er,
+    Sequence,
+}
+
+impl DiagramKind {
+    pub fn label(&self) -> &'static str {
+        match self {
+            DiagramKind::Flowchart => "Flowchart",
+            DiagramKind::Er => "ER Diagram",
+            DiagramKind::Sequence => "Sequence Diagram",
+        }
+    }
+
+    /// Nouns for primary/secondary count (e.g. "5 nodes, 3 edges").
+    pub fn count_nouns(&self) -> (&'static str, &'static str) {
+        match self {
+            DiagramKind::Flowchart => ("nodes", "edges"),
+            DiagramKind::Er => ("entities", "relationships"),
+            DiagramKind::Sequence => ("participants", "events"),
+        }
+    }
+}
+
+fn detect_diagram_kind(content: &str) -> DiagramKind {
+    let first = content
+        .lines()
+        .map(|l| l.trim())
+        .find(|l| !l.is_empty() && !l.starts_with("%%"))
+        .unwrap_or("");
+    match first {
+        "erDiagram" => DiagramKind::Er,
+        "sequenceDiagram" => DiagramKind::Sequence,
+        _ => DiagramKind::Flowchart,
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum RenderedBlock {
     Lines(Vec<StyledLine>),
@@ -61,6 +100,7 @@ pub enum RenderedBlock {
         lines: Vec<StyledLine>,
         node_count: usize,
         edge_count: usize,
+        kind: DiagramKind,
     },
     Image {
         alt: String,
@@ -148,6 +188,7 @@ fn render_code_block_lines(
     language: &Option<String>,
     content: &str,
     highlighter: &crate::highlight::Highlighter,
+    theme: &crate::theme::Theme,
 ) -> Vec<StyledLine> {
     let mut lines = Vec::new();
 
@@ -157,8 +198,7 @@ fn render_code_block_lines(
             spans: vec![StyledSpan {
                 text: format!("  [{}]", lang),
                 style: SpanStyle {
-                    dim: true,
-                    fg: Some(Color::DarkGray),
+                    fg: Some(theme.horizontal_rule.clone()),
                     ..Default::default()
                 },
             }],
@@ -173,14 +213,13 @@ fn render_code_block_lines(
             lines.push(StyledLine { spans: indented });
         }
     } else {
-        // Fallback: dim monochrome
+        // Fallback: theme body color (no dim) for readable contrast on any background.
         for line in content.lines() {
             lines.push(StyledLine {
                 spans: vec![StyledSpan {
                     text: format!("  {}", line),
                     style: SpanStyle {
-                        dim: true,
-                        fg: Some(Color::DarkGray),
+                        fg: Some(theme.body.clone()),
                         ..Default::default()
                     },
                 }],
@@ -239,7 +278,7 @@ pub fn render_blocks(
             }
 
             Block::CodeBlock { language, content } => {
-                let lines = render_code_block_lines(language, content, highlighter);
+                let lines = render_code_block_lines(language, content, highlighter, theme);
                 let mut all_lines = lines;
                 all_lines.push(StyledLine::empty());
                 out.push(RenderedBlock::Lines(all_lines));
@@ -252,11 +291,14 @@ pub fn render_blocks(
                             &Some("mermaid".to_string()),
                             content,
                             highlighter,
+                            theme,
                         );
                         lines.push(StyledLine::empty());
                         lines
                     })
                 };
+
+                let kind = detect_diagram_kind(content);
 
                 match mermaid_mode {
                     MermaidMode::Raw => {
@@ -269,6 +311,7 @@ pub fn render_blocks(
                                     lines,
                                     node_count,
                                     edge_count,
+                                    kind,
                                 });
                             }
                             Err(_) => {
@@ -282,7 +325,7 @@ pub fn render_blocks(
                                     }],
                                 };
                                 let code_lines =
-                                    render_code_block_lines(&None, content, highlighter);
+                                    render_code_block_lines(&None, content, highlighter, theme);
                                 let mut all_lines = vec![warning_line];
                                 all_lines.extend(code_lines);
                                 all_lines.push(StyledLine::empty());
@@ -298,6 +341,7 @@ pub fn render_blocks(
                                     lines,
                                     node_count,
                                     edge_count,
+                                    kind,
                                 });
                             }
                             Err(_) => {

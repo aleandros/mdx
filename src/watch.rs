@@ -76,6 +76,7 @@ struct MermaidCacheEntry {
     lines: Vec<crate::render::StyledLine>,
     node_count: usize,
     edge_count: usize,
+    kind: crate::render::DiagramKind,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -125,6 +126,7 @@ fn diff_and_render(
                         lines,
                         node_count,
                         edge_count,
+                        kind,
                     } = rb
                     {
                         mermaid_cache.insert(
@@ -133,6 +135,7 @@ fn diff_and_render(
                                 lines: lines.clone(),
                                 node_count: *node_count,
                                 edge_count: *edge_count,
+                                kind: *kind,
                             },
                         );
                     }
@@ -153,6 +156,7 @@ fn diff_and_render(
                         lines: cached.lines.clone(),
                         node_count: cached.node_count,
                         edge_count: cached.edge_count,
+                        kind: cached.kind,
                     },
                 ];
             }
@@ -262,6 +266,7 @@ pub fn run_watch(
                     lines,
                     node_count,
                     edge_count,
+                    kind,
                 } = rb
                 {
                     mermaid_cache.insert(
@@ -270,6 +275,7 @@ pub fn run_watch(
                             lines: lines.clone(),
                             node_count: *node_count,
                             edge_count: *edge_count,
+                            kind: *kind,
                         },
                     );
                 }
@@ -646,6 +652,7 @@ mod tests {
                 }],
                 node_count: 2,
                 edge_count: 1,
+                kind: crate::render::DiagramKind::Flowchart,
             },
         );
 
