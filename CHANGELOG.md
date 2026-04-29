@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.10] - 2026-04-29
+
+### Added
+- Pager word-wraps long paragraphs and list items at terminal width so
+  reading no longer requires horizontal scrolling. Span styles and the
+  original leading indent are preserved on continuation lines; ASCII
+  diagrams remain rigid (h-scroll still works for wide diagrams).
+- Collapsed mermaid indicators now name the actual diagram type (ER
+  Diagram / Sequence Diagram / Flowchart) with kind-specific count nouns
+  (e.g. `[ER Diagram: 4 entities, 3 relationships — Enter to expand]`).
+
+### Changed
+- Diagrams (collapsed or expanded) now have a blank line above and below
+  in the pager so they stand out from neighboring text.
+- Non-highlighted code blocks render in `theme.body` (and the `[lang]`
+  label in `theme.horizontal_rule`) instead of dim DarkGray, fixing
+  unreadable contrast on dark-background themes.
+
 ## [0.1.9] - 2026-04-27
 
 ### Added
