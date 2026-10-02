@@ -1661,6 +1661,88 @@ mod tests {
         assert_eq!(result.nodes.len(), 5);
     }
 
+    /// Property-style sweep over pseudo-random DAGs (deterministic xorshift,
+    /// no extra dependencies) in all four directions. Invariants that must
+    /// hold for any input: no two node boxes overlap, every node lies within
+    /// the reported bounds, and the layout is deterministic.
+    #[test]
+    fn random_dags_have_no_overlapping_nodes_and_fit_bounds() {
+        let mut seed: u64 = 0x9E37_79B9_7F4A_7C15;
+        let mut next = move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed
+        };
+        for case in 0..40 {
+            let n = 3 + (next() % 18) as usize;
+            let nodes: Vec<Node> = (0..n)
+                .map(|i| make_node(&format!("N{i}"), &format!("Node {i}")))
+                .collect();
+            let m = n + (next() % (2 * n as u64)) as usize;
+            let mut edges = Vec::new();
+            for _ in 0..m {
+                let a = (next() % n as u64) as usize;
+                let b = (next() % n as u64) as usize;
+                if a == b {
+                    continue;
+                }
+                // Forward edges only → acyclic by construction.
+                let (a, b) = if a < b { (a, b) } else { (b, a) };
+                edges.push(make_edge(&format!("N{a}"), &format!("N{b}")));
+            }
+            for dir in [
+                Direction::TopDown,
+                Direction::BottomTop,
+                Direction::LeftRight,
+                Direction::RightLeft,
+            ] {
+                let chart = FlowChart {
+                    direction: dir.clone(),
+                    nodes: nodes.clone(),
+                    edges: edges.clone(),
+                    subgraphs: vec![],
+                };
+                let r1 = layout(&chart);
+                let r2 = layout(&chart);
+                for (a, b) in r1.nodes.iter().zip(&r2.nodes) {
+                    assert_eq!(
+                        (a.x, a.y, a.width, a.height),
+                        (b.x, b.y, b.width, b.height),
+                        "case {case} {dir:?}: layout is not deterministic for {}",
+                        a.id
+                    );
+                }
+                for node in &r1.nodes {
+                    assert!(
+                        node.x + node.width <= r1.width && node.y + node.height <= r1.height,
+                        "case {case} {dir:?}: {} at ({},{}) {}x{} exceeds bounds {}x{}",
+                        node.id,
+                        node.x,
+                        node.y,
+                        node.width,
+                        node.height,
+                        r1.width,
+                        r1.height
+                    );
+                }
+                for (i, a) in r1.nodes.iter().enumerate() {
+                    for b in &r1.nodes[i + 1..] {
+                        let overlap = a.x < b.x + b.width
+                            && b.x < a.x + a.width
+                            && a.y < b.y + b.height
+                            && b.y < a.y + a.height;
+                        assert!(
+                            !overlap,
+                            "case {case} {dir:?}: {} ({},{}) and {} ({},{}) overlap",
+                            a.id, a.x, a.y, b.id, b.x, b.y
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     #[test]
     fn test_single_subgraph_no_regression() {
         use crate::mermaid::{Direction, Edge, EdgeStyle, FlowChart, Node, NodeShape, Subgraph};
