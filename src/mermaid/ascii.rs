@@ -1,10 +1,35 @@
 use super::layout::{LayoutResult, PositionedEdge, PositionedNode, SubgraphBox};
-use super::{EdgeStyle, MermaidEdgeStyle, NodeShape, NodeStyle};
+use super::{EdgeStyle, MermaidEdgeStyle, NodeShape, NodeStyle, display_width};
 use crate::render::{SpanStyle, StyledLine, StyledSpan};
+use unicode_width::UnicodeWidthChar;
 
 // ---------------------------------------------------------------------------
 // Canvas
 // ---------------------------------------------------------------------------
+
+/// Placeholder stored in the cell to the right of a double-width character
+/// (CJK, emoji). It keeps cell index == terminal column inside the canvas and
+/// is dropped when rows are converted to text.
+pub(crate) const WIDE_FILLER: char = '\0';
+
+/// Terminal columns occupied by `ch`. Combining marks and other zero-width
+/// characters report 0; the filler and control characters count as 1 so they
+/// never trigger wide-pair handling.
+pub(crate) fn char_width(ch: char) -> usize {
+    if ch == WIDE_FILLER {
+        return 1;
+    }
+    UnicodeWidthChar::width(ch).unwrap_or(1)
+}
+
+/// Removes wide-character fillers from a cell-indexed row.
+pub(crate) fn strip_fillers(s: &str) -> String {
+    if s.contains(WIDE_FILLER) {
+        s.chars().filter(|&c| c != WIDE_FILLER).collect()
+    } else {
+        s.to_string()
+    }
+}
 
 #[derive(Clone)]
 struct Cell {
@@ -37,30 +62,91 @@ impl Canvas {
     }
 
     pub fn set(&mut self, x: usize, y: usize, ch: char) {
-        if x < self.width && y < self.height {
-            self.grid[y][x].ch = ch;
-        }
+        self.put(x, y, ch, None);
     }
 
     pub fn set_styled(&mut self, x: usize, y: usize, ch: char, style: &SpanStyle) {
-        if x < self.width && y < self.height {
-            self.grid[y][x] = Cell {
-                ch,
-                style: style.clone(),
-            };
+        self.put(x, y, ch, Some(style));
+    }
+
+    /// Breaks any wide-character pair that cell (x, y) belongs to, so the
+    /// cell can be overwritten without leaving half a glyph behind.
+    fn unpair(&mut self, x: usize, y: usize) {
+        let ch = self.grid[y][x].ch;
+        if ch == WIDE_FILLER {
+            if x > 0 {
+                self.grid[y][x - 1].ch = ' ';
+            }
+        } else if char_width(ch) == 2 && x + 1 < self.width && self.grid[y][x + 1].ch == WIDE_FILLER
+        {
+            self.grid[y][x + 1].ch = ' ';
+        }
+    }
+
+    /// Writes one character. A double-width character also claims the cell
+    /// to its right with [`WIDE_FILLER`]; if there is no room for that second
+    /// half a space is written instead.
+    fn put(&mut self, x: usize, y: usize, ch: char, style: Option<&SpanStyle>) {
+        if x >= self.width || y >= self.height {
+            return;
+        }
+        self.unpair(x, y);
+        let mut ch = ch;
+        if char_width(ch) == 2 {
+            if x + 1 < self.width {
+                self.unpair(x + 1, y);
+                self.grid[y][x + 1].ch = WIDE_FILLER;
+                if let Some(s) = style {
+                    self.grid[y][x + 1].style = s.clone();
+                }
+            } else {
+                ch = ' ';
+            }
+        }
+        self.grid[y][x].ch = ch;
+        if let Some(s) = style {
+            self.grid[y][x].style = s.clone();
         }
     }
 
     pub fn draw_text(&mut self, x: usize, y: usize, text: &str) {
-        for (i, ch) in text.chars().enumerate() {
-            self.set(x + i, y, ch);
-        }
+        self.draw_text_impl(x, y, text, None, usize::MAX);
     }
 
     pub fn draw_text_styled(&mut self, x: usize, y: usize, text: &str, style: &SpanStyle) {
-        for (i, ch) in text.chars().enumerate() {
-            self.set_styled(x + i, y, ch, style);
+        self.draw_text_impl(x, y, text, Some(style), usize::MAX);
+    }
+
+    /// Draws `text` starting at column `x`, stopping before a character that
+    /// would extend past `max_cols` columns. Returns the number of columns
+    /// written.
+    pub fn draw_text_clipped(&mut self, x: usize, y: usize, text: &str, max_cols: usize) -> usize {
+        self.draw_text_impl(x, y, text, None, max_cols)
+    }
+
+    /// Zero-width characters (combining marks) are skipped: a cell holds a
+    /// single `char`, so they cannot be attached to the preceding glyph.
+    fn draw_text_impl(
+        &mut self,
+        x: usize,
+        y: usize,
+        text: &str,
+        style: Option<&SpanStyle>,
+        max_cols: usize,
+    ) -> usize {
+        let mut used = 0usize;
+        for ch in text.chars() {
+            let w = char_width(ch);
+            if w == 0 {
+                continue;
+            }
+            if used + w > max_cols {
+                break;
+            }
+            self.put(x + used, y, ch, style);
+            used += w;
         }
+        used
     }
 
     pub fn get(&self, x: usize, y: usize) -> char {
@@ -76,7 +162,11 @@ impl Canvas {
         self.grid
             .iter()
             .map(|row| {
-                let s: String = row.iter().map(|c| c.ch).collect();
+                let s: String = row
+                    .iter()
+                    .map(|c| c.ch)
+                    .filter(|&c| c != WIDE_FILLER)
+                    .collect();
                 s.trim_end().to_string()
             })
             .collect()
@@ -99,6 +189,9 @@ impl Canvas {
                 let mut current_text = String::new();
                 let mut current_style = row[0].style.clone();
                 for cell in row {
+                    if cell.ch == WIDE_FILLER {
+                        continue;
+                    }
                     if cell.style == current_style {
                         current_text.push(cell.ch);
                     } else {
@@ -217,7 +310,7 @@ fn draw_rect(canvas: &mut Canvas, node: &PositionedNode) {
 
     // Label centered on middle row
     let mid_row = h / 2;
-    let label_x = x + (w - node.label.len()) / 2;
+    let label_x = x + w.saturating_sub(display_width(&node.label)) / 2;
     canvas.draw_text_styled(label_x, y + mid_row, &node.label, &ls);
 }
 
@@ -248,7 +341,7 @@ fn draw_rounded(canvas: &mut Canvas, node: &PositionedNode) {
     canvas.set_styled(x + w - 1, y + h - 1, '╯', &ss);
 
     let mid_row = h / 2;
-    let label_x = x + (w - node.label.len()) / 2;
+    let label_x = x + w.saturating_sub(display_width(&node.label)) / 2;
     canvas.draw_text_styled(label_x, y + mid_row, &node.label, &ls);
 }
 
@@ -330,7 +423,7 @@ fn draw_compact_diamond(canvas: &mut Canvas, node: &PositionedNode) {
 
     // Label centered on middle row
     let mid_row = h / 2;
-    let label_x = x + (w - node.label.len()) / 2;
+    let label_x = x + w.saturating_sub(display_width(&node.label)) / 2;
     canvas.draw_text_styled(label_x, y + mid_row, &node.label, &ls);
 }
 
@@ -387,13 +480,17 @@ fn draw_subgraph_box(canvas: &mut Canvas, sg: &SubgraphBox) {
             canvas.set_styled(x + i, y, '─', &style);
         }
     }
-    for (i, ch) in label_text.chars().enumerate() {
-        let col = x + 1 + i;
-        if col < x + w - 1 && col < canvas.width {
-            canvas.set_styled(col, y, ch, &style);
-        } else {
+    let mut col = x + 1;
+    for ch in label_text.chars() {
+        let cw = char_width(ch);
+        if cw == 0 {
+            continue;
+        }
+        if col + cw > x + w - 1 {
             break;
         }
+        canvas.set_styled(col, y, ch, &style);
+        col += cw;
     }
     if x + w - 1 < canvas.width {
         canvas.set_styled(x + w - 1, y, '┐', &style);
@@ -629,7 +726,12 @@ fn draw_edge_label(canvas: &mut Canvas, edge: &PositionedEdge) {
         _ => return,
     };
     let ls = edge_label_style(&edge.edge_style);
+    if let Some((x, y)) = edge.label_pos {
+        canvas.draw_text_styled(x, y, label, &ls);
+        return;
+    }
     let points = &edge.points;
+    let label_w = display_width(label);
 
     if points.len() >= 4 {
         // L-bend: place label on the unique middle segment (not the shared initial one)
@@ -641,8 +743,8 @@ fn draw_edge_label(canvas: &mut Canvas, edge: &PositionedEdge) {
             let x_min = x1.min(x2);
             let x_max = x1.max(x2);
             let seg_len = x_max - x_min;
-            let label_x = if seg_len >= label.len() {
-                x_min + (seg_len - label.len()) / 2
+            let label_x = if seg_len >= label_w {
+                x_min + (seg_len - label_w) / 2
             } else {
                 x_min
             };
@@ -667,10 +769,10 @@ fn draw_edge_label(canvas: &mut Canvas, edge: &PositionedEdge) {
             let x_min = x0.min(x1);
             let x_max = x0.max(x1);
             let seg_len = x_max.saturating_sub(x_min);
-            if label.len() < seg_len {
+            if label_w < seg_len {
                 let x_mid = (x_min + x_max) / 2;
-                let label_x = x_mid.saturating_sub(label.len() / 2);
-                let label_x = label_x.max(x_min).min(x_max.saturating_sub(label.len()));
+                let label_x = x_mid.saturating_sub(label_w / 2);
+                let label_x = label_x.max(x_min).min(x_max.saturating_sub(label_w));
                 canvas.draw_text_styled(label_x, y0, label, &ls);
             }
         }
@@ -750,7 +852,7 @@ pub fn render(layout: &LayoutResult) -> Vec<String> {
     }
     let mut lines: Vec<String> = lines
         .into_iter()
-        .map(|l| l.trim_end().to_string())
+        .map(|l| strip_fillers(l.trim_end()))
         .collect();
 
     while lines.last().map(|l: &String| l.is_empty()).unwrap_or(false) {
@@ -893,6 +995,16 @@ pub fn render_styled(layout: &LayoutResult) -> Vec<StyledLine> {
         }
         for edge in &er_edges {
             crate::mermaid::er::ascii::paint_cardinality_styled(&mut lines, edge);
+        }
+        // The plain rows were cell-indexed (one char per column); drop the
+        // wide-character fillers now that cell arithmetic is done.
+        for line in &mut lines {
+            for span in &mut line.spans {
+                if span.text.contains(WIDE_FILLER) {
+                    span.text = strip_fillers(&span.text);
+                }
+            }
+            line.spans.retain(|s| !s.text.is_empty());
         }
     }
     while lines.last().map(|l| l.spans.is_empty()).unwrap_or(false) {
@@ -1056,6 +1168,7 @@ mod tests {
             label: None,
             style: EdgeStyle::Arrow,
             points: vec![(3, 3), (3, 7)],
+            label_pos: None,
             edge_style: None,
             er_meta: None,
         };
@@ -1174,6 +1287,7 @@ mod tests {
             label: Some("yes".to_string()),
             style: EdgeStyle::Arrow,
             points: vec![(3, 3), (3, 10)],
+            label_pos: None,
             edge_style: None,
             er_meta: None,
         };
@@ -1290,5 +1404,154 @@ mod tests {
             .flat_map(|l| l.spans.iter())
             .any(|s| s.style.fg == Some(Color::Blue));
         assert!(any_blue, "expected at least one Blue-colored span (text)");
+    }
+
+    /// Issue #3: a double-width character occupies two cells and the row
+    /// converts back to the original text with the box still aligned.
+    #[test]
+    fn test_canvas_wide_chars_occupy_two_cells() {
+        let mut canvas = Canvas::new(12, 1);
+        canvas.draw_text(0, 0, "数据库");
+        canvas.set(6, 0, '│');
+        assert_eq!(canvas.get(0, 0), '数');
+        assert_eq!(canvas.get(1, 0), WIDE_FILLER);
+        assert_eq!(canvas.get(2, 0), '据');
+        assert_eq!(canvas.to_lines()[0], "数据库│");
+        let styled = canvas.to_styled_lines();
+        let text: String = styled[0].spans.iter().map(|s| s.text.as_str()).collect();
+        assert_eq!(text, "数据库│");
+    }
+
+    /// Overwriting half of a wide character blanks the other half instead of
+    /// leaving a stray filler or glyph behind.
+    #[test]
+    fn test_canvas_overwrite_breaks_wide_pair() {
+        let mut canvas = Canvas::new(6, 1);
+        canvas.draw_text(0, 0, "数x");
+        canvas.set(1, 0, '-');
+        assert_eq!(canvas.to_lines()[0], " -x");
+        canvas.draw_text(0, 0, "数x");
+        canvas.set(0, 0, '-');
+        assert_eq!(canvas.to_lines()[0], "- x");
+    }
+
+    #[test]
+    fn test_draw_text_clipped_stops_before_wide_char_overflow() {
+        let mut canvas = Canvas::new(10, 1);
+        let used = canvas.draw_text_clipped(0, 0, "ab数据", 5);
+        assert_eq!(
+            used, 4,
+            "'ab' + one CJK char = 4 columns; the next would exceed 5"
+        );
+        assert_eq!(canvas.to_lines()[0], "ab数");
+    }
+
+    /// Label round-trip through the real layout + painter: every label appears
+    /// exactly once and is centred in its box (issue #3 acceptance).
+    #[test]
+    fn test_labels_render_once_and_centered() {
+        use crate::mermaid::{Direction, Edge, EdgeStyle, FlowChart, Node};
+        let labels = ["Alpha", "数据库", "Café", "Ünïcödé ✓", "Done 🎉"];
+        let nodes: Vec<Node> = labels
+            .iter()
+            .enumerate()
+            .map(|(i, l)| Node {
+                id: format!("N{i}"),
+                label: l.to_string(),
+                shape: if i % 2 == 0 {
+                    NodeShape::Rect
+                } else {
+                    NodeShape::Rounded
+                },
+                node_style: None,
+                entity: None,
+            })
+            .collect();
+        let edges: Vec<Edge> = (1..labels.len())
+            .map(|i| Edge {
+                from: format!("N{}", i - 1),
+                to: format!("N{i}"),
+                label: None,
+                style: EdgeStyle::Arrow,
+                edge_style: None,
+                er_meta: None,
+            })
+            .collect();
+        for direction in [Direction::TopDown, Direction::LeftRight] {
+            let chart = FlowChart {
+                direction,
+                nodes: nodes.clone(),
+                edges: edges.clone(),
+                subgraphs: vec![],
+            };
+            let layout = crate::mermaid::layout::layout(&chart);
+            let lines = render(&layout);
+            for node in &layout.nodes {
+                let occurrences: usize =
+                    lines.iter().map(|l| l.matches(&*node.label).count()).sum();
+                assert_eq!(occurrences, 1, "label {:?} should appear once", node.label);
+                let row = &lines[node.y + node.height / 2];
+                let byte_idx = row.find(&*node.label).unwrap();
+                let col = display_width(&row[..byte_idx]);
+                let label_w = display_width(&node.label);
+                let left_pad = col - node.x - 1;
+                let right_pad = node.width - 2 - label_w - left_pad;
+                assert!(
+                    left_pad.abs_diff(right_pad) <= 1,
+                    "label {:?} off-centre in {:?}: left {left_pad}, right {right_pad}",
+                    node.label,
+                    row
+                );
+                // The box's right border sits exactly where the width says.
+                let border_col = node.x + node.width - 1;
+                let border_byte = row
+                    .char_indices()
+                    .scan(0usize, |acc, (i, c)| {
+                        let here = *acc;
+                        *acc += unicode_width::UnicodeWidthChar::width(c).unwrap_or(0);
+                        Some((here, i, c))
+                    })
+                    .find(|(w, _, _)| *w == border_col)
+                    .map(|(_, _, c)| c);
+                assert_eq!(
+                    border_byte,
+                    Some('│'),
+                    "row {row:?} border for {:?}",
+                    node.label
+                );
+            }
+            // No row is wider than the canvas.
+            for l in &lines {
+                assert!(display_width(l) <= layout.width + 10, "row too wide: {l:?}");
+            }
+        }
+    }
+
+    /// The layout's label position wins over the painter's heuristic.
+    #[test]
+    fn test_edge_label_drawn_at_layout_position() {
+        use crate::mermaid::layout::PositionedEdge;
+        let node_a = make_positioned_node("A", "Hi", NodeShape::Rect, 0, 0, 6, 3);
+        let node_b = make_positioned_node("B", "Lo", NodeShape::Rect, 0, 8, 6, 3);
+        let edge = PositionedEdge {
+            from: "A".to_string(),
+            to: "B".to_string(),
+            label: Some("go".to_string()),
+            style: EdgeStyle::Arrow,
+            points: vec![(3, 3), (3, 8)],
+            label_pos: Some((4, 4)),
+            edge_style: None,
+            er_meta: None,
+        };
+        let layout = LayoutResult {
+            nodes: vec![node_a, node_b],
+            edges: vec![edge],
+            subgraph_boxes: vec![],
+            width: 10,
+            height: 12,
+        };
+        let lines = render(&layout);
+        let byte_idx = lines[4].find("go").expect("label drawn");
+        assert_eq!(display_width(&lines[4][..byte_idx]), 4, "{:?}", lines[4]);
     }
 }

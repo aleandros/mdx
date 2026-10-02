@@ -138,3 +138,21 @@ snapshot_test!(snapshot_er_full_w200, "docs/examples/er-full.md", 200);
 
 // er-styled.md
 snapshot_test!(snapshot_er_styled_w120, "docs/examples/er-styled.md", 120);
+
+// Unicode fixtures — labels sized by display width (issue #3)
+snapshot_test!(
+    snapshot_flowchart_unicode_w80,
+    "docs/examples/flowchart-unicode.md",
+    80
+);
+snapshot_test!(
+    snapshot_flowchart_unicode_w120,
+    "docs/examples/flowchart-unicode.md",
+    120
+);
+snapshot_test!(snapshot_er_unicode_w120, "docs/examples/er-unicode.md", 120);
+snapshot_test!(
+    snapshot_seq_unicode_w120,
+    "docs/examples/test-seq-unicode.md",
+    120
+);

@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use super::{ArrowStyle, Event, FragmentKind, FragmentSection, SequenceDiagram};
+use crate::mermaid::display_width;
 
 const PARTICIPANT_PADDING: usize = 4;
 const MIN_COLUMN_GAP: usize = 16;
@@ -96,7 +97,7 @@ pub fn layout(diagram: &SequenceDiagram) -> SequenceLayout {
     let box_widths: Vec<usize> = diagram
         .participants
         .iter()
-        .map(|p| p.label.len() + PARTICIPANT_PADDING)
+        .map(|p| display_width(&p.label) + PARTICIPANT_PADDING)
         .collect();
 
     // Step 2: Compute minimum gaps between adjacent participants based on message labels
@@ -209,7 +210,7 @@ fn collect_message_gaps(
                     continue;
                 }
                 // Label must fit across all gaps and intermediate box widths in range.
-                let label_needed = label.len() + 2;
+                let label_needed = display_width(label) + 2;
                 let intermediate_width: usize = (left + 1..right).map(|k| box_widths[k]).sum();
                 let current_span: usize =
                     gaps[left..right].iter().sum::<usize>() + intermediate_width;
@@ -291,7 +292,7 @@ fn process_events(
                 participants,
                 text,
             } => {
-                let note_width = text.len() + 4;
+                let note_width = display_width(text) + 4;
 
                 let (note_x, width) = match position {
                     super::NotePosition::RightOf => {
@@ -426,13 +427,13 @@ fn process_events(
                 let header_min = if label.is_empty() {
                     kind_str_len + 4 // "─ kind ─┐" plus "┌" = kind + 5 chars min
                 } else {
-                    kind_str_len + label.len() + 7 // "─ kind [label] ─┐"
+                    kind_str_len + display_width(label) + 7 // "─ kind [label] ─┐"
                 };
                 // Also consider section divider labels
                 let divider_min = section_dividers
                     .iter()
                     .filter_map(|(_, lbl)| lbl.as_ref())
-                    .map(|lbl| lbl.len() + 7) // "─ [label] ─┤"
+                    .map(|lbl| display_width(lbl) + 7) // "─ [label] ─┤"
                     .max()
                     .unwrap_or(0);
                 let frag_width = (frag_right_x - frag_left_x)

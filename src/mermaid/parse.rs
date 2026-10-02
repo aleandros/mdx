@@ -370,8 +370,11 @@ fn parse_node_term(chars: &[char], pos: &mut usize) -> anyhow::Result<Node> {
 
 // ---------------------------------------------------------------------------
 // Edge parser — returns (EdgeStyle, Option<label>)
-// Order of checks matters:
-//   1. `-.->` before `---` (otherwise `---` matches start of `-.->`)
+//
+// Text-carrying operators are tried first: `-- text -->`, `-- text ---`,
+// `-. text .->`, `-. text .-` and `== text ==>`. Then the plain operators, in
+// an order where longer/more specific forms win:
+//   1. `-.->` / `-.-` before `---` (otherwise `---` matches start of `-.->`)
 //   2. `-->` before `---`
 //   3. `==>` (thick)
 //   4. `---` (plain line)
@@ -379,6 +382,45 @@ fn parse_node_term(chars: &[char], pos: &mut usize) -> anyhow::Result<Node> {
 
 fn parse_edge(chars: &[char], pos: &mut usize) -> anyhow::Result<(EdgeStyle, Option<String>)> {
     let remaining: String = chars[*pos..].iter().collect();
+
+    // Operators with the label embedded between an opener and a closer.
+    let text_forms: [(&str, &[(&str, EdgeStyle)]); 3] = [
+        (
+            "-.",
+            &[(".->", EdgeStyle::Dotted), (".-", EdgeStyle::Dotted)],
+        ),
+        ("--", &[("-->", EdgeStyle::Arrow), ("---", EdgeStyle::Line)]),
+        ("==", &[("==>", EdgeStyle::Thick)]),
+    ];
+    for (open, closers) in text_forms {
+        let Some(after) = remaining.strip_prefix(open) else {
+            continue;
+        };
+        // When the operator continues directly (`-->`, `-.->`, `==>`) this is
+        // the plain form, handled below.
+        if after.starts_with(['-', '>', '.', '=']) {
+            continue;
+        }
+        let mut best: Option<(usize, &str, EdgeStyle)> = None;
+        for (closer, style) in closers {
+            if let Some(i) = after.find(closer)
+                && best.as_ref().is_none_or(|(bi, _, _)| i < *bi)
+            {
+                best = Some((i, closer, style.clone()));
+            }
+        }
+        if let Some((i, closer, style)) = best {
+            let text = after[..i].trim();
+            let consumed = open.chars().count() + after[..i + closer.len()].chars().count();
+            *pos += consumed;
+            let label = if text.is_empty() {
+                None
+            } else {
+                Some(clean_label(text))
+            };
+            return Ok((style, label));
+        }
+    }
 
     let (style, consumed) = if remaining.starts_with("-.-") {
         // Dotted: `-.->` has arrowhead (4 chars); `-.-` alone has none (3 chars).
@@ -389,13 +431,6 @@ fn parse_edge(chars: &[char], pos: &mut usize) -> anyhow::Result<(EdgeStyle, Opt
             3
         };
         (EdgeStyle::Dotted, n)
-    } else if let Some(stripped) = remaining.strip_prefix("-.") {
-        // Extended dotted with embedded text: `-.label.->` (e.g. `-.failure.->`)
-        if let Some(end_idx) = stripped.find(".->") {
-            (EdgeStyle::Dotted, 2 + end_idx + 3)
-        } else {
-            bail!("No edge found at position {}", pos);
-        }
     } else if remaining.starts_with("==>") {
         // Thick
         (EdgeStyle::Thick, 3)
@@ -903,6 +938,32 @@ mod tests {
         assert!(
             !sg2.node_ids.contains(&"A".to_string()),
             "A must not be in SG2"
+        );
+    }
+
+    /// Labels embedded in the operator: `-- text -->`, `-. text .->`, `== text ==>`.
+    #[test]
+    fn test_parse_edge_text_forms() {
+        let chart = parse_flowchart(
+            "graph LR\n    A -- plain --> B\n    B -. dotted .-> C\n    C == thick ==> D\n    D -- line --- E\n    E -.-> F\n    F -.failed.-> G\n",
+        )
+        .unwrap();
+        assert_eq!(chart.nodes.len(), 7);
+        let labels: Vec<(Option<&str>, &EdgeStyle)> = chart
+            .edges
+            .iter()
+            .map(|e| (e.label.as_deref(), &e.style))
+            .collect();
+        assert_eq!(
+            labels,
+            vec![
+                (Some("plain"), &EdgeStyle::Arrow),
+                (Some("dotted"), &EdgeStyle::Dotted),
+                (Some("thick"), &EdgeStyle::Thick),
+                (Some("line"), &EdgeStyle::Line),
+                (None, &EdgeStyle::Dotted),
+                (Some("failed"), &EdgeStyle::Dotted),
+            ]
         );
     }
 }

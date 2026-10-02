@@ -181,12 +181,32 @@ fn paint_horizontal(
     set_cell(canvas_lines, x + w - 1, y, corner);
 }
 
+/// Writes `text` into the cell-indexed row starting at column `x`, using at
+/// most `max_w` columns. Double-width characters take two cells: the glyph
+/// and a [`WIDE_FILLER`](crate::mermaid::ascii::WIDE_FILLER).
 fn paint_text(canvas_lines: &mut [String], x: usize, y: usize, text: &str, max_w: usize) {
     if y >= canvas_lines.len() {
         return;
     }
-    for (dx, ch) in text.chars().take(max_w).enumerate() {
-        set_cell(canvas_lines, x + dx, y, ch);
+    let mut used = 0usize;
+    for ch in text.chars() {
+        let cw = crate::mermaid::ascii::char_width(ch);
+        if cw == 0 {
+            continue;
+        }
+        if used + cw > max_w {
+            break;
+        }
+        set_cell(canvas_lines, x + used, y, ch);
+        if cw == 2 {
+            set_cell(
+                canvas_lines,
+                x + used + 1,
+                y,
+                crate::mermaid::ascii::WIDE_FILLER,
+            );
+        }
+        used += cw;
     }
 }
 
@@ -753,6 +773,7 @@ mod tests {
             label: None,
             style: EdgeStyle::Arrow,
             points: vec![(0, 1), (10, 1)],
+            label_pos: None,
             edge_style: Some(MermaidEdgeStyle {
                 stroke: Some(Color::Green),
                 label_color: None,

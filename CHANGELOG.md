@@ -5,6 +5,42 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- Flowchart cycles among free nodes (`A --> B --> C --> A`, retry loops,
+  self-loops) collapsed every node of the cycle onto one rank: a flat row
+  with no arrowheads and dangling stubs. Cycles are now broken by declaration
+  order, so the chain renders top to bottom and the closing edge is drawn as
+  a back edge around the side of the diagram, ending in an arrowhead. Cycles
+  between two or more named subgraphs still share a rank so the subgraphs stay
+  side by side. (#1)
+- Edges that skip ranks were drawn straight through the nodes in between.
+  Long edges are now split at every skipped rank with a reserved routing
+  column (TD/BT) or row (LR/RL), bends live in lanes inside the inter-rank
+  gap, and same-rank edges and self-loops get their own lane. Edge labels are
+  placed by the layout in free gap space instead of on top of node borders.
+  (#2)
+- Node, subgraph, edge, entity and participant sizes used byte length, so
+  CJK, accented and emoji labels produced oversized boxes with off-centre
+  text. All diagram geometry now uses terminal display width, and
+  double-width characters occupy two canvas cells. The ER comment wrapper
+  also no longer panics on a long non-ASCII word. (#3)
+- Arrowheads in `BT` and `RL` flowcharts were drawn one cell short of the
+  target node.
+- Edge labels written inside the operator (`A -- text --> B`,
+  `A -. text .-> B`, `A == text ==> B`) were dropped, and the `--`/`==` forms
+  silently ended parsing of the line, losing the following nodes.
+- A subgraph around rank-0 nodes in `TD` had its top border clipped at the
+  first row.
+
+### Changed
+- Nodes inside a subgraph are ranked by longest path over the subgraph's
+  edges, like free nodes, instead of by declaration order; unconnected
+  members sit side by side rather than in a chain.
+- Long edges between different subgraphs (or a subgraph and a free node)
+  route through a dedicated band outside every subgraph box.
+
 ## [0.1.11] - 2026-10-01
 
 ### Added

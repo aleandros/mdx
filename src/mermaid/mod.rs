@@ -5,6 +5,13 @@ pub mod layout;
 pub mod parse;
 pub mod sequence;
 
+/// Number of terminal columns `s` occupies. Every geometry computation in
+/// the diagram code must use this instead of `str::len`, which counts bytes
+/// and oversizes boxes around non-ASCII labels.
+pub fn display_width(s: &str) -> usize {
+    unicode_width::UnicodeWidthStr::width(s)
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Direction {
     TopDown,

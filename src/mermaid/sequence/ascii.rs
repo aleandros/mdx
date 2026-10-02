@@ -1,7 +1,7 @@
 use super::ArrowStyle;
 use super::layout::{PositionedFragment, SequenceLayout};
 use crate::mermaid::ascii::Canvas;
-use crate::mermaid::{MermaidEdgeStyle, NodeStyle};
+use crate::mermaid::{MermaidEdgeStyle, NodeStyle, display_width};
 use crate::render::SpanStyle;
 
 fn stroke_style(style: &Option<NodeStyle>) -> SpanStyle {
@@ -62,8 +62,8 @@ pub fn render(layout: &SequenceLayout) -> Vec<String> {
         .iter()
         .filter(|m| m.self_message && !m.label.is_empty())
         .map(|m| {
-            // Label starts at from_x + 4; we need (from_x + 4 + label.len()) - layout.width
-            let needed = m.from_x + 4 + m.label.len();
+            // Label starts at from_x + 4; we need (from_x + 4 + label width) - layout.width
+            let needed = m.from_x + 4 + display_width(&m.label);
             needed.saturating_sub(layout.width)
         })
         .max()
@@ -118,7 +118,7 @@ pub fn render_styled(layout: &SequenceLayout) -> Vec<crate::render::StyledLine> 
         .iter()
         .filter(|m| m.self_message && !m.label.is_empty())
         .map(|m| {
-            let needed = m.from_x + 4 + m.label.len();
+            let needed = m.from_x + 4 + display_width(&m.label);
             needed.saturating_sub(layout.width)
         })
         .max()
@@ -248,15 +248,8 @@ fn draw_fragment(canvas: &mut Canvas, frag: &PositionedFragment) {
     // Top border row
     let top_inner = format!("─ {} ", header_label);
     canvas.set(x, y, '┌');
-    // Write "─ {kind} [{label}] "
-    let mut col = x + 1;
-    for ch in top_inner.chars() {
-        if col < x + w - 1 {
-            canvas.set(col, y, ch);
-            col += 1;
-        }
-    }
-    // Fill remainder with ─
+    // Write "─ {kind} [{label}] ", then fill the remainder with ─
+    let mut col = x + 1 + canvas.draw_text_clipped(x + 1, y, &top_inner, w - 2);
     while col < x + w - 1 {
         canvas.set(col, y, '─');
         col += 1;
@@ -281,13 +274,7 @@ fn draw_fragment(canvas: &mut Canvas, frag: &PositionedFragment) {
         } else {
             "─".to_string()
         };
-        let mut col = x + 1;
-        for ch in div_inner.chars() {
-            if col < x + w - 1 {
-                canvas.set(col, dy, ch);
-                col += 1;
-            }
-        }
+        let mut col = x + 1 + canvas.draw_text_clipped(x + 1, dy, &div_inner, w - 2);
         while col < x + w - 1 {
             canvas.set(col, dy, '─');
             col += 1;
@@ -339,8 +326,9 @@ fn draw_message(canvas: &mut Canvas, msg: &super::layout::PositionedMessage) {
     // Center label above arrow
     if !msg.label.is_empty() {
         let span = right_x.saturating_sub(left_x);
-        let label_x = if span >= msg.label.len() {
-            left_x + (span - msg.label.len()) / 2
+        let label_w = display_width(&msg.label);
+        let label_x = if span >= label_w {
+            left_x + (span - label_w) / 2
         } else {
             left_x
         };
@@ -490,8 +478,9 @@ fn draw_note(canvas: &mut Canvas, note: &super::layout::PositionedNote) {
 
     // Text centered on middle row
     let mid_row = h / 2;
-    let text_x = if w > note.text.len() + 2 {
-        x + (w - note.text.len()) / 2
+    let text_w = display_width(&note.text);
+    let text_x = if w > text_w + 2 {
+        x + (w - text_w) / 2
     } else {
         x + 1
     };
@@ -534,7 +523,7 @@ fn draw_participant_box(canvas: &mut Canvas, p: &super::layout::PositionedPartic
     canvas.set_styled(x, y + 1, '│', &ss);
     canvas.set_styled(x + w - 1, y + 1, '│', &ss);
     // Center the label with 1 space padding on each side
-    let label_x = x + 1 + (w - 2 - p.label.len()) / 2;
+    let label_x = x + 1 + (w - 2).saturating_sub(display_width(&p.label)) / 2;
     canvas.draw_text_styled(label_x, y + 1, &p.label, &ls);
 
     // Bottom border
@@ -641,5 +630,28 @@ sequenceDiagram
             output.contains("Every minute"),
             "Should contain fragment label"
         );
+    }
+
+    /// Issue #3: participant boxes and message labels use display width.
+    #[test]
+    fn test_render_wide_participant_label_aligned() {
+        let output = render_fixture(
+            "sequenceDiagram\n    participant A as 数据库\n    participant B as Café\n    A->>B: 你好 hello\n",
+        );
+        let lines: Vec<&str> = output.lines().collect();
+        assert_eq!(lines[1].matches('│').count(), 4, "{output}");
+        // Box borders of the first participant line up over the label.
+        let top = lines[0];
+        let mid = lines[1];
+        let top_right = display_width(top.split('┐').next().unwrap());
+        let mid_right = display_width(
+            mid.split('│')
+                .take(2)
+                .collect::<Vec<_>>()
+                .join("│")
+                .as_str(),
+        );
+        assert_eq!(top_right, mid_right, "{output}");
+        assert!(output.contains("你好 hello"));
     }
 }

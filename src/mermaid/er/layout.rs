@@ -1,5 +1,5 @@
 use super::{EntityLine, EntityLineKind, ErDiagram};
-use crate::mermaid::{Edge, EdgeStyle, FlowChart, Node, NodeShape};
+use crate::mermaid::{Edge, EdgeStyle, FlowChart, Node, NodeShape, display_width};
 
 pub fn to_flowchart(diagram: &mut ErDiagram, max_box_width: usize) -> FlowChart {
     for entity in diagram.entities.iter_mut() {
@@ -66,13 +66,13 @@ fn layout_entity(entity: &mut super::Entity, max_box_width: usize) {
     let ty_w = entity
         .attributes
         .iter()
-        .map(|a| a.ty.len())
+        .map(|a| display_width(&a.ty))
         .max()
         .unwrap_or(0);
     let name_w = entity
         .attributes
         .iter()
-        .map(|a| a.name.len())
+        .map(|a| display_width(&a.name))
         .max()
         .unwrap_or(0);
 
@@ -93,33 +93,31 @@ fn layout_entity(entity: &mut super::Entity, max_box_width: usize) {
     let mut max_row_w = 0usize;
 
     for a in &entity.attributes {
+        // `{:<w$}` pads by char count, not columns; pad by display width.
         let base = format!(
-            " {:<kw$} {:<tw$} {:<nw$} ",
-            key_str(a.key),
-            a.ty,
-            a.name,
-            kw = key_w,
-            tw = ty_w,
-            nw = name_w,
+            " {} {} {} ",
+            pad_to(key_str(a.key), key_w),
+            pad_to(&a.ty, ty_w),
+            pad_to(&a.name, name_w),
         );
         match &a.comment {
             None => {
-                max_row_w = max_row_w.max(base.len());
+                max_row_w = max_row_w.max(display_width(&base));
                 row_lines.push(EntityLine {
                     kind: EntityLineKind::AttrRow,
                     text: base,
                 });
             }
             Some(c) => {
-                if c.len() <= inline_comment_budget && inline_comment_budget > 0 {
+                if display_width(c) <= inline_comment_budget && inline_comment_budget > 0 {
                     let combined = format!("{}{} ", base, c);
-                    max_row_w = max_row_w.max(combined.len());
+                    max_row_w = max_row_w.max(display_width(&combined));
                     row_lines.push(EntityLine {
                         kind: EntityLineKind::AttrRow,
                         text: combined,
                     });
                 } else {
-                    max_row_w = max_row_w.max(base.len());
+                    max_row_w = max_row_w.max(display_width(&base));
                     row_lines.push(EntityLine {
                         kind: EntityLineKind::AttrRow,
                         text: base,
@@ -127,7 +125,7 @@ fn layout_entity(entity: &mut super::Entity, max_box_width: usize) {
                     let pad = " ".repeat(continuation_indent);
                     for chunk in wrap_words(c, continuation_budget) {
                         let line = format!("{}{} ", pad, chunk);
-                        max_row_w = max_row_w.max(line.len());
+                        max_row_w = max_row_w.max(display_width(&line));
                         row_lines.push(EntityLine {
                             kind: EntityLineKind::CommentRow,
                             text: line,
@@ -138,11 +136,8 @@ fn layout_entity(entity: &mut super::Entity, max_box_width: usize) {
         }
     }
 
-    let inner_w = std::iter::once(header_text.len())
-        .chain(std::iter::once(max_row_w))
-        .max()
-        .unwrap_or(0)
-        .min(inner_max.max(header_text.len()));
+    let header_w = display_width(&header_text);
+    let inner_w = header_w.max(max_row_w).min(inner_max.max(header_w));
 
     let width = inner_w + 2;
 
@@ -166,6 +161,8 @@ fn layout_entity(entity: &mut super::Entity, max_box_width: usize) {
     entity.width = width;
 }
 
+/// Greedy word wrap measured in display columns. A single word wider than
+/// `max_w` is split at character boundaries (never inside a UTF-8 sequence).
 fn wrap_words(text: &str, max_w: usize) -> Vec<String> {
     if max_w == 0 {
         return vec![text.to_string()];
@@ -173,35 +170,32 @@ fn wrap_words(text: &str, max_w: usize) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     let mut current = String::new();
     for word in text.split_whitespace() {
-        if current.is_empty() {
-            if word.len() > max_w {
-                let mut w = word;
-                while w.len() > max_w {
-                    let (head, tail) = w.split_at(max_w);
-                    out.push(head.to_string());
-                    w = tail;
-                }
-                current = w.to_string();
-            } else {
-                current = word.to_string();
+        let word_w = display_width(word);
+        if !current.is_empty() {
+            if display_width(&current) + 1 + word_w <= max_w {
+                current.push(' ');
+                current.push_str(word);
+                continue;
             }
-        } else if current.len() + 1 + word.len() <= max_w {
-            current.push(' ');
-            current.push_str(word);
-        } else {
             out.push(std::mem::take(&mut current));
-            if word.len() > max_w {
-                let mut w = word;
-                while w.len() > max_w {
-                    let (head, tail) = w.split_at(max_w);
-                    out.push(head.to_string());
-                    w = tail;
-                }
-                current = w.to_string();
-            } else {
-                current = word.to_string();
-            }
         }
+        if word_w <= max_w {
+            current = word.to_string();
+            continue;
+        }
+        // Over-long word: chop into column-bounded pieces.
+        let mut piece = String::new();
+        let mut piece_w = 0usize;
+        for ch in word.chars() {
+            let cw = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
+            if piece_w + cw > max_w && !piece.is_empty() {
+                out.push(std::mem::take(&mut piece));
+                piece_w = 0;
+            }
+            piece.push(ch);
+            piece_w += cw;
+        }
+        current = piece;
     }
     if !current.is_empty() {
         out.push(current);
@@ -210,10 +204,11 @@ fn wrap_words(text: &str, max_w: usize) -> Vec<String> {
 }
 
 fn pad_to(s: &str, width: usize) -> String {
-    if s.len() >= width {
+    let w = display_width(s);
+    if w >= width {
         s.to_string()
     } else {
-        format!("{}{}", s, " ".repeat(width - s.len()))
+        format!("{}{}", s, " ".repeat(width - w))
     }
 }
 
@@ -459,6 +454,92 @@ mod tests {
         };
         let chart = to_flowchart(&mut diag, 50);
         assert_eq!(chart.edges[0].style, crate::mermaid::EdgeStyle::Dotted);
+    }
+}
+
+#[cfg(test)]
+mod width_tests {
+    use super::*;
+    use crate::mermaid::er::{Attribute, Entity, KeyKind};
+
+    fn entity_with(name: &str, attrs: Vec<(&str, &str, Option<&str>)>) -> Entity {
+        Entity {
+            name: name.to_string(),
+            attributes: attrs
+                .into_iter()
+                .map(|(ty, name, comment)| Attribute {
+                    ty: ty.to_string(),
+                    name: name.to_string(),
+                    key: KeyKind::None,
+                    comment: comment.map(str::to_string),
+                })
+                .collect(),
+            rendered_lines: Vec::new(),
+            width: 0,
+            height: 0,
+            node_style: None,
+        }
+    }
+
+    /// Issue #3: every rendered row of an entity has the same display width,
+    /// so CJK attribute names keep the columns and the right border aligned.
+    #[test]
+    fn entity_rows_align_by_display_width() {
+        let mut e = entity_with(
+            "用户",
+            vec![
+                ("string", "名字", None),
+                ("int", "age", Some("年龄 in years")),
+            ],
+        );
+        layout_entity(&mut e, 50);
+        let widths: Vec<usize> = e
+            .rendered_lines
+            .iter()
+            .map(|l| display_width(&l.text))
+            .collect();
+        assert!(
+            widths.iter().all(|&w| w == widths[0]),
+            "rows differ in display width: {widths:?} {:?}",
+            e.rendered_lines
+        );
+        assert_eq!(e.width, widths[0] + 2);
+        let names: Vec<usize> = e
+            .rendered_lines
+            .iter()
+            .filter(|l| l.kind == EntityLineKind::AttrRow)
+            .map(|l| {
+                display_width(
+                    l.text
+                        .split_once("名字")
+                        .or(l.text.split_once("age"))
+                        .unwrap()
+                        .0,
+                )
+            })
+            .collect();
+        assert_eq!(
+            names[0], names[1],
+            "name column misaligned: {:?}",
+            e.rendered_lines
+        );
+    }
+
+    /// A long non-ASCII word is split at character boundaries by display
+    /// width; the old byte-based split panicked here.
+    #[test]
+    fn wrap_words_splits_wide_words_without_panicking() {
+        let chunks = wrap_words("数据库数据库数据库 ok", 8);
+        assert!(chunks.iter().all(|c| display_width(c) <= 8), "{chunks:?}");
+        assert_eq!(chunks.concat().replace(' ', ""), "数据库数据库数据库ok");
+        let chunks = wrap_words("Ünïcödé-sehr-lang", 5);
+        assert!(chunks.iter().all(|c| display_width(c) <= 5), "{chunks:?}");
+    }
+
+    #[test]
+    fn pad_to_uses_display_width() {
+        assert_eq!(display_width(&pad_to("数据", 6)), 6);
+        assert_eq!(pad_to("数据", 2), "数据");
     }
 }
 
