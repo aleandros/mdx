@@ -42,6 +42,7 @@ mdx -W README.md
 | `--no-pager` | Force plain output even on a TTY |
 | `-W`, `--watch` | Watch the file and re-render on change |
 | `-w`, `--width <N>` | Override terminal width for wrapping |
+| `--max-width <N>` | Cap the pager's content column; wider terminals center the content between margins. `0` disables the cap (default: 100) |
 | `--theme <NAME>` | Syntax highlighting theme for code blocks (use `list` to see options) |
 | `--ui-theme <NAME>` | UI theme for headers, text, chrome (use `list` to see options) |
 | `--config <PATH>` | Use a specific config file (overrides user/project config) |
@@ -89,6 +90,15 @@ When the output is a TTY, mdx launches an interactive pager with vim-style keybi
 | `q` / `Esc` | Quit |
 
 Large diagrams are collapsed by default and can be expanded with `Enter`.
+
+**Margins on wide terminals**
+
+The pager caps the content column at 100 columns (`--max-width`, or
+`max_width` in the config file) and centers it, so prose on a wide terminal
+reads like a page instead of stretching edge to edge. Diagrams that fit the
+column share its left margin; wider ones are centered on the full terminal if
+they fit it, and otherwise start at column 0 and can be scrolled horizontally.
+Set `--max-width 0` to always use the full terminal width.
 
 ## Embedding in other programs
 
@@ -153,6 +163,10 @@ pager = false
 
 # Terminal width override (omit to use terminal width)
 width = 100
+
+# Pager content width cap; wider terminals center the content between
+# margins. 0 disables the cap.
+max_width = 100
 
 # Mermaid diagram rendering
 no_mermaid_rendering = false

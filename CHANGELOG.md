@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- Pager margins on wide terminals: the content column is capped at 100
+  columns and centered, with equal gutters on both sides. Configure with
+  `--max-width <N>` or `max_width` in the config file; `0` disables the cap.
+  Diagrams that fit the column share its margin; wider diagrams are centered
+  on the terminal when they fit it and flush-left otherwise.
+- Headless pager tests render `PagerState` into a ratatui `TestBackend`
+  buffer, plus a fixture sweep that checks every example document fits the
+  content column at 40/80/120/200 columns.
+
+### Fixed
+- The large-diagram collapse heuristic measured line length in bytes, so any
+  box-drawn diagram wider than about 53 columns (160 bytes of 3-byte
+  box-drawing characters) was collapsed on an 80-column terminal even though
+  it fit on screen. It now measures display columns.
+- Word wrap treated the leading indent as a break point: an indented line
+  with no other spaces (e.g. a dense code line) produced a near-empty first
+  row and a continuation row wider than the terminal.
+
 ## [0.1.10] - 2026-04-29
 
 ### Added

@@ -61,6 +61,32 @@ fn detect_opener() -> Option<&'static str> {
     None
 }
 
+// ─── Layout constants ──────────────────────────────────────────────────────
+
+/// Default cap on the pager's content column, in columns. On terminals wider
+/// than this the content is centered between equal left/right gutters so
+/// prose doesn't stretch across the whole screen. `0` disables the cap.
+pub(crate) const DEFAULT_MAX_CONTENT_WIDTH: u16 = 100;
+
+/// Effective content column width for a terminal `terminal_width` columns wide
+/// under a `max_content_width` cap (`0` = uncapped).
+pub(crate) fn content_width(terminal_width: u16, max_content_width: u16) -> u16 {
+    if max_content_width == 0 {
+        terminal_width
+    } else {
+        terminal_width.min(max_content_width)
+    }
+}
+
+/// Display width of a styled line in terminal columns (not bytes — box-drawing
+/// characters are 3 bytes each in UTF-8 but occupy a single cell).
+fn line_width(line: &StyledLine) -> usize {
+    line.spans
+        .iter()
+        .map(|s| UnicodeWidthStr::width(s.text.as_str()))
+        .sum()
+}
+
 // ─── Style conversion ──────────────────────────────────────────────────────
 
 /// Tab width used when expanding `\t` in spans before handing them to ratatui.
@@ -135,7 +161,13 @@ pub(crate) enum KeyAction {
 
 pub(crate) enum FlatLine {
     Styled(StyledLine),
-    DiagramAscii(StyledLine),
+    DiagramAscii {
+        line: StyledLine,
+        /// Left indent for this diagram's rows. Equals the text gutter when
+        /// the diagram fits the content column; shrinks (down to 0) for wider
+        /// diagrams so they use the full terminal width before h-scroll is needed.
+        indent: usize,
+    },
     DiagramCollapsed {
         #[allow(dead_code)]
         block_index: usize,
@@ -192,6 +224,10 @@ fn wrap_styled_line(line: &StyledLine, width: usize) -> Vec<StyledLine> {
     let mut cur_w: usize = 0;
     let mut last_break: Option<usize> = None; // index in current line at last whitespace
     let mut is_first_line = true;
+    // Whether the current line holds any non-space content yet. Spaces before
+    // that point (the leading indent) are not break candidates: breaking there
+    // would leave an empty first line and carry a tail longer than the column.
+    let mut seen_content = false;
 
     let push_continuation = |lines: &mut Vec<Vec<(char, SpanStyle)>>, cur_w: &mut usize| {
         let mut new_line: Vec<(char, SpanStyle)> = Vec::new();
@@ -222,6 +258,7 @@ fn wrap_styled_line(line: &StyledLine, width: usize) -> Vec<StyledLine> {
                     tail.into_iter().skip_while(|(c, _)| *c == ' ').collect();
                 push_continuation(&mut lines, &mut cur_w);
                 is_first_line = false;
+                seen_content = !tail.is_empty();
                 let cur = lines.last_mut().unwrap();
                 for entry in tail {
                     cur.push(entry);
@@ -237,6 +274,7 @@ fn wrap_styled_line(line: &StyledLine, width: usize) -> Vec<StyledLine> {
                 // Hard break (no whitespace seen on this line).
                 push_continuation(&mut lines, &mut cur_w);
                 is_first_line = false;
+                seen_content = false;
                 last_break = None;
             }
         }
@@ -245,7 +283,11 @@ fn wrap_styled_line(line: &StyledLine, width: usize) -> Vec<StyledLine> {
         cur.push((ch, style));
         cur_w += cw;
         if ch == ' ' {
-            last_break = Some(cur.len() - 1);
+            if seen_content {
+                last_break = Some(cur.len() - 1);
+            }
+        } else {
+            seen_content = true;
         }
         i += 1;
     }
@@ -294,6 +336,12 @@ pub(crate) struct PagerState {
     interactive_blocks: Vec<InteractiveEntry>,
     pub(crate) terminal_height: u16,
     pub(crate) terminal_width: u16,
+    /// Cap on the content column width (0 = no cap). See [`DEFAULT_MAX_CONTENT_WIDTH`].
+    pub(crate) max_content_width: u16,
+    /// Effective content column width: `min(terminal_width, max_content_width)`.
+    content_width: usize,
+    /// Columns of left margin before the content column (centered).
+    gutter: usize,
     opener: Option<&'static str>,
     theme: &'static crate::theme::Theme,
     // Search state
@@ -310,6 +358,7 @@ impl PagerState {
         content: Vec<RenderedBlock>,
         terminal_height: u16,
         terminal_width: u16,
+        max_content_width: u16,
         theme: &'static crate::theme::Theme,
     ) -> Self {
         let mut state = PagerState {
@@ -322,6 +371,9 @@ impl PagerState {
             interactive_blocks: Vec::new(),
             terminal_height,
             terminal_width,
+            max_content_width,
+            content_width: 0,
+            gutter: 0,
             opener: detect_opener(),
             theme,
             search_mode: None,
@@ -342,13 +394,19 @@ impl PagerState {
         self.flat_lines.clear();
         self.interactive_blocks.clear();
         let height_threshold = self.terminal_height as usize;
-        let width_limit = self.terminal_width as usize;
+        let terminal_width = self.terminal_width as usize;
+
+        // Content column: capped at max_content_width and centered. Text wraps
+        // at the column width; the gutter is applied at draw time.
+        self.content_width = content_width(self.terminal_width, self.max_content_width) as usize;
+        self.gutter = (terminal_width - self.content_width) / 2;
+        let wrap_width = self.content_width;
 
         for (block_index, block) in self.content.iter().enumerate() {
             match block {
                 RenderedBlock::Lines(lines) => {
                     for line in lines {
-                        for wrapped in wrap_styled_line(line, width_limit) {
+                        for wrapped in wrap_styled_line(line, wrap_width) {
                             self.flat_lines.push(FlatLine::Styled(wrapped));
                         }
                     }
@@ -360,12 +418,21 @@ impl PagerState {
                     kind,
                 } => {
                     // Collapse only when genuinely unmanageable: taller than
-                    // the full terminal height, or more than twice as wide.
+                    // the full terminal height, or more than twice as wide as
+                    // the terminal (measured in columns, not bytes).
+                    let diagram_width = lines.iter().map(line_width).max().unwrap_or(0);
                     let is_tall = lines.len() > height_threshold;
-                    let is_wide = lines.iter().any(|l| {
-                        l.spans.iter().map(|s| s.text.len()).sum::<usize>() > width_limit * 2
-                    });
+                    let is_wide = diagram_width > terminal_width * 2;
                     let is_large = is_tall || is_wide;
+
+                    // Diagrams that fit the content column share the text
+                    // gutter. Wider ones are centered on the terminal if they
+                    // fit it, and flush-left otherwise (h-scroll takes over).
+                    let indent = if diagram_width <= self.content_width {
+                        self.gutter
+                    } else {
+                        terminal_width.saturating_sub(diagram_width) / 2
+                    };
 
                     // Pad with a blank line above so collapsed indicators (and
                     // expanded diagrams) don't run flush against neighboring text.
@@ -387,7 +454,10 @@ impl PagerState {
                     } else if is_large {
                         let flat_line_index = self.flat_lines.len();
                         for line in lines {
-                            self.flat_lines.push(FlatLine::DiagramAscii(line.clone()));
+                            self.flat_lines.push(FlatLine::DiagramAscii {
+                                line: line.clone(),
+                                indent,
+                            });
                         }
                         self.interactive_blocks.push(InteractiveEntry {
                             block_index,
@@ -396,7 +466,10 @@ impl PagerState {
                         });
                     } else {
                         for line in lines {
-                            self.flat_lines.push(FlatLine::DiagramAscii(line.clone()));
+                            self.flat_lines.push(FlatLine::DiagramAscii {
+                                line: line.clone(),
+                                indent,
+                            });
                         }
                     }
 
@@ -524,22 +597,32 @@ impl PagerState {
         })
     }
 
+    /// Convert a flat line to its ratatui form, returning `(indent, line)`.
+    /// The indent is the number of blank columns the caller must emit before
+    /// the line (the content gutter, or a per-diagram indent). Keeping it
+    /// separate lets `draw_content` highlight search matches on the content
+    /// only, not on the margin.
     pub(crate) fn flat_line_to_ratatui(
         &self,
         flat: &FlatLine,
         flat_line_index: usize,
-    ) -> Line<'static> {
+    ) -> (usize, Line<'static>) {
         let collapsed_color = color_to_ratatui(&self.theme.diagram_collapsed);
 
         match flat {
-            FlatLine::Styled(line) => styled_line_to_ratatui(line),
-            FlatLine::DiagramAscii(styled_line) => {
+            FlatLine::Styled(line) => (self.gutter, styled_line_to_ratatui(line)),
+            FlatLine::DiagramAscii {
+                line: styled_line,
+                indent,
+            } => {
                 if self.is_in_active_block(flat_line_index) {
+                    // Put the active marker in the last gutter column so the
+                    // diagram itself doesn't shift when it becomes active.
                     let mut spans = vec![Span::styled("▎", Style::default().fg(collapsed_color))];
                     spans.extend(styled_line.spans.iter().map(span_to_ratatui));
-                    Line::from(spans)
+                    (indent.saturating_sub(1), Line::from(spans))
                 } else {
-                    styled_line_to_ratatui(styled_line)
+                    (*indent, styled_line_to_ratatui(styled_line))
                 }
             }
             FlatLine::DiagramCollapsed {
@@ -557,7 +640,7 @@ impl PagerState {
                     edge_count,
                     e_noun,
                 );
-                if self.is_active_indicator_line(flat_line_index) {
+                let line = if self.is_active_indicator_line(flat_line_index) {
                     let text = format!("▸ {}", body);
                     Line::from(Span::styled(text, Style::default().fg(collapsed_color)))
                 } else {
@@ -568,7 +651,8 @@ impl PagerState {
                             .fg(collapsed_color)
                             .add_modifier(Modifier::DIM),
                     ))
-                }
+                };
+                (self.gutter, line)
             }
             FlatLine::ImagePlaceholder { alt, .. } => {
                 let (prefix, modifier) = if self.is_active_indicator_line(flat_line_index) {
@@ -581,10 +665,11 @@ impl PagerState {
                 } else {
                     format!("{} [Image: {} — Enter to open]", prefix, alt)
                 };
-                Line::from(Span::styled(
+                let line = Line::from(Span::styled(
                     text,
                     Style::default().fg(collapsed_color).add_modifier(modifier),
-                ))
+                ));
+                (self.gutter, line)
             }
         }
     }
@@ -598,11 +683,16 @@ impl PagerState {
             .skip(self.scroll)
             .take(height)
             .map(|(idx, fl)| {
-                let mut line = self.flat_line_to_ratatui(fl, idx);
+                let (indent, mut line) = self.flat_line_to_ratatui(fl, idx);
                 if self.is_current_search_match(idx) {
                     for span in &mut line.spans {
                         span.style = span.style.bg(RColor::DarkGray);
                     }
+                }
+                if indent > 0 {
+                    let mut spans = vec![Span::raw(" ".repeat(indent))];
+                    spans.extend(line.spans);
+                    line = Line::from(spans);
                 }
                 line
             })
@@ -614,7 +704,7 @@ impl PagerState {
 
     fn flat_line_text(flat: &FlatLine) -> String {
         match flat {
-            FlatLine::Styled(line) | FlatLine::DiagramAscii(line) => {
+            FlatLine::Styled(line) | FlatLine::DiagramAscii { line, .. } => {
                 line.spans.iter().map(|s| s.text.as_str()).collect()
             }
             FlatLine::DiagramCollapsed {
@@ -979,7 +1069,11 @@ impl PagerState {
 
 // ─── Public entry point ────────────────────────────────────────────────────
 
-pub fn run_pager(content: Vec<RenderedBlock>, theme: &'static crate::theme::Theme) -> Result<()> {
+pub fn run_pager(
+    content: Vec<RenderedBlock>,
+    max_content_width: u16,
+    theme: &'static crate::theme::Theme,
+) -> Result<()> {
     enable_raw_mode()?;
     let mut stdout = stdout();
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
@@ -989,7 +1083,7 @@ pub fn run_pager(content: Vec<RenderedBlock>, theme: &'static crate::theme::Them
     let mut terminal = Terminal::new(backend)?;
 
     let size = terminal.size()?;
-    let mut state = PagerState::new(content, size.height, size.width, theme);
+    let mut state = PagerState::new(content, size.height, size.width, max_content_width, theme);
 
     loop {
         terminal.draw(|f| {
@@ -1107,6 +1201,279 @@ mod tests {
             .flat_map(|l| l.spans.iter())
             .any(|s| s.style.italic);
         assert!(saw_bold && saw_italic, "styles dropped during wrap");
+    }
+
+    // ─── Headless pager rendering (ratatui TestBackend) ────────────────────
+    //
+    // These tests drive PagerState exactly as the event loop does, but render
+    // into an in-memory buffer instead of a real terminal. That lets us assert
+    // on what actually lands on screen (margins, indents, collapse markers)
+    // rather than on intermediate data structures.
+
+    use crate::render::{DiagramKind, RenderedBlock};
+    use ratatui::backend::TestBackend;
+
+    fn theme() -> &'static crate::theme::Theme {
+        crate::theme::Theme::default_theme()
+    }
+
+    fn para(text: &str) -> RenderedBlock {
+        RenderedBlock::Lines(vec![StyledLine {
+            spans: vec![StyledSpan::plain(text)],
+        }])
+    }
+
+    /// A fake flowchart: `rows` lines, each `cols` box-drawing characters wide.
+    fn box_diagram(cols: usize, rows: usize) -> RenderedBlock {
+        let line = StyledLine {
+            spans: vec![StyledSpan::plain("─".repeat(cols))],
+        };
+        RenderedBlock::Diagram {
+            lines: vec![line; rows],
+            node_count: 3,
+            edge_count: 2,
+            kind: DiagramKind::Flowchart,
+        }
+    }
+
+    /// Render the pager into a `w`×`h` buffer and return one String per row.
+    fn screen(state: &PagerState, w: u16, h: u16) -> Vec<String> {
+        let backend = TestBackend::new(w, h);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| state.draw_content(f, f.area())).unwrap();
+        let buf = terminal.backend().buffer();
+        (0..h)
+            .map(|y| {
+                (0..w)
+                    .map(|x| buf.cell((x, y)).map(|c| c.symbol()).unwrap_or(" "))
+                    .collect::<String>()
+            })
+            .collect()
+    }
+
+    fn leading_spaces(row: &str) -> usize {
+        row.chars().take_while(|c| *c == ' ').count()
+    }
+
+    #[test]
+    fn content_width_helper_caps_and_uncaps() {
+        assert_eq!(content_width(80, 100), 80);
+        assert_eq!(content_width(200, 100), 100);
+        assert_eq!(content_width(200, 0), 200);
+    }
+
+    #[test]
+    fn wide_terminal_centers_content_between_equal_margins() {
+        let long = "word ".repeat(60); // 300 cols, must wrap at the column width
+        let state = PagerState::new(vec![para("Title"), para(&long)], 40, 200, 100, theme());
+        assert_eq!(state.content_width, 100);
+        assert_eq!(state.gutter, 50);
+
+        let rows = screen(&state, 200, 40);
+        assert_eq!(leading_spaces(&rows[0]), 50, "row: {:?}", rows[0]);
+        assert!(rows[0].trim_start().starts_with("Title"));
+        // Every wrapped prose row starts at the gutter and ends inside the column.
+        for row in rows.iter().filter(|r| !r.trim().is_empty()) {
+            assert_eq!(leading_spaces(row), 50, "row not at gutter: {:?}", row);
+            let right_edge = row.trim_end().chars().count();
+            assert!(right_edge <= 150, "row overflows column: {:?}", row);
+        }
+    }
+
+    #[test]
+    fn narrow_terminal_has_no_margin() {
+        let state = PagerState::new(vec![para("hello")], 20, 80, 100, theme());
+        assert_eq!(state.content_width, 80);
+        assert_eq!(state.gutter, 0);
+        let rows = screen(&state, 80, 20);
+        assert!(rows[0].starts_with("hello"));
+    }
+
+    #[test]
+    fn max_width_zero_disables_margins() {
+        let state = PagerState::new(vec![para("hello")], 20, 200, 0, theme());
+        assert_eq!(state.content_width, 200);
+        assert_eq!(state.gutter, 0);
+    }
+
+    #[test]
+    fn resize_recomputes_margins() {
+        let mut state = PagerState::new(vec![para("hello")], 20, 80, 100, theme());
+        assert_eq!(state.gutter, 0);
+        state.terminal_width = 160;
+        state.rebuild_flat_lines();
+        assert_eq!(state.content_width, 100);
+        assert_eq!(state.gutter, 30);
+        state.terminal_width = 60;
+        state.rebuild_flat_lines();
+        assert_eq!(state.content_width, 60);
+        assert_eq!(state.gutter, 0);
+    }
+
+    #[test]
+    fn collapse_measures_columns_not_bytes() {
+        // 70 box-drawing chars = 210 bytes but only 70 columns. On an 80-col
+        // terminal this must stay expanded (the old byte-based check tripped
+        // the "wider than 2× terminal" rule at 160 bytes).
+        let state = PagerState::new(vec![box_diagram(70, 5)], 40, 80, 0, theme());
+        let collapsed = state
+            .flat_lines
+            .iter()
+            .any(|f| matches!(f, FlatLine::DiagramCollapsed { .. }));
+        assert!(
+            !collapsed,
+            "70-column diagram was collapsed on an 80-col terminal"
+        );
+
+        // Genuinely wide (more than 2× terminal) still collapses.
+        let state = PagerState::new(vec![box_diagram(170, 5)], 40, 80, 0, theme());
+        let collapsed = state
+            .flat_lines
+            .iter()
+            .any(|f| matches!(f, FlatLine::DiagramCollapsed { .. }));
+        assert!(
+            collapsed,
+            "170-column diagram should collapse on an 80-col terminal"
+        );
+    }
+
+    #[test]
+    fn collapsed_indicator_sits_at_the_gutter() {
+        // Taller than the terminal → collapsed; indicator must be indented
+        // like the surrounding prose.
+        let state = PagerState::new(
+            vec![para("intro"), box_diagram(20, 50)],
+            10,
+            160,
+            100,
+            theme(),
+        );
+        let rows = screen(&state, 160, 10);
+        let indicator = rows
+            .iter()
+            .find(|r| r.contains("Enter to expand"))
+            .expect("collapsed indicator not drawn");
+        // It is the only interactive block in view, so it is active ("▸ ...")
+        // and its marker sits exactly at the gutter.
+        assert_eq!(leading_spaces(indicator), 30, "indicator: {:?}", indicator);
+        assert!(indicator.trim_start().starts_with("▸ [Flowchart"));
+    }
+
+    #[test]
+    fn wrap_indented_line_without_spaces_never_exceeds_width() {
+        // Regression: the leading indent used to count as a break point, so a
+        // 2-space-indented code line with no other spaces produced a 1-column
+        // first row and a continuation row `indent` columns too wide.
+        let line = StyledLine {
+            spans: vec![StyledSpan::plain(format!("  {}", "+".repeat(90)))],
+        };
+        let out = wrap_styled_line(&line, 40);
+        assert!(out.len() >= 3);
+        for l in &out {
+            let w = unicode_width::UnicodeWidthStr::width(line_text(l).as_str());
+            assert!(w <= 40, "row `{}` width {} exceeds 40", line_text(l), w);
+            assert!(!line_text(l).trim().is_empty(), "produced an empty row");
+        }
+        assert_eq!(line_text(&out[0]).chars().count(), 40);
+    }
+
+    #[test]
+    fn diagram_indent_follows_its_width() {
+        // Terminal 120, cap 100 → gutter 10.
+        let blocks = vec![box_diagram(60, 2), box_diagram(110, 2), box_diagram(130, 2)];
+        let state = PagerState::new(blocks, 40, 120, 100, theme());
+        let indents: Vec<usize> = state
+            .flat_lines
+            .iter()
+            .filter_map(|f| match f {
+                FlatLine::DiagramAscii { indent, .. } => Some(*indent),
+                _ => None,
+            })
+            .collect();
+        // Fits the column → shares the gutter; fits the terminal → centered
+        // on the terminal; wider than the terminal → flush left.
+        assert_eq!(indents, vec![10, 10, 5, 5, 0, 0]);
+
+        let rows = screen(&state, 120, 40);
+        let diagram_rows: Vec<&String> = rows.iter().filter(|r| r.contains('─')).collect();
+        assert_eq!(leading_spaces(diagram_rows[0]), 10);
+        assert_eq!(leading_spaces(diagram_rows[2]), 5);
+        assert_eq!(leading_spaces(diagram_rows[4]), 0);
+        // The 130-col diagram is clipped by the screen, never pushed off it.
+        assert!(diagram_rows[4].chars().all(|c| c == '─'));
+    }
+
+    #[test]
+    fn active_marker_uses_gutter_column_without_shifting_diagram() {
+        // Expanded large diagram (taller than terminal) on a wide screen.
+        let mut state = PagerState::new(vec![box_diagram(20, 50)], 10, 160, 100, theme());
+        state.active = Some(0);
+        state.activate_current(); // expand
+        let rows = screen(&state, 160, 10);
+        let row = rows.iter().find(|r| r.contains('─')).unwrap();
+        assert_eq!(
+            leading_spaces(row),
+            29,
+            "marker should occupy the last gutter column"
+        );
+        assert!(row.trim_start().starts_with('▎'));
+        assert_eq!(row.chars().position(|c| c == '─'), Some(30));
+    }
+
+    /// Fixture sweep: every example document, at several terminal widths,
+    /// must produce prose rows that fit the content column, with the
+    /// gutter symmetric. This is the width-invariant that margins depend on.
+    #[test]
+    fn fixture_sweep_prose_fits_content_column_at_every_width() {
+        let highlighter = crate::highlight::Highlighter::new(None).unwrap();
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("docs/examples");
+        let mut checked = 0;
+        for entry in std::fs::read_dir(&dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension().and_then(|e| e.to_str()) != Some("md") {
+                continue;
+            }
+            let input = std::fs::read_to_string(&path).unwrap();
+            let blocks = crate::parser::parse_markdown(&input);
+            for &term_w in &[40u16, 80, 120, 200] {
+                let cw = content_width(term_w, DEFAULT_MAX_CONTENT_WIDTH);
+                let rendered = crate::render::render_blocks(
+                    &blocks,
+                    cw,
+                    &highlighter,
+                    theme(),
+                    crate::render::MermaidMode::Render,
+                );
+                let state =
+                    PagerState::new(rendered, 50, term_w, DEFAULT_MAX_CONTENT_WIDTH, theme());
+                assert_eq!(
+                    state.gutter,
+                    (term_w as usize - cw as usize) / 2,
+                    "{}: gutter at width {}",
+                    path.display(),
+                    term_w
+                );
+                for fl in &state.flat_lines {
+                    if let FlatLine::Styled(line) = fl {
+                        let w = line_width(line);
+                        assert!(
+                            w <= cw as usize,
+                            "{} @ {}: prose row {} cols exceeds column {}: {:?}",
+                            path.display(),
+                            term_w,
+                            w,
+                            cw,
+                            line.spans
+                                .iter()
+                                .map(|s| s.text.as_str())
+                                .collect::<String>()
+                        );
+                    }
+                }
+                checked += 1;
+            }
+        }
+        assert!(checked > 0, "no fixtures found in {}", dir.display());
     }
 
     #[test]

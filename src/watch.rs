@@ -235,6 +235,7 @@ impl StatusState {
 pub fn run_watch(
     path: &Path,
     width: u16,
+    max_content_width: u16,
     highlighter: &crate::highlight::Highlighter,
     theme: &'static crate::theme::Theme,
     mermaid_mode: MermaidMode,
@@ -293,7 +294,13 @@ pub fn run_watch(
 
     let term_size = terminal.size()?;
     let content_height = term_size.height.saturating_sub(1);
-    let mut pager = PagerState::new(flat_rendered, content_height, term_size.width, theme);
+    let mut pager = PagerState::new(
+        flat_rendered,
+        content_height,
+        term_size.width,
+        max_content_width,
+        theme,
+    );
 
     // Start file watcher
     let (_watcher, rx) = start_watcher(path)?;

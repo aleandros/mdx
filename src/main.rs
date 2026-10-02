@@ -78,6 +78,11 @@ struct Args {
     #[arg(short, long)]
     width: Option<u16>,
 
+    /// Pager content width cap; wider terminals center the content between
+    /// margins. 0 disables the cap [default: 100]
+    #[arg(long, value_name = "N")]
+    max_width: Option<u16>,
+
     /// Syntax highlighting theme [default: base16-ocean.dark]
     /// Examples: base16-eighties.dark, base16-mocha.dark, InspiredGitHub.
     /// Use --theme=list to see all available themes
@@ -299,19 +304,40 @@ fn main() -> Result<()> {
         std::io::stdout().is_terminal()
     };
 
+    // In the pager (and watch mode) the content column is capped so wide
+    // terminals get margins; render to that column width so rules and
+    // diagrams fit it. Piped output keeps the full width.
+    let max_content_width = args
+        .max_width
+        .or(config.max_width)
+        .unwrap_or(pager::DEFAULT_MAX_CONTENT_WIDTH);
+    let render_width = if use_pager || args.watch {
+        pager::content_width(width, max_content_width)
+    } else {
+        width
+    };
+
     // Watch mode — dispatch before reading input
     if args.watch {
         let path = args.file.as_ref().unwrap();
         setup_panic_hook();
-        return watch::run_watch(path, width, &highlighter, ui_theme, mermaid_mode);
+        return watch::run_watch(
+            path,
+            render_width,
+            max_content_width,
+            &highlighter,
+            ui_theme,
+            mermaid_mode,
+        );
     }
 
     let input = read_input_from(args.file.as_deref(), std::io::stdin().is_terminal())?;
     let blocks = parser::parse_markdown(&input);
-    let rendered = render::render_blocks(&blocks, width, &highlighter, ui_theme, mermaid_mode);
+    let rendered =
+        render::render_blocks(&blocks, render_width, &highlighter, ui_theme, mermaid_mode);
     if use_pager {
         setup_panic_hook();
-        pager::run_pager(rendered, ui_theme)?;
+        pager::run_pager(rendered, max_content_width, ui_theme)?;
     } else {
         pipe_output(&rendered, no_color)?;
     }
@@ -460,6 +486,7 @@ mod tests {
             no_pager: false,
             watch: true,
             width: None,
+            max_width: None,
             theme: None,
             ui_theme: None,
             config: None,
@@ -479,6 +506,7 @@ mod tests {
             no_pager: true,
             watch: true,
             width: None,
+            max_width: None,
             theme: None,
             ui_theme: None,
             config: None,
@@ -498,6 +526,7 @@ mod tests {
             no_pager: false,
             watch: true,
             width: None,
+            max_width: None,
             theme: None,
             ui_theme: None,
             config: None,

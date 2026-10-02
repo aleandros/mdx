@@ -8,6 +8,9 @@ pub struct Config {
     pub ui_theme: Option<String>,
     pub pager: Option<bool>,
     pub width: Option<u16>,
+    /// Cap on the pager's content column; wider terminals center the content
+    /// between margins. `0` disables the cap.
+    pub max_width: Option<u16>,
     pub no_mermaid_rendering: Option<bool>,
     pub split_mermaid_rendering: Option<bool>,
 }
@@ -27,6 +30,7 @@ impl Config {
             ui_theme: other.ui_theme.or(self.ui_theme),
             pager: other.pager.or(self.pager),
             width: other.width.or(self.width),
+            max_width: other.max_width.or(self.max_width),
             no_mermaid_rendering: other.no_mermaid_rendering.or(self.no_mermaid_rendering),
             split_mermaid_rendering: other
                 .split_mermaid_rendering
@@ -105,6 +109,10 @@ impl Config {
 
 # Terminal width override (omit to use terminal width)
 # width = 100
+
+# Pager content width cap: on wider terminals the content is centered
+# between margins. Set to 0 to always use the full terminal width.
+# max_width = 100
 
 # Mermaid diagram rendering
 # no_mermaid_rendering = false
