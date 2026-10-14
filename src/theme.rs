@@ -1,5 +1,76 @@
 use crate::render::Color;
+use std::path::PathBuf;
 
+/// On-disk representation of a user-defined UI theme, loaded from
+/// `<themes_dir>/<name>.toml`. Colors are hex strings (`"#rrggbb"`).
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UserTheme {
+    /// Six hex colors, H1 through H6.
+    heading: [String; 6],
+    body: String,
+    bold: String,
+    italic: String,
+    link: String,
+    inline_code: String,
+    horizontal_rule: String,
+    diagram_border: String,
+    diagram_collapsed: String,
+    diagram_node_fill: String,
+    diagram_node_border: String,
+    diagram_node_text: String,
+    diagram_edge_stroke: String,
+    diagram_edge_label: String,
+}
+
+/// Parses `#rrggbb` / `#RRGGBB` into a `Color::Rgb`.
+fn parse_hex_color(field: &str, value: &str) -> Result<Color, String> {
+    let hex = value.strip_prefix('#').ok_or_else(|| {
+        format!("field '{field}' has value '{value}', expected a hex color like \"#bd93f9\"")
+    })?;
+    if hex.len() != 6 {
+        return Err(format!(
+            "field '{field}' has value '{value}', expected exactly 6 hex digits after '#'"
+        ));
+    }
+    let byte = |slice: &str| {
+        u8::from_str_radix(slice, 16)
+            .map_err(|_| format!("field '{field}' has value '{value}', which is not valid hex"))
+    };
+    let r = byte(&hex[0..2])?;
+    let g = byte(&hex[2..4])?;
+    let b = byte(&hex[4..6])?;
+    Ok(Color::Rgb(r, g, b))
+}
+
+impl UserTheme {
+    /// Converts the string-keyed TOML representation into a runtime `Theme`.
+    fn into_theme(self, name: String) -> Result<Theme, String> {
+        let mut heading = [const { Color::Rgb(0, 0, 0) }; 6];
+        for (i, hex) in self.heading.iter().enumerate() {
+            heading[i] = parse_hex_color(&format!("heading[{i}]"), hex)?;
+        }
+        Ok(Theme {
+            name: Box::leak(name.into_boxed_str()),
+            heading,
+            body: parse_hex_color("body", &self.body)?,
+            bold: parse_hex_color("bold", &self.bold)?,
+            italic: parse_hex_color("italic", &self.italic)?,
+            link: parse_hex_color("link", &self.link)?,
+            inline_code: parse_hex_color("inline_code", &self.inline_code)?,
+            horizontal_rule: parse_hex_color("horizontal_rule", &self.horizontal_rule)?,
+            diagram_border: parse_hex_color("diagram_border", &self.diagram_border)?,
+            diagram_collapsed: parse_hex_color("diagram_collapsed", &self.diagram_collapsed)?,
+            diagram_node_fill: parse_hex_color("diagram_node_fill", &self.diagram_node_fill)?,
+            diagram_node_border: parse_hex_color("diagram_node_border", &self.diagram_node_border)?,
+            diagram_node_text: parse_hex_color("diagram_node_text", &self.diagram_node_text)?,
+            diagram_edge_stroke: parse_hex_color("diagram_edge_stroke", &self.diagram_edge_stroke)?,
+            diagram_edge_label: parse_hex_color("diagram_edge_label", &self.diagram_edge_label)?,
+        })
+    }
+}
+
+#[derive(Debug)]
 #[allow(dead_code)]
 pub struct Theme {
     pub name: &'static str,
@@ -41,7 +112,8 @@ impl Theme {
         &CLAY
     }
 
-    pub fn available_names() -> &'static [&'static str] {
+    /// Built-in theme names compiled into the binary.
+    pub fn builtin_names() -> &'static [&'static str] {
         &[
             "clay",
             "hearth",
@@ -55,6 +127,90 @@ impl Theme {
             "snow",
             "latte",
         ]
+    }
+
+    /// Directory scanned for user-defined UI themes:
+    /// `$XDG_CONFIG_HOME/mdx/themes/<name>.toml`, falling back to
+    /// `~/.config/mdx/themes/<name>.toml`.
+    pub fn user_themes_dir() -> Option<PathBuf> {
+        let config_dir = std::env::var("XDG_CONFIG_HOME")
+            .ok()
+            .map(PathBuf::from)
+            .or_else(|| {
+                std::env::var("HOME")
+                    .ok()
+                    .map(|h| PathBuf::from(h).join(".config"))
+            })?;
+        Some(config_dir.join("mdx").join("themes"))
+    }
+
+    /// Names of user-defined themes found as `*.toml` files in
+    /// `user_themes_dir()`. Does not validate their contents.
+    pub fn custom_names() -> Vec<String> {
+        let Some(dir) = Self::user_themes_dir() else {
+            return Vec::new();
+        };
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            return Vec::new();
+        };
+        let mut names: Vec<String> = entries
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().extension().and_then(|s| s.to_str()) == Some("toml"))
+            .filter_map(|e| {
+                e.path()
+                    .file_stem()
+                    .map(|s| s.to_string_lossy().into_owned())
+            })
+            .collect();
+        names.sort();
+        names
+    }
+
+    /// All theme names: built-ins followed by discovered custom themes.
+    pub fn available_names() -> Vec<String> {
+        let mut names: Vec<String> = Self::builtin_names()
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        names.extend(Self::custom_names());
+        names
+    }
+
+    /// Loads a user-defined theme named `<user_themes_dir>/<name>.toml`.
+    /// Returns `Ok(None)` if no such file exists, `Err` if it exists but
+    /// fails to parse, and leaks the theme to `'static` on success (fine
+    /// for a short-lived CLI process).
+    fn load_custom(name: &str) -> Result<Option<&'static Theme>, String> {
+        let Some(dir) = Self::user_themes_dir() else {
+            return Ok(None);
+        };
+        let path = dir.join(format!("{name}.toml"));
+        if !path.exists() {
+            return Ok(None);
+        }
+        let content = std::fs::read_to_string(&path)
+            .map_err(|e| format!("failed to read theme file {}: {e}", path.display()))?;
+        let user_theme: UserTheme = toml::from_str(&content)
+            .map_err(|e| format!("failed to parse theme file {}: {e}", path.display()))?;
+        let theme = user_theme.into_theme(name.to_string())?;
+        Ok(Some(Box::leak(Box::new(theme))))
+    }
+
+    /// Resolves a theme by name: built-ins first, then
+    /// `<user_themes_dir>/<name>.toml`. Returns a descriptive error
+    /// (including available names) when nothing matches, or when a
+    /// matching custom theme file fails to parse.
+    pub fn resolve(name: &str) -> Result<&'static Theme, String> {
+        if let Some(theme) = Self::by_name(name) {
+            return Ok(theme);
+        }
+        if let Some(theme) = Self::load_custom(name)? {
+            return Ok(theme);
+        }
+        Err(format!(
+            "Unknown UI theme '{name}'. Available: {}",
+            Self::available_names().join(", ")
+        ))
     }
 
     #[allow(dead_code)]
@@ -394,8 +550,8 @@ mod tests {
     #[test]
     fn test_available_names() {
         let names = Theme::available_names();
-        assert!(names.contains(&"clay"));
-        assert!(names.contains(&"hearth"));
+        assert!(names.iter().any(|n| n == "clay"));
+        assert!(names.iter().any(|n| n == "hearth"));
     }
 
     #[test]
@@ -467,18 +623,116 @@ mod tests {
     #[test]
     fn test_all_returns_every_theme() {
         let all = Theme::all();
-        let names = Theme::available_names();
+        let names = Theme::builtin_names();
         assert_eq!(
             all.len(),
             names.len(),
-            "all() and available_names() must match in length"
+            "all() and builtin_names() must match in length"
         );
         for theme in all {
             assert!(
                 names.contains(&theme.name),
-                "Theme '{}' in all() but not in available_names()",
+                "Theme '{}' in all() but not in builtin_names()",
                 theme.name
             );
         }
+    }
+
+    #[test]
+    fn test_resolve_builtin_theme() {
+        let theme = Theme::resolve("nord").unwrap();
+        assert_eq!(theme.name, "nord");
+    }
+
+    #[test]
+    fn test_resolve_unknown_theme_lists_available() {
+        let err = Theme::resolve("totally-not-a-theme").unwrap_err();
+        assert!(err.contains("Unknown UI theme"));
+        assert!(err.contains("clay"));
+    }
+
+    #[test]
+    fn test_resolve_custom_theme_from_disk() {
+        let dir = std::env::temp_dir().join(format!("mdx_theme_test_{}", std::process::id()));
+        let themes_dir = dir.join("mdx").join("themes");
+        std::fs::create_dir_all(&themes_dir).unwrap();
+        std::fs::write(
+            themes_dir.join("my-custom.toml"),
+            r##"
+heading = ["#ff79c6", "#bd93f9", "#8be9fd", "#50fa7b", "#ffb86c", "#6272a4"]
+body = "#f8f8f2"
+bold = "#f8f8f2"
+italic = "#f8f8f2"
+link = "#8be9fd"
+inline_code = "#50fa7b"
+horizontal_rule = "#6272a4"
+diagram_border = "#bd93f9"
+diagram_collapsed = "#8be9fd"
+diagram_node_fill = "#bd93f9"
+diagram_node_border = "#ff79c6"
+diagram_node_text = "#f8f8f2"
+diagram_edge_stroke = "#50fa7b"
+diagram_edge_label = "#ffb86c"
+"##,
+        )
+        .unwrap();
+
+        // SAFETY: single-threaded within this test; set for the duration of
+        // the lookup so `user_themes_dir()` resolves to our temp fixture.
+        unsafe {
+            std::env::set_var("XDG_CONFIG_HOME", &dir);
+        }
+        let result = Theme::resolve("my-custom");
+        unsafe {
+            std::env::remove_var("XDG_CONFIG_HOME");
+        }
+
+        let theme = result.expect("custom theme should load");
+        assert_eq!(theme.name, "my-custom");
+        assert_eq!(theme.heading[0], Color::Rgb(255, 121, 198));
+        assert_eq!(theme.body, Color::Rgb(248, 248, 242));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_resolve_custom_theme_bad_hex_errors() {
+        let dir = std::env::temp_dir().join(format!("mdx_theme_test_bad_{}", std::process::id()));
+        let themes_dir = dir.join("mdx").join("themes");
+        std::fs::create_dir_all(&themes_dir).unwrap();
+        std::fs::write(
+            themes_dir.join("broken.toml"),
+            r##"
+heading = ["not-a-color", "#bd93f9", "#8be9fd", "#50fa7b", "#ffb86c", "#6272a4"]
+body = "#f8f8f2"
+bold = "#f8f8f2"
+italic = "#f8f8f2"
+link = "#8be9fd"
+inline_code = "#50fa7b"
+horizontal_rule = "#6272a4"
+diagram_border = "#bd93f9"
+diagram_collapsed = "#8be9fd"
+diagram_node_fill = "#bd93f9"
+diagram_node_border = "#ff79c6"
+diagram_node_text = "#f8f8f2"
+diagram_edge_stroke = "#50fa7b"
+diagram_edge_label = "#ffb86c"
+"##,
+        )
+        .unwrap();
+
+        // SAFETY: same as above.
+        unsafe {
+            std::env::set_var("XDG_CONFIG_HOME", &dir);
+        }
+        let result = Theme::resolve("broken");
+        unsafe {
+            std::env::remove_var("XDG_CONFIG_HOME");
+        }
+
+        let err = result.expect_err("bad hex color should fail to parse");
+        assert!(err.contains("heading[0]"), "err: {err}");
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

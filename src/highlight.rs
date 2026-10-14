@@ -15,8 +15,31 @@ pub struct Highlighter {
 }
 
 impl Highlighter {
+    /// Directory scanned for user-supplied syntax themes (`*.tmTheme` files):
+    /// `$XDG_CONFIG_HOME/mdx/syntax-themes`, falling back to
+    /// `~/.config/mdx/syntax-themes`. Each file is keyed by its file stem,
+    /// e.g. `Dracula.tmTheme` is selected with `--theme Dracula`.
+    pub fn user_syntax_themes_dir() -> Option<std::path::PathBuf> {
+        let config_dir = std::env::var("XDG_CONFIG_HOME")
+            .ok()
+            .map(std::path::PathBuf::from)
+            .or_else(|| {
+                std::env::var("HOME")
+                    .ok()
+                    .map(|h| std::path::PathBuf::from(h).join(".config"))
+            })?;
+        Some(config_dir.join("mdx").join("syntax-themes"))
+    }
+
     pub fn new(theme_name: Option<String>) -> Result<Self, String> {
-        let theme_set = ThemeSet::load_defaults();
+        let mut theme_set = ThemeSet::load_defaults();
+        if let Some(dir) = Self::user_syntax_themes_dir()
+            && dir.is_dir()
+        {
+            theme_set.add_from_folder(&dir).map_err(|e| {
+                format!("failed to load syntax themes from {}: {}", dir.display(), e)
+            })?;
+        }
         if let Some(ref name) = theme_name
             && !theme_set.themes.contains_key(name.as_str())
         {
