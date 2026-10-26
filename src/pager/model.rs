@@ -121,8 +121,8 @@ proptest! {
                     let theme = crate::theme::Theme::default_theme();
                     let mut content = Vec::new();
                     for (source, kind) in [(input.flowchart(crate::strategies::Topology::Cyclic),DiagramKind::Flowchart),(input.sequence(),DiagramKind::Sequence),(input.er(),DiagramKind::Er)] {
-                        let (lines,node_count,edge_count) = crate::mermaid::render_mermaid(&source,theme,usize::from(state.terminal_width)).unwrap();
-                        content.push(RenderedBlock::Diagram { lines,node_count,edge_count,kind });
+                        let diagram = crate::mermaid::render_diagram(&source,theme,usize::from(state.terminal_width)).unwrap();
+                        content.push(RenderedBlock::Diagram { lines: diagram.lines,node_count: diagram.primary_count,edge_count: diagram.secondary_count,kind,image: Some(std::sync::Arc::new(diagram.image)) });
                     }
                     state.replace_content(content);
                 }

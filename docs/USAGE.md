@@ -63,7 +63,8 @@ the pager, plain stdout and `mdx embed`; equations are not typeset yet.
 
 mdx decides once, at startup, whether it may draw pixel graphics. With
 graphics on, the pager shows local images inline (see
-[Inline images](#inline-images)).
+[Inline images](#inline-images)) and draws Mermaid diagrams as images (see
+[Diagrams as images](#diagrams-as-images)).
 
 | Source | Example |
 |--------|---------|
@@ -133,6 +134,34 @@ Kitty Unicode placeholders, so they scroll with the text:
 Plain or piped output, `mdx embed`, `--graphics off` and `NO_COLOR` (the image
 id travels in the text color, which `NO_COLOR` removes) print images as
 `[Image: alt](url)`, as before.
+
+### Diagrams as images
+
+With graphics on, flowcharts, ER diagrams and sequence diagrams are drawn as
+images instead of box-drawing characters: real rectangles, rounded boxes,
+stadiums, diamonds and hexagons, polyline edges with arrowheads, crow's-foot
+cardinality marks, dashed lifelines and activation bars. The same layout
+drives both forms, so:
+
+- **Same cells.** The image takes exactly the rows and columns the ASCII
+  diagram would. Collapsing, `Enter` to expand, horizontal scrolling and search
+  work as before; search matches the diagram's text.
+- **Labels fit.** Each word of a label is fitted to the cells the layout
+  reserved for it, so no font makes a label overflow its shape. Labels use the
+  bundled DejaVu Sans Mono; system fonts fill in glyphs it lacks (CJK, emoji).
+- **Theme colors.** Lines, boxes and text use the UI theme (including custom
+  themes) and the diagram's own `style` / `classDef` / `linkStyle` colors. The
+  background stays transparent.
+- Diagrams rasterize on the same background thread as images, and the ASCII
+  diagram shows until the image is ready. Rasterized diagrams are cached by
+  source, width, theme and cell size, so scrolling, resizing back and watch
+  mode reloads of unchanged diagrams do not draw them again.
+- A diagram that cannot be drawn, or that is wider or taller than 297 cells
+  (the most a placement can address), stays ASCII. Parse errors show the
+  source with a warning, as before.
+
+Plain or piped output, `mdx embed`, `--graphics off` and `NO_COLOR` keep the
+ASCII diagrams, byte for byte.
 
 ## Interactive pager
 

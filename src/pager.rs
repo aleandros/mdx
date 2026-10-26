@@ -139,6 +139,15 @@ fn color_to_ratatui(color: &Color) -> RColor {
     }
 }
 
+/// Row `row` of image `id` as Kitty placeholder cells, colored with the id.
+fn image_cells(id: u32, row: u16, cols: u16) -> Span<'static> {
+    let (r, g, b) = crate::kitty::id_color(id);
+    Span::styled(
+        crate::kitty::placeholder_row(id, row, cols),
+        Style::default().fg(RColor::Rgb(r, g, b)),
+    )
+}
+
 fn styled_line_to_ratatui(line: &StyledLine) -> Line<'static> {
     Line::from(line.spans.iter().map(span_to_ratatui).collect::<Vec<_>>())
 }
@@ -180,6 +189,15 @@ pub(crate) enum FlatLine {
         node_count: usize,
         edge_count: usize,
         kind: DiagramKind,
+    },
+    /// One row of a diagram drawn as image `id`. `line` is the ASCII row
+    /// the image covers, kept for search.
+    DiagramImage {
+        line: StyledLine,
+        indent: usize,
+        id: u32,
+        row: u16,
+        cols: u16,
     },
     ImagePlaceholder {
         alt: String,
@@ -552,6 +570,7 @@ impl PagerState {
                     node_count,
                     edge_count,
                     kind,
+                    image,
                 } => {
                     // Collapse only when genuinely unmanageable: taller than
                     // the full terminal height, or more than twice as wide as
@@ -587,24 +606,32 @@ impl PagerState {
                             flat_line_index,
                             flat_line_end: flat_line_index + 1,
                         });
-                    } else if is_large {
+                    } else {
                         let flat_line_index = self.flat_lines.len();
-                        for line in lines {
-                            self.flat_lines.push(FlatLine::DiagramAscii {
-                                line: line.clone(),
-                                indent,
+                        // With graphics on, the diagram is drawn as an image
+                        // over the same cells, once it has been rasterized.
+                        let placed = image
+                            .as_deref()
+                            .zip(self.images.as_mut())
+                            .and_then(|(image, images)| images.diagram(image));
+                        for (row, line) in lines.iter().enumerate() {
+                            let line = line.clone();
+                            self.flat_lines.push(match placed {
+                                Some(placed) => FlatLine::DiagramImage {
+                                    line,
+                                    indent,
+                                    id: placed.id,
+                                    row: u16::try_from(row).unwrap_or(u16::MAX),
+                                    cols: placed.cols,
+                                },
+                                None => FlatLine::DiagramAscii { line, indent },
                             });
                         }
-                        self.interactive_blocks.push(InteractiveEntry {
-                            block_index,
-                            flat_line_index,
-                            flat_line_end: flat_line_index + lines.len(),
-                        });
-                    } else {
-                        for line in lines {
-                            self.flat_lines.push(FlatLine::DiagramAscii {
-                                line: line.clone(),
-                                indent,
+                        if is_large {
+                            self.interactive_blocks.push(InteractiveEntry {
+                                block_index,
+                                flat_line_index,
+                                flat_line_end: flat_line_index + lines.len(),
                             });
                         }
                     }
@@ -672,6 +699,12 @@ impl PagerState {
         if let Some(images) = &mut self.images {
             images.retain(self.content.iter().filter_map(|block| match block {
                 RenderedBlock::Image { url, .. } => Some(url.as_str()),
+                _ => None,
+            }));
+            images.retain_diagrams(self.content.iter().filter_map(|block| match block {
+                RenderedBlock::Diagram {
+                    image: Some(image), ..
+                } => Some(image.key()),
                 _ => None,
             }));
             images.refresh();
@@ -837,12 +870,24 @@ impl PagerState {
                 };
                 (self.gutter, line)
             }
+            FlatLine::DiagramImage {
+                indent,
+                id,
+                row,
+                cols,
+                ..
+            } => {
+                let cells = image_cells(*id, *row, *cols);
+                // The active marker goes in the margin, as for an image.
+                if *indent > 0 && self.is_in_active_block(flat_line_index) {
+                    let marker = Span::styled("▎", Style::default().fg(collapsed_color));
+                    (indent - 1, Line::from(vec![marker, cells]))
+                } else {
+                    (*indent, Line::from(cells))
+                }
+            }
             FlatLine::ImageRow { id, row, cols, .. } => {
-                let (r, g, b) = crate::kitty::id_color(*id);
-                let cells = Span::styled(
-                    crate::kitty::placeholder_row(*id, *row, *cols),
-                    Style::default().fg(RColor::Rgb(r, g, b)),
-                );
+                let cells = image_cells(*id, *row, *cols);
                 // Same gutter marker as an active expanded diagram, but only
                 // in a margin: without one it would push the last column off.
                 if self.gutter > 0 && self.is_in_active_block(flat_line_index) {
@@ -910,7 +955,9 @@ impl PagerState {
 
     fn flat_line_text(flat: &FlatLine) -> String {
         match flat {
-            FlatLine::Styled(line) | FlatLine::DiagramAscii { line, .. } => {
+            FlatLine::Styled(line)
+            | FlatLine::DiagramAscii { line, .. }
+            | FlatLine::DiagramImage { line, .. } => {
                 line.spans.iter().map(|s| s.text.as_str()).collect()
             }
             FlatLine::DiagramCollapsed {
@@ -1514,6 +1561,7 @@ mod tests {
             node_count: 3,
             edge_count: 2,
             kind: DiagramKind::Flowchart,
+            image: None,
         }
     }
 
@@ -2002,6 +2050,163 @@ mod tests {
         let rows = screen(&state, 80, 40);
         assert_eq!(rows[0], plain_screen[0]);
         assert_eq!(rows[1], plain_screen[1]);
+    }
+
+    /// A real diagram block, with its SVG-backend image.
+    fn mermaid(source: &str) -> RenderedBlock {
+        let diagram = crate::mermaid::render_diagram(source, theme(), 80).unwrap();
+        RenderedBlock::Diagram {
+            lines: diagram.lines,
+            node_count: diagram.primary_count,
+            edge_count: diagram.secondary_count,
+            kind: DiagramKind::Flowchart,
+            image: Some(std::sync::Arc::new(diagram.image)),
+        }
+    }
+
+    /// A pager over `content` with graphics on and every diagram rasterized.
+    fn diagram_pager(content: Vec<RenderedBlock>, h: u16, w: u16) -> (PagerState, Vec<u32>) {
+        let mut store = crate::images::ImageStore::for_tests("/docs".into(), (10, 20));
+        let ids = content
+            .iter()
+            .filter_map(|block| match block {
+                RenderedBlock::Diagram {
+                    image: Some(image), ..
+                } => Some(store.insert_ready_diagram(image)),
+                _ => None,
+            })
+            .collect();
+        let state = PagerState::new(content, h, w, 100, theme()).with_images(store);
+        (state, ids)
+    }
+
+    fn diagram_image_rows(state: &PagerState) -> Vec<(usize, u32, u16, u16)> {
+        state
+            .flat_lines
+            .iter()
+            .enumerate()
+            .filter_map(|(i, line)| match line {
+                FlatLine::DiagramImage { id, row, cols, .. } => Some((i, *id, *row, *cols)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn diagram_image_takes_exactly_the_ascii_cells() {
+        let block = mermaid("graph LR\n    A[Start] --> B[End]\n");
+        let plain = PagerState::new(vec![block.clone()], 40, 80, 100, theme());
+        let (mut state, ids) = diagram_pager(vec![block], 40, 80);
+        // Same flat lines, rows swapped for image rows one for one.
+        assert_eq!(plain.flat_lines.len(), state.flat_lines.len());
+        let rows = diagram_image_rows(&state);
+        let ascii: Vec<(usize, usize, usize)> = plain
+            .flat_lines
+            .iter()
+            .enumerate()
+            .filter_map(|(i, line)| match line {
+                FlatLine::DiagramAscii { line, indent } => Some((i, line_width(line), *indent)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(rows.len(), ascii.len());
+        let cols = ascii.iter().map(|a| a.1).max().unwrap();
+        for (n, ((i, id, row, image_cols), (ascii_i, _, _))) in rows.iter().zip(&ascii).enumerate()
+        {
+            assert_eq!(i, ascii_i);
+            assert_eq!(*id, ids[0]);
+            assert_eq!(usize::from(*row), n);
+            assert_eq!(usize::from(*image_cols), cols);
+        }
+        assert_eq!(
+            state.take_graphics_output(),
+            crate::kitty::place(
+                ids[0],
+                u16::try_from(cols).unwrap(),
+                u16::try_from(ascii.len()).unwrap()
+            )
+        );
+        // On screen: placeholder cells at the diagram's indent, in place of
+        // the ASCII rows.
+        let screen_rows = screen(&state, 80, 40);
+        let plain_rows = screen(&plain, 80, 40);
+        let first = rows[0].0;
+        let indent = ascii[0].2;
+        assert!(screen_rows[first][indent..].starts_with(crate::kitty::PLACEHOLDER));
+        assert_eq!(
+            screen_rows[first]
+                .chars()
+                .filter(|&c| c == crate::kitty::PLACEHOLDER)
+                .count(),
+            cols
+        );
+        let label_row = rows
+            .iter()
+            .map(|r| r.0)
+            .find(|&i| plain_rows[i].contains("Start"));
+        let label_row = label_row.expect("ASCII diagram shows its label");
+        assert!(!screen_rows[label_row].contains("Start"));
+        assert_eq!(screen_rows[0], plain_rows[0]);
+    }
+
+    #[test]
+    fn diagrams_stay_ascii_until_rasterized_and_without_graphics() {
+        let block = mermaid("graph LR\n    A --> B\n");
+        let plain = PagerState::new(vec![block.clone()], 40, 80, 100, theme());
+        // Graphics on, but nothing rasterized yet (and no worker to do it).
+        let store = crate::images::ImageStore::for_tests("/docs".into(), (10, 20));
+        let state = PagerState::new(vec![block], 40, 80, 100, theme()).with_images(store);
+        assert!(diagram_image_rows(&state).is_empty());
+        assert_eq!(state.flat_lines, plain.flat_lines);
+        assert!(diagram_image_rows(&plain).is_empty());
+    }
+
+    #[test]
+    fn search_finds_text_in_diagram_image_rows() {
+        let (mut state, _) = diagram_pager(
+            vec![mermaid("graph LR\n    A[Start] --> B[Finish]\n")],
+            40,
+            80,
+        );
+        let rows = diagram_image_rows(&state);
+        for c in "/Finish".chars() {
+            state.handle_key_event(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
+        }
+        state.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!(state.search_matches.len(), 1);
+        assert!(rows.iter().any(|r| r.0 == state.search_matches[0]));
+    }
+
+    #[test]
+    fn large_diagram_images_collapse_and_expand_like_ascii() {
+        // Taller than a 6-row pager: collapsed until activated.
+        let block = mermaid("graph TD\n    A --> B\n    B --> C\n");
+        let (mut state, _) = diagram_pager(vec![block], 6, 80);
+        assert!(diagram_image_rows(&state).is_empty());
+        assert!(
+            state
+                .flat_lines
+                .iter()
+                .any(|l| matches!(l, FlatLine::DiagramCollapsed { .. }))
+        );
+        state.active = Some(0);
+        state.activate_current();
+        let rows = diagram_image_rows(&state);
+        assert!(!rows.is_empty());
+        let entry = &state.interactive_blocks[0];
+        assert_eq!(entry.flat_line_index, rows[0].0);
+        assert_eq!(entry.flat_line_end, rows.last().unwrap().0 + 1);
+    }
+
+    #[test]
+    fn reload_deletes_diagrams_that_are_gone() {
+        let a = mermaid("graph LR\n    A --> B\n");
+        let b = mermaid("graph LR\n    C --> D\n");
+        let (mut state, ids) = diagram_pager(vec![a.clone(), b], 40, 80);
+        state.take_graphics_output();
+        state.replace_content(vec![a]);
+        assert_eq!(state.take_graphics_output(), crate::kitty::delete(ids[1]));
+        assert_eq!(diagram_image_rows(&state)[0].1, ids[0]);
     }
 
     #[test]

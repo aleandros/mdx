@@ -148,6 +148,7 @@ mod tests {
             node_count: 2,
             edge_count: 1,
             kind: crate::render::DiagramKind::Flowchart,
+            image: None,
         };
         let out = flatten_blocks(&[block]);
         assert_eq!(out.len(), 3, "diagram lines + one trailing blank");
@@ -194,6 +195,7 @@ mod tests {
                 node_count: 1,
                 edge_count: 0,
                 kind: crate::render::DiagramKind::Flowchart,
+                image: None,
             },
         ];
         let out = flatten_blocks(&blocks);

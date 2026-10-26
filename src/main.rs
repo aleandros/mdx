@@ -259,8 +259,9 @@ fn validate_watch_args(args: &Args) -> Result<()> {
 fn setup_panic_hook() {
     let original_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
-        // The image decoder catches its own panics and fails that image;
-        // restoring the terminal here would break the running pager.
+        // The image worker (decoder and diagram rasterizer) catches its own
+        // panics and fails that image; restoring the terminal here would
+        // break the running pager.
         if std::thread::current().name() == Some(images::WORKER_THREAD) {
             return;
         }

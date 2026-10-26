@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.19] - 2026-10-26
+
+### Added
+- Mermaid diagrams as images in the pager. With graphics on (#14), flowcharts,
+  ER diagrams and sequence diagrams are drawn by a new SVG backend over the
+  existing layouts, rasterized with `resvg`, and shown with Kitty Unicode
+  placeholders (#16) in exactly the cell rectangle of their ASCII form: real
+  node shapes, polyline edges with arrowheads, crow's-foot cardinality marks,
+  lifelines, activations, notes and fragments, in the UI theme's colors.
+  Label text is fitted to the cells the layout reserved for it, so labels
+  never overflow their shapes. Labels use a bundled DejaVu Sans Mono font,
+  with system fonts for missing glyphs. Diagrams rasterize on the image thread
+  and are cached by source, width, theme and cell size; the ASCII diagram
+  shows until the image is ready and whenever it cannot be drawn. Plain and
+  piped output, `mdx embed`, `--graphics off` and `NO_COLOR` are unchanged.
+  (#10)
+
 ## [0.1.18] - 2026-10-26
 
 ### Added

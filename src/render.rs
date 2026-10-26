@@ -105,6 +105,9 @@ pub(crate) enum RenderedBlock {
         node_count: usize,
         edge_count: usize,
         kind: DiagramKind,
+        /// The same diagram for the SVG backend; the pager draws it as an
+        /// image over the cells `lines` would take when graphics are on.
+        image: Option<std::sync::Arc<mermaid::svg::DiagramImage>>,
     },
     Image {
         alt: String,
@@ -311,14 +314,15 @@ pub(crate) fn render_blocks(
                         out.push(render_as_code());
                     }
                     MermaidMode::Render => {
-                        if let Ok((lines, node_count, edge_count)) =
-                            mermaid::render_mermaid(content, theme, usize::from(width))
+                        if let Ok(diagram) =
+                            mermaid::render_diagram(content, theme, usize::from(width))
                         {
                             out.push(RenderedBlock::Diagram {
-                                lines,
-                                node_count,
-                                edge_count,
+                                lines: diagram.lines,
+                                node_count: diagram.primary_count,
+                                edge_count: diagram.secondary_count,
                                 kind,
+                                image: Some(std::sync::Arc::new(diagram.image)),
                             });
                         } else {
                             let warning_line = StyledLine {
@@ -340,14 +344,15 @@ pub(crate) fn render_blocks(
                     }
                     MermaidMode::Split => {
                         out.push(render_as_code());
-                        if let Ok((lines, node_count, edge_count)) =
-                            mermaid::render_mermaid(content, theme, usize::from(width))
+                        if let Ok(diagram) =
+                            mermaid::render_diagram(content, theme, usize::from(width))
                         {
                             out.push(RenderedBlock::Diagram {
-                                lines,
-                                node_count,
-                                edge_count,
+                                lines: diagram.lines,
+                                node_count: diagram.primary_count,
+                                edge_count: diagram.secondary_count,
                                 kind,
+                                image: Some(std::sync::Arc::new(diagram.image)),
                             });
                         } else {
                             let warning_line = StyledLine {

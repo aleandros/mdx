@@ -192,7 +192,8 @@ pub(crate) fn rendered_blocks() -> impl Strategy<Value = Vec<RenderedBlock>> {
                     lines,
                     node_count,
                     edge_count,
-                    kind: DiagramKind::Flowchart
+                    kind: DiagramKind::Flowchart,
+                    image: None,
                 }),
             text().prop_map(|alt| RenderedBlock::Image {
                 alt,

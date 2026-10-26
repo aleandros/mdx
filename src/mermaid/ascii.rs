@@ -728,14 +728,23 @@ fn draw_arrowhead(canvas: &mut Canvas, edge: &PositionedEdge) {
 }
 
 fn draw_edge_label(canvas: &mut Canvas, edge: &PositionedEdge) {
-    let label = match &edge.label {
-        Some(l) if !l.is_empty() => l,
-        _ => return,
+    let Some((label, (x, y))) = edge_label_origin(edge) else {
+        return;
     };
     let ls = edge_label_style(edge.edge_style.as_ref());
-    if let Some((x, y)) = edge.label_pos {
-        canvas.draw_text_styled(x, y, label, &ls);
-        return;
+    canvas.draw_text_styled(x, y, label, &ls);
+}
+
+/// An edge's non-empty label and the cell its first character goes in, or
+/// `None` when the edge has no label or no room for it. Shared with the SVG
+/// backend so both put labels in the same cells.
+pub(crate) fn edge_label_origin(edge: &PositionedEdge) -> Option<(&str, (usize, usize))> {
+    let label = match &edge.label {
+        Some(l) if !l.is_empty() => l.as_str(),
+        _ => return None,
+    };
+    if let Some(pos) = edge.label_pos {
+        return Some((label, pos));
     }
     let points = &edge.points;
     let label_w = display_width(label);
@@ -755,11 +764,11 @@ fn draw_edge_label(canvas: &mut Canvas, edge: &PositionedEdge) {
             } else {
                 x_min
             };
-            canvas.draw_text_styled(label_x, y1.saturating_sub(1), label, &ls);
+            Some((label, (label_x, y1.saturating_sub(1))))
         } else {
             // Vertical middle segment — label to the right at midpoint
             let y_mid = usize::midpoint(y1.min(y2), y1.max(y2));
-            canvas.draw_text_styled(x1 + 1, y_mid, label, &ls);
+            Some((label, (x1 + 1, y_mid)))
         }
     } else if points.len() >= 2 {
         // Straight edge
@@ -768,7 +777,7 @@ fn draw_edge_label(canvas: &mut Canvas, edge: &PositionedEdge) {
 
         if x0 == x1 {
             let y_mid = usize::midpoint(y0.min(y1), y0.max(y1));
-            canvas.draw_text_styled(x0 + 1, y_mid, label, &ls);
+            Some((label, (x0 + 1, y_mid)))
         } else {
             // Straight horizontal edge: place label on the wire itself.
             // Skip if the label is longer than the available segment — no room to
@@ -780,9 +789,13 @@ fn draw_edge_label(canvas: &mut Canvas, edge: &PositionedEdge) {
                 let center_x = usize::midpoint(x_min, x_max);
                 let label_x = center_x.saturating_sub(label_w / 2);
                 let label_x = label_x.max(x_min).min(x_max.saturating_sub(label_w));
-                canvas.draw_text_styled(label_x, y0, label, &ls);
+                Some((label, (label_x, y0)))
+            } else {
+                None
             }
         }
+    } else {
+        None
     }
 }
 
