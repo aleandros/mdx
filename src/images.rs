@@ -286,8 +286,21 @@ impl ImageStore {
         }
     }
 
+    /// Record a new cell size. Diagrams drawn for the old size are deleted;
+    /// they are rasterized again for the new one when next laid out.
     pub(crate) fn set_cell_px(&mut self, cell_px: (u16, u16)) {
+        if cell_px == self.cell_px {
+            return;
+        }
         self.cell_px = cell_px;
+        let output = &mut self.output;
+        self.diagrams.retain(|(_, px), entry| {
+            let kept = *px == cell_px;
+            if !kept && matches!(entry.status, Status::Ready { .. }) {
+                output.extend(kitty::delete(entry.id));
+            }
+            kept
+        });
     }
 
     /// Whether a decode or rasterization is in flight, so the event loop
@@ -836,12 +849,13 @@ mod tests {
         assert_eq!(store.diagram(&flowchart).map(|l| l.id), Some(id));
         store.take_output();
         store.set_cell_px((20, 40));
+        assert_eq!(store.take_output(), kitty::delete(id), "old size deleted");
+        store.set_cell_px((20, 40));
+        assert!(store.take_output().is_empty(), "same size: nothing to do");
         // No worker in this store, so the new size fails and the pager keeps
         // the ASCII diagram.
         assert_eq!(store.diagram(&flowchart), None);
         assert!(!store.loading());
-        store.retain_diagrams([flowchart.key()]);
-        assert_eq!(store.take_output(), kitty::delete(id), "old size deleted");
     }
 
     #[test]

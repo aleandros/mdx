@@ -580,6 +580,22 @@ fn step_back(cell: (usize, usize), toward: (usize, usize)) -> Option<(usize, usi
     }
 }
 
+/// The cell an edge's line starts in. Forward edges leave from the first
+/// cell outside their source, so they start one cell back, on the source's
+/// border where the box line is. Edges that already start on a border (back
+/// edges) start there, not inside the box.
+fn edge_start(points: &[(usize, usize)], nodes: &[PositionedNode]) -> (usize, usize) {
+    let first = points[0];
+    if nodes.iter().any(|n| node_contains(n, first)) {
+        return first;
+    }
+    points
+        .get(1)
+        .and_then(|&next| step_back(first, next))
+        .filter(|&back| nodes.iter().any(|n| node_contains(n, back)))
+        .unwrap_or(first)
+}
+
 fn draw_edge(
     canvas: &mut Canvas,
     edge: &PositionedEdge,
@@ -593,13 +609,7 @@ fn draw_edge(
         .map_or(palette.text, color::rgb);
     if edge.points.len() >= 2 {
         let mut points: Vec<Point> = edge.points.iter().map(|&p| canvas.center(p)).collect();
-        // Edges leave from the first cell outside their source; start them
-        // on the source's border instead, where the box line is.
-        if let Some(back) = step_back(edge.points[0], edge.points[1])
-            && nodes.iter().any(|n| node_contains(n, back))
-        {
-            points[0] = canvas.center(back);
-        }
+        points[0] = canvas.center(edge_start(&edge.points, nodes));
         let (width, dash) = match edge.style {
             EdgeStyle::Dotted => (canvas.stroke, Dash::Dotted),
             EdgeStyle::Thick => (canvas.stroke * 2.2, Dash::Solid),
@@ -1309,6 +1319,33 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn edges_start_on_their_source_border() {
+        let node = PositionedNode {
+            id: "A".into(),
+            label: "A".into(),
+            shape: NodeShape::Rect,
+            x: 2,
+            y: 2,
+            width: 5,
+            height: 3,
+            compact: false,
+            node_style: None,
+            entity: None,
+        };
+        let nodes = [node];
+        // Forward edge out of the right side: from the first outside cell
+        // back onto the border.
+        assert_eq!(edge_start(&[(7, 3), (12, 3)], &nodes), (6, 3));
+        // Out of the bottom.
+        assert_eq!(edge_start(&[(4, 5), (4, 9)], &nodes), (4, 4));
+        // A back edge that already starts on the border stays there, so ER
+        // marks are not drawn inside the box.
+        assert_eq!(edge_start(&[(4, 2), (4, 0)], &nodes), (4, 2));
+        // Nothing behind the start: unchanged.
+        assert_eq!(edge_start(&[(10, 10), (12, 10)], &nodes), (10, 10));
     }
 
     #[test]
