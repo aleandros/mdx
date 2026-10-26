@@ -538,6 +538,8 @@ mod sys {
         query: &[u8],
         timeout: Duration,
     ) -> std::io::Result<Option<super::ProbeReply>> {
+        // Fail before sending anything, so no reply can arrive unread.
+        check_selectable(tty)?;
         tty.write_all(query)?;
         tty.flush()?;
         let mut buf = Vec::new();
@@ -575,14 +577,21 @@ mod sys {
         }
     }
 
+    /// `select` only handles descriptors below `FD_SETSIZE`.
+    fn check_selectable(tty: &File) -> std::io::Result<()> {
+        let fd = tty.as_raw_fd();
+        if usize::try_from(fd).is_ok_and(|fd| fd < libc::FD_SETSIZE) {
+            Ok(())
+        } else {
+            Err(std::io::Error::other("tty descriptor too large for select"))
+        }
+    }
+
     /// Wait until `tty` has input or `deadline` passes. Uses `select` because
     /// macOS `poll` does not support tty devices.
     pub(super) fn wait_readable(tty: &File, deadline: Instant) -> std::io::Result<bool> {
+        check_selectable(tty)?;
         let fd = tty.as_raw_fd();
-        let in_range = usize::try_from(fd).is_ok_and(|fd| fd < libc::FD_SETSIZE);
-        if !in_range {
-            return Err(std::io::Error::other("tty descriptor too large for select"));
-        }
         loop {
             let timeout = deadline.saturating_duration_since(Instant::now());
             if timeout.is_zero() {
@@ -1008,7 +1017,10 @@ mod pty_tests {
         );
         assert!(reply.unwrap().is_none());
         assert!(start.elapsed() >= Duration::from_millis(200));
-        // Nothing is left for the pager to read as keystrokes.
+        // The partial reply was consumed, so nothing is left for the pager to
+        // read as keystrokes. (Bytes arriving between the last read and the
+        // flush cannot be staged deterministically, so the flush itself is
+        // not exercised here.)
         assert!(!wait_readable(&tty, Instant::now() + Duration::from_millis(50)).unwrap());
         terminal.join().unwrap();
     }

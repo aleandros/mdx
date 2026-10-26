@@ -761,6 +761,7 @@ fn test_debug_graphics_env_off() {
         .env("MDX_GRAPHICS", "off")
         .output()
         .expect("failed to run mdx");
+    assert!(output.status.success(), "{output:?}");
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         stdout.contains("reason: disabled by MDX_GRAPHICS=off"),
