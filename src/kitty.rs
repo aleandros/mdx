@@ -409,6 +409,33 @@ pub(crate) fn delete(id: u32) -> Vec<u8> {
     format!("\x1b_Ga=d,d=I,i={id},q=2\x1b\\").into_bytes()
 }
 
+/// Wrap every escape sequence in `bytes` in a tmux passthrough
+/// (`ESC P tmux; ... ESC \`, with each ESC inside doubled), so tmux hands it
+/// to the outer terminal. Each sequence gets its own passthrough, so one
+/// passthrough never carries more than a single 4096-byte chunk of image
+/// data. Sequences are split after each ST; our sequences hold no other ESC.
+pub(crate) fn tmux_passthrough(bytes: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(bytes.len() + bytes.len() / 64 + 16);
+    let mut rest = bytes;
+    while !rest.is_empty() {
+        let end = rest
+            .windows(2)
+            .position(|w| w == b"\x1b\\")
+            .map_or(rest.len(), |p| p + 2);
+        let (sequence, tail) = rest.split_at(end);
+        out.extend_from_slice(b"\x1bPtmux;");
+        for &b in sequence {
+            if b == 0x1b {
+                out.push(0x1b);
+            }
+            out.push(b);
+        }
+        out.extend_from_slice(b"\x1b\\");
+        rest = tail;
+    }
+    out
+}
+
 /// Cells to reserve for an image of `image_px` pixels: its natural size,
 /// scaled down (never up) to fit `max_cols x max_rows`, keeping the aspect
 /// ratio. `None` when the image or the space is empty.
@@ -549,6 +576,79 @@ mod tests {
             b"\x1b_Ga=p,U=1,i=5,p=1,c=40,r=12,q=2\x1b\\".to_vec()
         );
         assert_eq!(delete(5), b"\x1b_Ga=d,d=I,i=5,q=2\x1b\\".to_vec());
+    }
+
+    /// Undo [`tmux_passthrough`]: the sequences inside each passthrough.
+    fn unwrap_passthrough(bytes: &[u8]) -> Vec<Vec<u8>> {
+        let text = std::str::from_utf8(bytes).unwrap();
+        let mut sequences = Vec::new();
+        let mut rest = text;
+        while !rest.is_empty() {
+            let body = rest
+                .strip_prefix("\x1bPtmux;")
+                .expect("starts a passthrough");
+            // The passthrough ends at the first ESC \ whose ESC is not doubled.
+            let mut inner = String::new();
+            let mut chars = body.char_indices();
+            let end = loop {
+                let (i, c) = chars.next().expect("terminated passthrough");
+                if c != '\x1b' {
+                    inner.push(c);
+                    continue;
+                }
+                match chars.next().expect("ESC is followed by a byte") {
+                    (_, '\x1b') => inner.push('\x1b'),
+                    (j, '\\') => {
+                        assert_eq!(j, i + 1);
+                        break j + 1;
+                    }
+                    (_, other) => panic!("lone ESC before {other:?}"),
+                }
+            };
+            sequences.push(inner.into_bytes());
+            rest = &body[end..];
+        }
+        sequences
+    }
+
+    #[test]
+    fn tmux_passthrough_doubles_every_esc() {
+        let wrapped = tmux_passthrough(&delete(5));
+        assert_eq!(
+            wrapped,
+            b"\x1bPtmux;\x1b\x1b_Ga=d,d=I,i=5,q=2\x1b\x1b\\\x1b\\".to_vec()
+        );
+    }
+
+    #[test]
+    fn tmux_passthrough_wraps_each_sequence_separately() {
+        let mut bytes = place(3, 10, 2);
+        bytes.extend(delete(4));
+        let wrapped = tmux_passthrough(&bytes);
+        assert_eq!(
+            unwrap_passthrough(&wrapped),
+            vec![place(3, 10, 2), delete(4)]
+        );
+    }
+
+    #[test]
+    fn tmux_passthrough_keeps_transmit_chunks_apart() {
+        let data = vec![7u8; 3 * 4096 / 4 * 2 + 10]; // three chunks
+        let plain = transmit(11, &data);
+        let wrapped = tmux_passthrough(&plain);
+        let sequences = unwrap_passthrough(&wrapped);
+        assert_eq!(sequences.len(), 3);
+        for sequence in &sequences {
+            assert!(sequence.starts_with(b"\x1b_G") && sequence.ends_with(b"\x1b\\"));
+            // One chunk of at most 4096 payload bytes per passthrough.
+            assert!(sequence.len() <= 4096 + 64, "{}", sequence.len());
+        }
+        assert_eq!(sequences.concat(), plain);
+    }
+
+    #[test]
+    fn tmux_passthrough_of_nothing_is_nothing() {
+        assert!(tmux_passthrough(b"").is_empty());
     }
 
     #[test]
