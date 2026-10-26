@@ -4,6 +4,7 @@ pub(crate) mod er;
 pub(crate) mod layout;
 pub(crate) mod parse;
 pub(crate) mod sequence;
+pub(crate) mod svg;
 
 /// Number of terminal columns `s` occupies. Every geometry computation in
 /// the diagram code must use this instead of `str::len`, which counts bytes
@@ -96,15 +97,38 @@ pub(crate) struct FlowChart {
 }
 
 /// Returns (`styled_lines`, `node_count`, `edge_count`)
-#[expect(
-    clippy::too_many_lines,
-    reason = "dispatch keeps each diagram kind and its theme resolution together"
-)]
+#[cfg(test)]
 pub(crate) fn render_mermaid(
     content: &str,
     theme: &crate::theme::Theme,
     terminal_width: usize,
 ) -> anyhow::Result<(Vec<crate::render::StyledLine>, usize, usize)> {
+    render_diagram(content, theme, terminal_width)
+        .map(|d| (d.lines, d.primary_count, d.secondary_count))
+}
+
+/// A diagram rendered both ways: ASCII lines, and the laid-out diagram the
+/// SVG backend draws over the same cells.
+#[derive(Debug)]
+pub(crate) struct RenderedDiagram {
+    pub(crate) lines: Vec<crate::render::StyledLine>,
+    /// Nodes, entities or participants.
+    pub(crate) primary_count: usize,
+    /// Edges, relationships or events.
+    pub(crate) secondary_count: usize,
+    pub(crate) image: svg::DiagramImage,
+}
+
+#[expect(
+    clippy::too_many_lines,
+    reason = "dispatch keeps each diagram kind and its theme resolution together"
+)]
+pub(crate) fn render_diagram(
+    content: &str,
+    theme: &crate::theme::Theme,
+    terminal_width: usize,
+) -> anyhow::Result<RenderedDiagram> {
+    let key = svg::source_key(content, terminal_width, theme);
     let first_line = content
         .lines()
         .map(str::trim)
@@ -168,7 +192,13 @@ pub(crate) fn render_mermaid(
         }
 
         let lines = ascii::render_styled(&positioned);
-        return Ok((lines, entity_count, rel_count));
+        let image = svg::DiagramImage::flowchart(positioned, &lines, theme, key);
+        return Ok(RenderedDiagram {
+            lines,
+            primary_count: entity_count,
+            secondary_count: rel_count,
+            image,
+        });
     }
 
     if first_line == "sequenceDiagram" {
@@ -206,7 +236,13 @@ pub(crate) fn render_mermaid(
         }
 
         let lines = sequence::ascii::render_styled(&laid_out);
-        Ok((lines, participant_count, event_count))
+        let image = svg::DiagramImage::sequence(laid_out, &lines, theme, key);
+        Ok(RenderedDiagram {
+            lines,
+            primary_count: participant_count,
+            secondary_count: event_count,
+            image,
+        })
     } else {
         let mut chart = parse::parse_flowchart(content)?;
         let node_count = chart.nodes.len();
@@ -249,7 +285,13 @@ pub(crate) fn render_mermaid(
         }
 
         let lines = ascii::render_styled(&positioned);
-        Ok((lines, node_count, edge_count))
+        let image = svg::DiagramImage::flowchart(positioned, &lines, theme, key);
+        Ok(RenderedDiagram {
+            lines,
+            primary_count: node_count,
+            secondary_count: edge_count,
+            image,
+        })
     }
 }
 

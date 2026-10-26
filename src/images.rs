@@ -143,32 +143,67 @@ fn decode(path: &Path) -> Result<Decoded, image::ImageError> {
     Ok(Decoded { px, png })
 }
 
-/// A finished decode: the path, the file's mtime before decoding, and the
-/// image (or `None` if the file is missing or not a supported image).
-type Loaded = (PathBuf, Option<SystemTime>, Option<Decoded>);
+/// Rasterize an SVG diagram to PNG.
+fn rasterize(svg: &str) -> anyhow::Result<Decoded> {
+    let raster = crate::mermaid::svg::rasterize(svg)?;
+    Ok(Decoded {
+        px: raster.px,
+        png: raster.png,
+    })
+}
+
+/// A rasterized diagram: the source key and cell size it was drawn for.
+type DiagramKey = (u64, (u16, u16));
+
+#[derive(Debug)]
+enum Job {
+    Decode(PathBuf),
+    Rasterize(DiagramKey, String),
+}
+
+#[derive(Debug)]
+enum Done {
+    /// A finished decode: the path, the file's mtime before decoding, and
+    /// the image (or `None` if the file is missing or not a supported image).
+    Decoded(PathBuf, Option<SystemTime>, Option<Decoded>),
+    /// A finished diagram, or `None` if it could not be rasterized.
+    Rasterized(DiagramKey, Option<Decoded>),
+}
 
 /// The decoding thread. Dropping it closes the request channel, which ends
 /// the thread after its current image.
 #[derive(Debug)]
 struct Worker {
-    requests: Sender<PathBuf>,
-    results: Receiver<Loaded>,
+    requests: Sender<Job>,
+    results: Receiver<Done>,
 }
 
 impl Worker {
     fn spawn() -> Option<Self> {
-        let (requests, request_rx) = mpsc::channel::<PathBuf>();
+        let (requests, request_rx) = mpsc::channel::<Job>();
         let (result_tx, results) = mpsc::channel();
         std::thread::Builder::new()
             .name(WORKER_THREAD.into())
             .spawn(move || {
-                for path in request_rx {
-                    let mtime = modified(&path);
-                    // A decoder panic fails this image, not the pager.
-                    let decoded = std::panic::catch_unwind(|| decode(&path))
-                        .ok()
-                        .and_then(Result::ok);
-                    if result_tx.send((path, mtime, decoded)).is_err() {
+                for job in request_rx {
+                    // A decoder or rasterizer panic fails this image, not
+                    // the pager.
+                    let done = match job {
+                        Job::Decode(path) => {
+                            let mtime = modified(&path);
+                            let decoded = std::panic::catch_unwind(|| decode(&path))
+                                .ok()
+                                .and_then(Result::ok);
+                            Done::Decoded(path, mtime, decoded)
+                        }
+                        Job::Rasterize(key, svg) => {
+                            let raster = std::panic::catch_unwind(|| rasterize(&svg))
+                                .ok()
+                                .and_then(Result::ok);
+                            Done::Rasterized(key, raster)
+                        }
+                    };
+                    if result_tx.send(done).is_err() {
                         break;
                     }
                 }
@@ -200,12 +235,24 @@ struct Entry {
     loading: bool,
 }
 
-/// Images shown in the pager, keyed by resolved path.
+/// A diagram drawn as an image.
+#[derive(Debug)]
+struct DiagramEntry {
+    id: u32,
+    /// `Ready` holds the raster size; the placement is always the diagram's
+    /// own cell rectangle.
+    status: Status,
+    placed: Option<(u16, u16)>,
+}
+
+/// Images shown in the pager: local files keyed by resolved path, and
+/// rasterized diagrams keyed by source and cell size.
 #[derive(Debug)]
 pub(crate) struct ImageStore {
     base_dir: PathBuf,
     cell_px: (u16, u16),
     entries: HashMap<PathBuf, Entry>,
+    diagrams: HashMap<DiagramKey, DiagramEntry>,
     worker: Option<Worker>,
     /// Start the worker on the first request; off in tests.
     spawn_worker: bool,
@@ -230,6 +277,7 @@ impl ImageStore {
             base_dir,
             cell_px,
             entries: HashMap::new(),
+            diagrams: HashMap::new(),
             worker: None,
             spawn_worker: false,
             next_id: first_id(),
@@ -238,13 +286,28 @@ impl ImageStore {
         }
     }
 
+    /// Record a new cell size. Diagrams drawn for the old size are deleted;
+    /// they are rasterized again for the new one when next laid out.
     pub(crate) fn set_cell_px(&mut self, cell_px: (u16, u16)) {
+        if cell_px == self.cell_px {
+            return;
+        }
         self.cell_px = cell_px;
+        let output = &mut self.output;
+        self.diagrams.retain(|(_, px), entry| {
+            let kept = *px == cell_px;
+            if !kept && matches!(entry.status, Status::Ready { .. }) {
+                output.extend(kitty::delete(entry.id));
+            }
+            kept
+        });
     }
 
-    /// Whether a decode is in flight, so the event loop should poll.
+    /// Whether a decode or rasterization is in flight, so the event loop
+    /// should poll.
     pub(crate) fn loading(&self) -> bool {
         self.entries.values().any(|e| e.loading)
+            || self.diagrams.values().any(|d| d.status == Status::Pending)
     }
 
     fn alloc_id(&mut self) -> u32 {
@@ -254,14 +317,65 @@ impl ImageStore {
         id
     }
 
-    fn request(&mut self, path: &Path) -> bool {
+    fn send(&mut self, job: Job) -> bool {
         if self.worker.is_none() && self.spawn_worker {
             self.spawn_worker = false;
             self.worker = Worker::spawn();
         }
         self.worker
             .as_ref()
-            .is_some_and(|w| w.requests.send(path.to_path_buf()).is_ok())
+            .is_some_and(|w| w.requests.send(job).is_ok())
+    }
+
+    fn request(&mut self, path: &Path) -> bool {
+        self.send(Job::Decode(path.to_path_buf()))
+    }
+
+    /// Image id and placement for `diagram`, drawn as an image over exactly
+    /// its ASCII cell rectangle, or `None` while it rasterizes, when it
+    /// failed, or when it is too large to address. The first call for a
+    /// diagram and cell size starts rasterizing it.
+    pub(crate) fn diagram(
+        &mut self,
+        diagram: &crate::mermaid::svg::DiagramImage,
+    ) -> Option<ImageLayout> {
+        let (cols, rows) = diagram.cells();
+        let cols = u16::try_from(cols)
+            .ok()
+            .filter(|c| (1..=kitty::MAX_CELLS).contains(c))?;
+        let rows = u16::try_from(rows)
+            .ok()
+            .filter(|r| (1..=kitty::MAX_CELLS).contains(r))?;
+        let key = (diagram.key(), self.cell_px);
+        if !self.diagrams.contains_key(&key) {
+            let id = self.alloc_id();
+            let svg = diagram.to_svg(self.cell_px);
+            let status = if self.send(Job::Rasterize(key, svg)) {
+                Status::Pending
+            } else {
+                Status::Failed
+            };
+            let entry = DiagramEntry {
+                id,
+                status,
+                placed: None,
+            };
+            self.diagrams.insert(key, entry);
+            return None;
+        }
+        let entry = self.diagrams.get_mut(&key)?;
+        if !matches!(entry.status, Status::Ready { .. }) {
+            return None;
+        }
+        if entry.placed != Some((cols, rows)) {
+            entry.placed = Some((cols, rows));
+            self.output.extend(kitty::place(entry.id, cols, rows));
+        }
+        Some(ImageLayout {
+            id: entry.id,
+            cols,
+            rows,
+        })
     }
 
     /// Image id and placement size for `url`, fitted to `max_cols x
@@ -316,7 +430,24 @@ impl ImageStore {
             return false;
         };
         let mut changed = false;
-        while let Ok((path, mtime, decoded)) = worker.results.try_recv() {
+        while let Ok(done) = worker.results.try_recv() {
+            let (path, mtime, decoded) = match done {
+                Done::Decoded(path, mtime, decoded) => (path, mtime, decoded),
+                Done::Rasterized(key, raster) => {
+                    let Some(entry) = self.diagrams.get_mut(&key) else {
+                        continue;
+                    };
+                    if let Some(raster) = raster {
+                        self.output.extend(kitty::transmit(entry.id, &raster.png));
+                        entry.status = Status::Ready { px: raster.px };
+                    } else {
+                        entry.status = Status::Failed;
+                    }
+                    entry.placed = None;
+                    changed = true;
+                    continue;
+                }
+            };
             let Some(entry) = self.entries.get_mut(&path) else {
                 continue;
             };
@@ -374,11 +505,31 @@ impl ImageStore {
         });
     }
 
+    /// Forget the diagrams whose key is not in `keys`, or that were drawn
+    /// for another cell size, deleting them from the terminal.
+    pub(crate) fn retain_diagrams(&mut self, keys: impl IntoIterator<Item = u64>) {
+        let keep: HashSet<u64> = keys.into_iter().collect();
+        let cell_px = self.cell_px;
+        let output = &mut self.output;
+        self.diagrams.retain(|(key, px), entry| {
+            let kept = *px == cell_px && keep.contains(key);
+            if !kept && matches!(entry.status, Status::Ready { .. }) {
+                output.extend(kitty::delete(entry.id));
+            }
+            kept
+        });
+    }
+
     /// Escape sequences to write to the terminal before the next frame.
     pub(crate) fn take_output(&mut self) -> Vec<u8> {
-        for entry in self.entries.values() {
-            if matches!(entry.status, Status::Ready { .. }) {
-                self.sent.insert(entry.id);
+        let ready = self
+            .entries
+            .values()
+            .map(|e| (e.id, e.status))
+            .chain(self.diagrams.values().map(|d| (d.id, d.status)));
+        for (id, status) in ready {
+            if matches!(status, Status::Ready { .. }) {
+                self.sent.insert(id);
             }
         }
         std::mem::take(&mut self.output)
@@ -395,6 +546,24 @@ impl ImageStore {
     #[cfg(test)]
     pub(crate) fn for_tests(base_dir: PathBuf, cell_px: (u16, u16)) -> Self {
         Self::without_worker(base_dir, cell_px)
+    }
+
+    /// Mark `diagram` as rasterized, as if the worker had finished.
+    #[cfg(test)]
+    pub(crate) fn insert_ready_diagram(
+        &mut self,
+        diagram: &crate::mermaid::svg::DiagramImage,
+    ) -> u32 {
+        let id = self.alloc_id();
+        self.diagrams.insert(
+            (diagram.key(), self.cell_px),
+            DiagramEntry {
+                id,
+                status: Status::Ready { px: (1, 1) },
+                placed: None,
+            },
+        );
+        id
     }
 
     /// Mark `url` as decoded with size `px`, as if the worker had finished.
@@ -636,6 +805,84 @@ mod tests {
         let sent = image::load_from_memory(&decoded.png).unwrap();
         assert_eq!((sent.width(), sent.height()), (2048, 1024));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn diagram(source: &str) -> crate::mermaid::svg::DiagramImage {
+        crate::mermaid::render_diagram(source, crate::theme::Theme::default_theme(), 80)
+            .unwrap()
+            .image
+    }
+
+    #[test]
+    fn diagrams_rasterize_in_the_background_and_fill_their_cells() {
+        let flowchart = diagram("graph LR\n    A[Start] --> B[End]\n");
+        let (cols, rows) = flowchart.cells();
+        let mut store = ImageStore::new(PathBuf::from("/docs"), (10, 20));
+        assert_eq!(
+            store.diagram(&flowchart),
+            None,
+            "first call only rasterizes"
+        );
+        assert!(store.loading());
+        wait_for(&mut store);
+        let layout = store.diagram(&flowchart).unwrap();
+        assert_eq!(
+            (usize::from(layout.cols), usize::from(layout.rows)),
+            (cols, rows)
+        );
+        let out = String::from_utf8(store.take_output()).unwrap();
+        assert!(out.contains(&format!("a=t,f=100,t=d,i={}", layout.id)));
+        assert!(out.contains(&format!("a=p,U=1,i={},p=1,c={cols},r={rows}", layout.id)));
+        // Cached: asking again neither re-rasterizes nor re-places.
+        assert_eq!(store.diagram(&flowchart), Some(layout));
+        assert!(!store.loading());
+        assert!(store.take_output().is_empty());
+        let deleted = String::from_utf8(store.delete_all()).unwrap();
+        assert!(deleted.contains(&format!("a=d,d=I,i={}", layout.id)));
+    }
+
+    #[test]
+    fn a_new_cell_size_rasterizes_again() {
+        let flowchart = diagram("graph LR\n    A --> B\n");
+        let mut store = ImageStore::for_tests(PathBuf::from("/docs"), (10, 20));
+        let id = store.insert_ready_diagram(&flowchart);
+        assert_eq!(store.diagram(&flowchart).map(|l| l.id), Some(id));
+        store.take_output();
+        store.set_cell_px((20, 40));
+        assert_eq!(store.take_output(), kitty::delete(id), "old size deleted");
+        store.set_cell_px((20, 40));
+        assert!(store.take_output().is_empty(), "same size: nothing to do");
+        // No worker in this store, so the new size fails and the pager keeps
+        // the ASCII diagram.
+        assert_eq!(store.diagram(&flowchart), None);
+        assert!(!store.loading());
+    }
+
+    #[test]
+    fn diagrams_too_large_to_address_stay_ascii() {
+        let source = format!(
+            "graph LR\n    A[{}] --> B\n",
+            "x".repeat(usize::from(kitty::MAX_CELLS))
+        );
+        let wide = diagram(&source);
+        assert!(wide.cells().0 > usize::from(kitty::MAX_CELLS));
+        let mut store = ImageStore::new(PathBuf::from("/docs"), (10, 20));
+        assert_eq!(store.diagram(&wide), None);
+        assert!(!store.loading(), "nothing is rasterized");
+        assert!(store.worker.is_none());
+    }
+
+    #[test]
+    fn retain_diagrams_deletes_unreferenced_ones() {
+        let a = diagram("graph LR\n    A --> B\n");
+        let b = diagram("graph LR\n    C --> D\n");
+        let mut store = ImageStore::for_tests(PathBuf::from("/docs"), (10, 20));
+        let a_id = store.insert_ready_diagram(&a);
+        let b_id = store.insert_ready_diagram(&b);
+        store.take_output();
+        store.retain_diagrams([a.key()]);
+        assert_eq!(store.take_output(), kitty::delete(b_id));
+        assert_eq!(store.diagram(&a).map(|l| l.id), Some(a_id));
     }
 
     #[test]

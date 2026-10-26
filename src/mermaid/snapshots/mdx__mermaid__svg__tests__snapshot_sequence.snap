@@ -1,0 +1,73 @@
+---
+source: src/mermaid/svg.rs
+expression: svg
+---
+<svg xmlns="http://www.w3.org/2000/svg" width="360" height="580" viewBox="0 0 360 580">
+<defs><mask id="gaps" maskUnits="userSpaceOnUse" x="0" y="0" width="360" height="580"><rect width="360" height="580" fill="#fff"/>
+<rect x="20" y="440" width="100" height="20" fill="#000"/>
+<rect x="20" y="500" width="100" height="20" fill="#000"/>
+<rect x="20" y="360" width="210" height="20" fill="#000"/>
+<rect x="265" y="110" width="20" height="100" rx="0" fill="#000"/>
+<rect x="130" y="80" width="50" height="20" fill="#000"/>
+<rect x="140" y="120" width="20" height="20" fill="#000"/>
+<rect x="310" y="160" width="50" height="20" fill="#000"/>
+<rect x="130" y="220" width="40" height="20" fill="#000"/>
+<rect x="130" y="260" width="40" height="20" fill="#000"/>
+<rect x="130" y="380" width="40" height="20" fill="#000"/>
+<rect x="140" y="460" width="30" height="20" fill="#000"/>
+<rect x="140" y="520" width="20" height="20" fill="#000"/>
+<rect x="5" y="310" width="90" height="40" rx="0" fill="#000"/>
+<rect x="5" y="10" width="80" height="40" rx="5" fill="#000"/>
+<rect x="245" y="10" width="60" height="40" rx="5" fill="#000"/>
+</mask></defs>
+<g mask="url(#gaps)" fill="none">
+<polyline points="45,50 45,570" stroke="#d8dee9" stroke-width="1.2" stroke-linejoin="round" stroke-dasharray="5 4"/>
+<polyline points="275,50 275,570" stroke="#d8dee9" stroke-width="1.2" stroke-linejoin="round" stroke-dasharray="5 4"/>
+<polyline points="5,450 315,450 315,570 5,570 5,450" stroke="#81a1c1" stroke-width="1.2" stroke-linejoin="round"/>
+<polyline points="5,510 315,510" stroke="#81a1c1" stroke-width="1.2" stroke-linejoin="round" stroke-dasharray="5 4"/>
+<polyline points="5,370 315,370 315,430 5,430 5,370" stroke="#81a1c1" stroke-width="1.2" stroke-linejoin="round"/>
+<polyline points="45,110 265,110" stroke="#a3be8c" stroke-width="1.2" stroke-linejoin="round"/>
+<polygon points="265,110 256,114.5 256,105.5" fill="#a3be8c"/>
+<polyline points="265,150 45,150" stroke="#a3be8c" stroke-width="1.2" stroke-linejoin="round" stroke-dasharray="5 4"/>
+<polygon points="45,150 54,145.5 54,154.5" fill="#a3be8c"/>
+<polyline points="285,170 295,170 295,210 285,210" stroke="#a3be8c" stroke-width="1.2" stroke-linejoin="round"/>
+<polygon points="285,210 294,205.5 294,214.5" fill="#a3be8c"/>
+<polyline points="45,250 275,250" stroke="#a3be8c" stroke-width="1.2" stroke-linejoin="round"/>
+<polyline points="266,254.5 275,250 266,245.5" stroke="#a3be8c" stroke-width="1.2" stroke-linejoin="round"/>
+<polyline points="275,290 45,290" stroke="#a3be8c" stroke-width="1.2" stroke-linejoin="round" stroke-dasharray="5 4"/>
+<polyline points="54,294.5 45,285.5" stroke="#a3be8c" stroke-width="1.2" stroke-linejoin="round"/>
+<polyline points="54,285.5 45,294.5" stroke="#a3be8c" stroke-width="1.2" stroke-linejoin="round"/>
+<polyline points="45,410 275,410" stroke="#a3be8c" stroke-width="1.2" stroke-linejoin="round"/>
+<polygon points="275,410 266,414.5 266,405.5" fill="#a3be8c"/>
+<polyline points="275,490 45,490" stroke="#a3be8c" stroke-width="1.2" stroke-linejoin="round"/>
+<polygon points="45,490 54,485.5 54,494.5" fill="#a3be8c"/>
+<polyline points="275,550 45,550" stroke="#a3be8c" stroke-width="1.2" stroke-linejoin="round"/>
+<polygon points="45,550 54,545.5 54,554.5" fill="#a3be8c"/>
+</g>
+<g fill="none">
+<rect x="265" y="110" width="20" height="100" rx="0" stroke="#d8dee9" stroke-width="1.2" fill="#81a1c1" fill-opacity="0.3"/>
+<rect x="5" y="310" width="90" height="40" rx="0" stroke="#ebcb8b" stroke-width="1.2" fill="#ebcb8b" fill-opacity="0.12"/>
+<rect x="5" y="10" width="80" height="40" rx="5" stroke="#88c0d0" stroke-width="1.2" fill="#81a1c1" fill-opacity="0.15"/>
+<rect x="245" y="10" width="60" height="40" rx="5" stroke="#88c0d0" stroke-width="1.2" fill="#81a1c1" fill-opacity="0.15"/>
+</g>
+<g font-family="DejaVu Sans Mono, monospace" font-size="16">
+<text x="30" y="455.76" textLength="30" lengthAdjust="spacingAndGlyphs" fill="#81a1c1">alt</text>
+<text x="70" y="455.76" textLength="40" lengthAdjust="spacingAndGlyphs" fill="#81a1c1">[ok]</text>
+<text x="30" y="515.76" textLength="80" lengthAdjust="spacingAndGlyphs" fill="#81a1c1">[failed]</text>
+<text x="30" y="375.76" textLength="40" lengthAdjust="spacingAndGlyphs" fill="#81a1c1">loop</text>
+<text x="80" y="375.76" textLength="60" lengthAdjust="spacingAndGlyphs" fill="#81a1c1">[Every</text>
+<text x="150" y="375.76" textLength="70" lengthAdjust="spacingAndGlyphs" fill="#81a1c1">minute]</text>
+<text x="130" y="95.76" textLength="50" lengthAdjust="spacingAndGlyphs" fill="#ebcb8b">Hello</text>
+<text x="140" y="135.76" textLength="20" lengthAdjust="spacingAndGlyphs" fill="#ebcb8b">Hi</text>
+<text x="310" y="175.76" textLength="50" lengthAdjust="spacingAndGlyphs" fill="#ebcb8b">think</text>
+<text x="130" y="235.76" textLength="40" lengthAdjust="spacingAndGlyphs" fill="#ebcb8b">open</text>
+<text x="130" y="275.76" textLength="40" lengthAdjust="spacingAndGlyphs" fill="#ebcb8b">lost</text>
+<text x="130" y="395.76" textLength="40" lengthAdjust="spacingAndGlyphs" fill="#ebcb8b">Ping</text>
+<text x="140" y="475.76" textLength="30" lengthAdjust="spacingAndGlyphs" fill="#ebcb8b">yes</text>
+<text x="140" y="535.76" textLength="20" lengthAdjust="spacingAndGlyphs" fill="#ebcb8b">no</text>
+<text x="20" y="335.76" textLength="10" lengthAdjust="spacingAndGlyphs" fill="#d8dee9">a</text>
+<text x="40" y="335.76" textLength="40" lengthAdjust="spacingAndGlyphs" fill="#d8dee9">note</text>
+<text x="20" y="35.76" textLength="50" lengthAdjust="spacingAndGlyphs" fill="#d8dee9">Alice</text>
+<text x="260" y="35.76" textLength="30" lengthAdjust="spacingAndGlyphs" fill="#d8dee9">Bob</text>
+</g>
+</svg>

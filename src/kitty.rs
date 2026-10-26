@@ -324,7 +324,7 @@ pub(crate) const MAX_CELLS: u16 = 297;
 const CHUNK: usize = 4096;
 
 /// Cell size assumed when the terminal did not report one.
-const FALLBACK_CELL_PX: (u16, u16) = (10, 20);
+pub(crate) const FALLBACK_CELL_PX: (u16, u16) = (10, 20);
 
 /// The foreground color that carries the low 24 bits of `id`.
 pub(crate) fn id_color(id: u32) -> (u8, u8, u8) {

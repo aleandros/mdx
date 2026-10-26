@@ -81,12 +81,9 @@ fn read_file_with_retry(path: &Path) -> Option<String> {
     }
 }
 
-struct MermaidCacheEntry {
-    lines: Vec<crate::render::StyledLine>,
-    node_count: usize,
-    edge_count: usize,
-    kind: crate::render::DiagramKind,
-}
+/// The last diagram a mermaid block rendered to, shown again while the
+/// block's source fails to parse.
+type MermaidCacheEntry = crate::render::RenderedBlock;
 
 #[expect(
     clippy::too_many_arguments,
@@ -134,22 +131,8 @@ fn diff_and_render(
             if has_diagram {
                 // Update cache with successful render
                 for rb in &group {
-                    if let RenderedBlock::Diagram {
-                        lines,
-                        node_count,
-                        edge_count,
-                        kind,
-                    } = rb
-                    {
-                        mermaid_cache.insert(
-                            i,
-                            MermaidCacheEntry {
-                                lines: lines.clone(),
-                                node_count: *node_count,
-                                edge_count: *edge_count,
-                                kind: *kind,
-                            },
-                        );
+                    if matches!(rb, RenderedBlock::Diagram { .. }) {
+                        mermaid_cache.insert(i, rb.clone());
                     }
                 }
             } else if let Some(cached) = mermaid_cache.get(&i) {
@@ -164,12 +147,7 @@ fn diff_and_render(
                             },
                         }],
                     }]),
-                    RenderedBlock::Diagram {
-                        lines: cached.lines.clone(),
-                        node_count: cached.node_count,
-                        edge_count: cached.edge_count,
-                        kind: cached.kind,
-                    },
+                    cached.clone(),
                 ];
             }
             // If no cache and render failed, keep default error output
@@ -280,22 +258,8 @@ pub(crate) fn run_watch(
     for (i, (block, group)) in blocks.iter().zip(rendered_groups.iter()).enumerate() {
         if let crate::parser::Block::MermaidBlock { .. } = block {
             for rb in group {
-                if let RenderedBlock::Diagram {
-                    lines,
-                    node_count,
-                    edge_count,
-                    kind,
-                } = rb
-                {
-                    mermaid_cache.insert(
-                        i,
-                        MermaidCacheEntry {
-                            lines: lines.clone(),
-                            node_count: *node_count,
-                            edge_count: *edge_count,
-                            kind: *kind,
-                        },
-                    );
+                if matches!(rb, RenderedBlock::Diagram { .. }) {
+                    mermaid_cache.insert(i, rb.clone());
                 }
             }
         }
@@ -688,13 +652,14 @@ mod tests {
         // Pre-populate cache with a known entry
         cache.insert(
             0, // position-based key
-            MermaidCacheEntry {
+            crate::render::RenderedBlock::Diagram {
                 lines: vec![crate::render::StyledLine {
                     spans: vec![crate::render::StyledSpan::plain("cached line")],
                 }],
                 node_count: 2,
                 edge_count: 1,
                 kind: crate::render::DiagramKind::Flowchart,
+                image: None,
             },
         );
 
