@@ -514,7 +514,10 @@ mod sys {
             unsafe { libc::FD_SET(fd, &raw mut set) };
             let mut tv = libc::timeval {
                 tv_sec: libc::time_t::try_from(timeout.as_secs()).unwrap_or(libc::time_t::MAX),
-                tv_usec: libc::suseconds_t::try_from(timeout.subsec_micros()).unwrap_or(0),
+                // suseconds_t is i32 on macOS and i64 on Linux; u64 converts
+                // fallibly to both.
+                tv_usec: libc::suseconds_t::try_from(u64::from(timeout.subsec_micros()))
+                    .unwrap_or(0),
             };
             // SAFETY: `set` and `tv` are valid and outlive the call; the
             // write and except sets may be null.
