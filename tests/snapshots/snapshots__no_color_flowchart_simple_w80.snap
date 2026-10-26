@@ -1,0 +1,81 @@
+---
+source: tests/snapshots.rs
+expression: output
+---
+# Simple Flowcharts
+
+## Linear Flow
+
+A basic top-down sequence:
+
+   ┌───────┐
+   │ Start │
+   └───────┘
+        │
+        │
+        │
+        ▼
+┌──────────────┐
+│ Process Data │
+└──────────────┘
+        │
+        │
+        │
+        ▼
+┌──────────────┐
+│ Save Results │
+└──────────────┘
+        │
+        │
+        │
+        ▼
+    ┌──────┐
+    │ Done │
+    └──────┘
+
+## Decision Branch
+
+A flowchart with a yes/no decision:
+
+       ┌─────────────────┐
+       │ Receive Request │
+       └─────────────────┘
+                │
+                │
+                │
+                ▼
+               /\
+               / \
+              /   \
+             /     \
+            /       \
+           /         \
+          /Is Valid?  \
+           \         /
+            \       /
+             \     /
+              \   /
+               \ /
+               \/
+                │
+         Yes    │  No
+     ┌──────────┴────────┐
+     ▼                   ▼
+┌─────────┐      ┌──────────────┐
+│ Process │      │ Return Error │
+└─────────┘      └──────────────┘
+     │                   │
+     │                   │
+     └──────────┬────────┘
+                ▼
+        ┌───────────────┐
+        │ Send Response │
+        └───────────────┘
+
+## Left-to-Right Flow
+
+The same pipeline rendered horizontally:
+
+┌───────┐      ┌───────┐      ┌──────────┐      ┌───────────┐      ┌────────┐
+│ Input │─────►│ Parse │─────►│ Validate │─────►│ Transform │─────►│ Output │
+└───────┘      └───────┘      └──────────┘      └───────────┘      └────────┘

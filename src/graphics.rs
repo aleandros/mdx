@@ -16,17 +16,15 @@ pub(crate) const ENV_VAR: &str = "MDX_GRAPHICS";
 /// Image id carried by the query; the terminal echoes it in its reply.
 const PROBE_IMAGE_ID: u32 = 0x6d64;
 
-/// How long to wait for the terminal's replies on a local terminal.
-const PROBE_TIMEOUT: Duration = Duration::from_millis(100);
+/// Longest wait for the DA1 reply, which comes last and which terminals
+/// send within milliseconds; the probe returns as soon as it arrives. Only a
+/// terminal that never answers DA1 waits this long. A shorter timeout would
+/// let a slow reply arrive after the probe, where the pager would read it as
+/// keystrokes.
+const PROBE_TIMEOUT: Duration = Duration::from_secs(1);
 
-/// Over SSH the round trip can exceed [`PROBE_TIMEOUT`]; a reply arriving
-/// after the timeout would otherwise be read by the pager as keystrokes.
-const PROBE_TIMEOUT_SSH: Duration = Duration::from_millis(500);
-
-/// Longest wait for DA1 (always the last reply) after the query. A reply
-/// that has started is read to the end; after a timeout, a late reply is
-/// still swallowed until this cap so the pager does not read it as keys.
-const PROBE_REPLY_CAP: Duration = Duration::from_secs(1);
+/// [`PROBE_TIMEOUT`] over SSH, where the round trip can be much longer.
+const PROBE_TIMEOUT_SSH: Duration = Duration::from_secs(2);
 
 /// Terminals whose Unicode placeholder support has been verified, with the
 /// first version that has it, matched against the `XTVERSION` reply.
@@ -527,31 +525,30 @@ mod sys {
             restore: !already_raw,
         };
         let winsize_cell = winsize_cell(&tty);
+        let reply = exchange(&mut tty, query, timeout)?;
+        Ok((reply, winsize_cell))
+    }
 
+    /// Write `query` to `tty` (already in raw mode) and read until a complete
+    /// reply arrives or `timeout` passes. Without a complete reply, queued
+    /// input is dropped so the pager (or the shell, after --debug-graphics)
+    /// does not read a partial reply as keystrokes.
+    pub(super) fn exchange(
+        tty: &mut File,
+        query: &[u8],
+        timeout: Duration,
+    ) -> std::io::Result<Option<super::ProbeReply>> {
         tty.write_all(query)?;
         tty.flush()?;
-
-        let sent = Instant::now();
         let mut buf = Vec::new();
-        let mut reply = read_reply(&mut tty, &mut buf, sent + timeout)?;
-        if reply.is_none() && !buf.is_empty() {
-            // Something arrived: the terminal is answering, only slowly.
-            reply = read_reply(&mut tty, &mut buf, sent + super::PROBE_REPLY_CAP)?;
+        let reply = read_reply(tty, &mut buf, Instant::now() + timeout);
+        if !matches!(reply, Ok(Some(_))) {
+            // SAFETY: tcflush only discards queued input on a valid, open fd.
+            unsafe {
+                libc::tcflush(tty.as_raw_fd(), libc::TCIFLUSH);
+            }
         }
-        if reply.is_some() {
-            return Ok((reply, winsize_cell));
-        }
-        // No complete reply in time, so graphics stay off. A late reply may
-        // still be on its way: swallow it (up to DA1 or the cap), then drop
-        // anything queued, so the pager (or the shell, after
-        // --debug-graphics) does not read it as keystrokes. Only a terminal
-        // that never answers DA1 pays the full cap.
-        read_reply(&mut tty, &mut buf, sent + super::PROBE_REPLY_CAP)?;
-        // SAFETY: tcflush only discards queued input on a valid, open fd.
-        unsafe {
-            libc::tcflush(tty.as_raw_fd(), libc::TCIFLUSH);
-        }
-        Ok((None, winsize_cell))
+        reply
     }
 
     /// Read into `buf` until it holds a complete reply or `deadline` passes.
@@ -568,17 +565,19 @@ mod sys {
             if !wait_readable(tty, deadline)? {
                 return Ok(None);
             }
-            let n = tty.read(&mut chunk)?;
-            if n == 0 {
-                return Ok(None);
-            }
+            let n = match tty.read(&mut chunk) {
+                Ok(0) => return Ok(None),
+                Ok(n) => n,
+                Err(err) if err.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(err) => return Err(err),
+            };
             buf.extend_from_slice(&chunk[..n]);
         }
     }
 
     /// Wait until `tty` has input or `deadline` passes. Uses `select` because
     /// macOS `poll` does not support tty devices.
-    fn wait_readable(tty: &File, deadline: Instant) -> std::io::Result<bool> {
+    pub(super) fn wait_readable(tty: &File, deadline: Instant) -> std::io::Result<bool> {
         let fd = tty.as_raw_fd();
         let in_range = usize::try_from(fd).is_ok_and(|fd| fd < libc::FD_SETSIZE);
         if !in_range {
@@ -913,5 +912,117 @@ mod tests {
             "{text}"
         );
         assert!(text.contains("setting: off (from --graphics)"), "{text}");
+    }
+}
+
+#[cfg(all(test, unix))]
+mod pty_tests {
+    use super::sys::{exchange, wait_readable};
+    use super::{GraphicsReply, PROBE_IMAGE_ID, query_bytes};
+    use std::fs::File;
+    use std::io::{Read, Write};
+    use std::os::fd::{AsRawFd, FromRawFd};
+    use std::time::{Duration, Instant};
+
+    /// A pty pair with the terminal side in raw mode: (terminal, emulator).
+    fn raw_pty() -> (File, File) {
+        let mut master = -1;
+        let mut slave = -1;
+        // SAFETY: both out-pointers are valid; name, termios and winsize may be null.
+        let rc = unsafe {
+            libc::openpty(
+                &raw mut master,
+                &raw mut slave,
+                std::ptr::null_mut(),
+                // Null pointers; macOS declares these `*mut`, Linux `*const`.
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+            )
+        };
+        assert_eq!(rc, 0, "openpty failed");
+        // SAFETY: openpty returned a fresh descriptor that nothing else owns.
+        let tty = unsafe { File::from_raw_fd(slave) };
+        // SAFETY: as above, for the other end.
+        let emulator = unsafe { File::from_raw_fd(master) };
+        // SAFETY: termios is plain data; tcgetattr fills it in below.
+        let mut termios: libc::termios = unsafe { std::mem::zeroed() };
+        // SAFETY: valid fd and termios pointer.
+        let rc = unsafe { libc::tcgetattr(tty.as_raw_fd(), &raw mut termios) };
+        assert_eq!(rc, 0);
+        // SAFETY: termios was initialised by tcgetattr.
+        unsafe { libc::cfmakeraw(&raw mut termios) };
+        // SAFETY: valid fd and termios pointer.
+        let rc = unsafe { libc::tcsetattr(tty.as_raw_fd(), libc::TCSANOW, &raw const termios) };
+        assert_eq!(rc, 0);
+        (tty, emulator)
+    }
+
+    /// Play the terminal: read the query up to DA1, wait `delay`, send `reply`.
+    fn answer(
+        mut emulator: File,
+        delay: Duration,
+        reply: &'static [u8],
+    ) -> std::thread::JoinHandle<()> {
+        std::thread::spawn(move || {
+            let mut seen = Vec::new();
+            let mut chunk = [0u8; 256];
+            while !seen.ends_with(b"\x1b[c") {
+                let n = emulator.read(&mut chunk).expect("read query");
+                seen.extend_from_slice(&chunk[..n]);
+            }
+            assert_eq!(seen, query_bytes(PROBE_IMAGE_ID));
+            std::thread::sleep(delay);
+            emulator.write_all(reply).expect("write reply");
+            // Keep the emulator side open until the probe is done reading.
+            std::thread::sleep(Duration::from_millis(500));
+        })
+    }
+
+    const KITTY: &[u8] = b"\x1b_Gi=28004;OK\x1b\\\x1bP>|kitty(0.35.2)\x1b\\\x1b[?62;22c";
+
+    #[test]
+    fn slow_reply_is_read_to_the_end() {
+        let (mut tty, emulator) = raw_pty();
+        let terminal = answer(emulator, Duration::from_millis(300), KITTY);
+        let reply = exchange(
+            &mut tty,
+            &query_bytes(PROBE_IMAGE_ID),
+            Duration::from_secs(2),
+        )
+        .unwrap()
+        .expect("reply within the timeout");
+        assert_eq!(reply.graphics, GraphicsReply::Ok);
+        assert_eq!(reply.version.as_deref(), Some("kitty(0.35.2)"));
+        terminal.join().unwrap();
+    }
+
+    #[test]
+    fn timeout_drops_partial_reply() {
+        let (mut tty, emulator) = raw_pty();
+        let terminal = answer(emulator, Duration::ZERO, b"\x1b_Gi=28004;OK\x1b\\Gi");
+        let start = Instant::now();
+        let reply = exchange(
+            &mut tty,
+            &query_bytes(PROBE_IMAGE_ID),
+            Duration::from_millis(200),
+        );
+        assert!(reply.unwrap().is_none());
+        assert!(start.elapsed() >= Duration::from_millis(200));
+        // Nothing is left for the pager to read as keystrokes.
+        assert!(!wait_readable(&tty, Instant::now() + Duration::from_millis(50)).unwrap());
+        terminal.join().unwrap();
+    }
+
+    #[test]
+    fn silent_terminal_times_out() {
+        let (mut tty, _emulator) = raw_pty();
+        let start = Instant::now();
+        let reply = exchange(
+            &mut tty,
+            &query_bytes(PROBE_IMAGE_ID),
+            Duration::from_millis(100),
+        );
+        assert!(reply.unwrap().is_none());
+        assert!(start.elapsed() < Duration::from_secs(1));
     }
 }

@@ -182,6 +182,10 @@ fn test_theme_list() {
         stdout.contains("base16-ocean.dark"),
         "Theme list should include base16-ocean.dark: {stdout}"
     );
+    assert!(
+        stdout.lines().any(|l| l == "Nord"),
+        "Theme list should include the bundled Nord theme: {stdout}"
+    );
 }
 
 #[test]
@@ -793,5 +797,73 @@ fn test_debug_graphics_never_queries_without_terminal() {
         let stdout = String::from_utf8_lossy(&output.stdout);
         assert!(stdout.contains("query: not sent"), "{extra:?}: {stdout}");
         assert!(stdout.contains("graphics: off"), "{extra:?}: {stdout}");
+    }
+}
+
+// ─── default theme (issue #20) ───────────────────────────────────────────
+
+const NORD_H1: &str = "\x1b[1;38;2;136;192;208m";
+const CLAY_H1: &str = "\x1b[1;38;2;210;140;40m";
+
+fn run_with(args: &[&str], config: Option<&std::path::Path>) -> String {
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_mdx"));
+    cmd.args(args)
+        .env(
+            "XDG_CONFIG_HOME",
+            std::env::temp_dir().join("mdx_default_theme_no_config"),
+        )
+        .env_remove("NO_COLOR");
+    if let Some(path) = config {
+        cmd.arg("--config").arg(path);
+    }
+    let output = cmd.output().expect("failed to run mdx");
+    assert!(
+        output.status.success(),
+        "mdx {args:?} failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout).expect("non-utf8 output")
+}
+
+#[test]
+fn default_theme_is_nord_for_stdout_and_embed() {
+    let file = "docs/examples/basic.md";
+    let empty_config = std::env::temp_dir().join("mdx_default_theme_empty.toml");
+    std::fs::write(&empty_config, "").unwrap();
+    for args in [
+        vec![file, "--no-pager", "--width", "80"],
+        vec!["embed", "--width", "80", file],
+    ] {
+        let stdout = run_with(&args, Some(&empty_config));
+        assert!(stdout.contains(NORD_H1), "{args:?}: {stdout}");
+        assert!(!stdout.contains(CLAY_H1), "{args:?}: {stdout}");
+    }
+}
+
+#[test]
+fn old_defaults_selectable_from_config_file() {
+    let dir = std::env::temp_dir().join("mdx_config_integration");
+    std::fs::create_dir_all(&dir).unwrap();
+    let config_path = dir.join("old_defaults.toml");
+    std::fs::write(
+        &config_path,
+        "ui_theme = \"clay\"\ntheme = \"base16-ocean.dark\"\n",
+    )
+    .unwrap();
+    let empty_config = dir.join("old_defaults_empty.toml");
+    std::fs::write(&empty_config, "").unwrap();
+    let file = "docs/examples/mixed-content.md";
+    let flags = ["--ui-theme", "clay", "--theme", "base16-ocean.dark"];
+
+    for base in [
+        vec![file, "--no-pager", "--width", "80"],
+        vec!["embed", "--width", "80", file],
+    ] {
+        let from_config = run_with(&base, Some(&config_path));
+        let mut with_flags = base.clone();
+        with_flags.extend(flags);
+        let from_flags = run_with(&with_flags, Some(&empty_config));
+        assert!(from_config.contains(CLAY_H1), "{base:?}: {from_config}");
+        assert_eq!(from_config, from_flags, "{base:?}");
     }
 }

@@ -1,0 +1,15 @@
+---
+source: tests/snapshots.rs
+expression: output
+---
+# ER minimal
+
+Two entities with one relationship.
+
++-----------------+            +----------------------+
+| User            |            | Order                |
+|-----------------|            |----------------------|
+| PK string id    |||─places──o{ PK string   id       |
+|    string email |            | FK string   userId   |
++-----------------+            |    datetime placedAt |
+                               +----------------------+

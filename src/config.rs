@@ -102,10 +102,10 @@ impl Config {
     pub(crate) fn generate_default() -> &'static str {
         "\
 # Syntax highlighting theme for code blocks
-# theme = \"base16-ocean.dark\"
+# theme = \"Nord\"
 
 # UI theme for headers, text, and chrome
-# ui_theme = \"clay\"
+# ui_theme = \"nord\"
 
 # Force pager mode
 # pager = false

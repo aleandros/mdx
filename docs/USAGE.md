@@ -51,8 +51,8 @@ the pager, plain stdout and `mdx embed`; equations are not typeset yet.
 | `-W`, `--watch` | Watch the file and re-render on change |
 | `-w`, `--width <N>` | Override terminal width for wrapping |
 | `--max-width <N>` | Cap the pager's content column; wider terminals center the content between margins. `0` disables the cap (default: 100) |
-| `--theme <NAME>` | Syntax highlighting theme for code blocks (use `list` to see options) |
-| `--ui-theme <NAME>` | UI theme for headers, text, chrome (use `list` to see options) |
+| `--theme <NAME>` | Syntax highlighting theme for code blocks (default: `Nord`; use `list` to see options) |
+| `--ui-theme <NAME>` | UI theme for headers, text, chrome (default: `nord`; use `list` to see options) |
 | `--config <PATH>` | Use a specific config file (overrides user/project config) |
 | `--no-mermaid-rendering` | Show raw mermaid source without rendering |
 | `--split-mermaid-rendering` | Show mermaid source followed by the rendered diagram |
@@ -72,17 +72,18 @@ support will read.
 | Config file | `graphics = "off"` |
 | Default | `auto` |
 
+An invalid `MDX_GRAPHICS` value is ignored with a warning.
+
 `auto` turns graphics on only when all of these hold:
 
 1. Output is the interactive pager (or watch mode) on a terminal. Plain or
    piped output and `mdx embed` never use graphics and never send a terminal
    query, whatever the setting.
 2. The terminal answers a Kitty graphics protocol query before its primary
-   device attributes (DA1) reply. mdx waits 100 ms (500 ms over SSH) for the
-   terminal to start answering and then reads the reply to its end. No
-   answer in time means no graphics; a late reply is still read and
-   discarded (for up to 1 s) so it never reaches the pager as keystrokes. An invalid `MDX_GRAPHICS` value is ignored
-   with a warning.
+   device attributes (DA1) reply. mdx reads until DA1 arrives, which takes
+   milliseconds; a terminal that never answers gives up after 1 s (2 s over
+   SSH) and means no graphics. Waiting for DA1 keeps a slow reply from
+   reaching the pager as keystrokes.
 3. The terminal is known to support Unicode placeholders. Only kitty 0.28 or
    later is on this list; other terminals are added once verified.
 4. mdx is not running inside tmux. tmux passthrough is not supported yet, so
@@ -210,11 +211,11 @@ mdx init
 ### Keys
 
 ```toml
-# Syntax highlighting theme for code blocks
-theme = "base16-ocean.dark"
+# Syntax highlighting theme for code blocks (default: "Nord")
+theme = "Nord"
 
-# UI theme for headers, text, and chrome
-ui_theme = "clay"
+# UI theme for headers, text, and chrome (default: "nord")
+ui_theme = "nord"
 
 # Force pager mode
 pager = false
@@ -241,9 +242,32 @@ graphics = "auto"
 Control colors for headers, text, links, and pager chrome.
 
 ```
-clay (default)   hearth   frost   nord   glacier   steel
+nord (default)   clay   hearth   frost   glacier   steel
 solarized-dark   solarized-light   paper   snow   latte
 ```
+
+The default `nord` theme uses the official [Nord palette](https://www.nordtheme.com/docs/colors-and-palettes).
+Against the nord0 background (`#2E3440`), every color it uses has a WCAG contrast
+ratio of at least 4.5:1. Unlike the other themes, it doesn't dim inline code or
+horizontal rules.
+
+Before 0.1.15 the default was `clay` with the `base16-ocean.dark` syntax theme.
+To keep that look, select both by name:
+
+```bash
+mdx --ui-theme clay --theme base16-ocean.dark README.md
+```
+
+```toml
+# ~/.config/mdx/config.toml
+ui_theme = "clay"
+theme = "base16-ocean.dark"
+```
+
+The syntax theme default doesn't follow `ui_theme`. If you set only `ui_theme`,
+for example to a light theme such as `paper`, code blocks now use `Nord`. Add
+`theme = "base16-ocean.dark"` (or `InspiredGitHub` for light backgrounds) to choose
+the code colors explicitly.
 
 Preview them all against sample markdown:
 
@@ -253,7 +277,7 @@ mdx preview-themes
 
 ### Syntax highlighting themes
 
-Applied to fenced code blocks. Powered by [syntect](https://github.com/trishume/syntect) — the built-in `base16-*` and `InspiredGitHub` themes are available out of the box.
+Applied to fenced code blocks. Powered by [syntect](https://github.com/trishume/syntect). The default is `Nord`, bundled from [nordtheme/sublime-text](https://github.com/nordtheme/sublime-text) (MIT) with its comment color lightened to reach 3:1 contrast. syntect's `base16-*`, `Solarized (dark)`, `Solarized (light)` and `InspiredGitHub` themes are also built in.
 
 ```bash
 mdx --theme=list           # List available syntax themes
@@ -289,6 +313,8 @@ diagram_node_border = "#ff79c6"
 diagram_node_text = "#f8f8f2"
 diagram_edge_stroke = "#50fa7b"
 diagram_edge_label = "#ffb86c"
+# Optional: also dim inline code and horizontal rules (default: true)
+dim_muted = true
 ```
 
 Select it the same way as a built-in theme: `mdx --ui-theme dracula` or `ui_theme = "dracula"` in `config.toml`. Built-in theme names take precedence if there's a name collision. Malformed files produce a clear error naming the bad field.

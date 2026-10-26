@@ -1,0 +1,13 @@
+---
+source: tests/snapshots.rs
+expression: output
+---
+# ER styled
+
++----------------+         +--------------------------+
+| Notification   |         | Pref                     |
+|----------------|         |--------------------------|
+| PK string id   |||─has──o{ PK string id             |
+|    string name |         | FK string notificationId |
++----------------+         |    bool   enabled        |
+                           +--------------------------+

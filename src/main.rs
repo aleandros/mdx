@@ -96,13 +96,13 @@ struct Args {
         clippy::doc_markdown,
         reason = "clap displays this documentation verbatim in CLI help"
     )]
-    /// Syntax highlighting theme [default: base16-ocean.dark]
+    /// Syntax highlighting theme [default: Nord]
     /// Examples: base16-eighties.dark, base16-mocha.dark, InspiredGitHub.
     /// Use --theme=list to see all available themes
     #[arg(long)]
     theme: Option<String>,
 
-    /// UI color theme for headers, text, and chrome [default: clay]
+    /// UI color theme for headers, text, and chrome [default: nord]
     /// Use --ui-theme=list to see available themes
     #[arg(long)]
     ui_theme: Option<String>,
