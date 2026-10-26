@@ -75,7 +75,8 @@ pub fn styled_chars(line: &StyledLine) -> Vec<(char, SpanStyle)> {
 }
 
 /// Each fragment carries its visible payload independently of Markdown parsing.
-/// Delimiters, destination metadata and table separators are syntax, not payload.
+/// Formatting delimiters, destination metadata and table separators are syntax.
+/// Math delimiters remain visible as part of the raw-source fallback.
 pub fn markdown() -> impl Strategy<Value = (String, String)> {
     prop::collection::vec((0u8..11, "[a-zA-Zé漢]{1,12}"), 1..12).prop_map(|parts| {
         let mut source = String::new();
@@ -96,7 +97,11 @@ pub fn markdown() -> impl Strategy<Value = (String, String)> {
             };
             source.push_str(&fragment);
             source.push_str("\n\n");
-            expected.push_str(&word);
+            match kind {
+                8 => expected.push_str(&format!("${word}$")),
+                9 => expected.push_str(&format!("$${word}$$")),
+                _ => expected.push_str(&word),
+            }
         }
         (source, expected)
     })

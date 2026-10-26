@@ -136,7 +136,7 @@ fn color_ansi_code(color: &Color) -> &'static str {
 
 fn render_inline(elem: &InlineElement, theme: &crate::theme::Theme) -> StyledSpan {
     match elem {
-        InlineElement::Text(t) => StyledSpan {
+        InlineElement::Text(t) | InlineElement::CodeBlock(t) => StyledSpan {
             text: t.clone(),
             style: SpanStyle {
                 fg: Some(theme.body.clone()),
@@ -253,7 +253,8 @@ pub fn render_blocks(
                         InlineElement::Text(t)
                         | InlineElement::Bold(t)
                         | InlineElement::Italic(t)
-                        | InlineElement::Code(t) => t.clone(),
+                        | InlineElement::Code(t)
+                        | InlineElement::CodeBlock(t) => t.clone(),
                         InlineElement::Link { text, .. } => text.clone(),
                         InlineElement::SoftBreak => " ".to_string(),
                     })
@@ -372,9 +373,27 @@ pub fn render_blocks(
                     } else {
                         "  * ".to_string()
                     };
+                    let continuation = " ".repeat(prefix.len());
                     let mut spans = vec![StyledSpan::plain(prefix)];
-                    spans.extend(item.iter().map(|e| render_inline(e, theme)));
-                    lines.push(StyledLine { spans });
+                    for elem in item {
+                        if let InlineElement::CodeBlock(source) = elem {
+                            lines.push(StyledLine { spans });
+                            lines.push(StyledLine::empty());
+                            lines.extend(render_code_block_lines(
+                                &None,
+                                source,
+                                highlighter,
+                                theme,
+                            ));
+                            lines.push(StyledLine::empty());
+                            spans = vec![StyledSpan::plain(continuation.clone())];
+                        } else {
+                            spans.push(render_inline(elem, theme));
+                        }
+                    }
+                    if spans.len() > 1 || item.is_empty() {
+                        lines.push(StyledLine { spans });
+                    }
                 }
                 lines.push(StyledLine::empty());
                 out.push(RenderedBlock::Lines(lines));
