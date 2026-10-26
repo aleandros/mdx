@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.15] - 2026-10-26
+
+### Added
+- Terminal graphics detection, decided once at startup: `--graphics auto|off`,
+  `MDX_GRAPHICS=off` and `graphics = "auto" | "off"` in the config (CLI wins,
+  then the environment, then the config). `auto` enables graphics only in the
+  interactive pager on a terminal that answers a Kitty graphics query, supports
+  Unicode placeholders (kitty 0.28+) and is not inside tmux. The cell size in
+  pixels is recorded too. Piped output and `mdx embed` never send a query.
+  Rendering is unchanged. (#14)
+- `--debug-graphics` prints the graphics decision and the reason.
+
 ## [0.1.14] - 2026-10-26
 
 ### Fixed

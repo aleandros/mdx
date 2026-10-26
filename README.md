@@ -42,6 +42,22 @@ The installer detects your OS and architecture and drops the binary in `/usr/loc
 
 > **Diagram support is scoped.** Today mdx renders `graph` / `flowchart`, `sequenceDiagram`, and `erDiagram`. Class, state, gantt, and other types are not yet supported — PRs welcome.
 
+## Graphics
+
+mdx decides at startup whether the terminal can show pixel graphics (no feature
+draws them yet). It turns graphics on only in the interactive pager, in kitty
+0.28 or later, outside tmux. Piped output and `mdx embed` never use graphics and
+never query the terminal. Turn graphics off with any of these:
+
+```bash
+mdx --graphics off README.md            # CLI flag (wins)
+MDX_GRAPHICS=off mdx README.md          # environment
+echo 'graphics = "off"' >> ~/.config/mdx/config.toml   # config file
+```
+
+`mdx --debug-graphics` prints the decision and the reason. See
+[docs/USAGE.md](docs/USAGE.md#graphics) for the detection rules.
+
 ## Why
 
 Markdown is everpresent in my day to day workflow, and `glow` spoils you — until the doc hits a Mermaid block and you're back to squinting at raw source or alt-tabbing to a browser. mdx is the fix: same "just read this thing" ergonomics, but diagrams render where you already are.

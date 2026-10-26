@@ -366,6 +366,8 @@ pub(crate) struct PagerState {
     search_matches: Vec<usize>,
     search_current: Option<usize>,
     search_direction: SearchDirection,
+    /// Startup graphics decision; no rendering reads it yet (#9).
+    graphics: crate::graphics::GraphicsCaps,
 }
 
 impl PagerState {
@@ -397,10 +399,17 @@ impl PagerState {
             search_matches: Vec::new(),
             search_current: None,
             search_direction: SearchDirection::Forward,
+            graphics: crate::graphics::GraphicsCaps::unsupported("not detected"),
         };
         state.rebuild_flat_lines();
         state.update_active_from_viewport();
         state
+    }
+
+    /// Attach the startup graphics decision.
+    pub(crate) fn with_graphics(mut self, graphics: crate::graphics::GraphicsCaps) -> Self {
+        self.graphics = graphics;
+        self
     }
 
     pub(crate) fn rebuild_flat_lines(&mut self) {
@@ -1116,21 +1125,38 @@ impl PagerState {
 
 // ─── Public entry point ────────────────────────────────────────────────────
 
+/// A terminal that ignores the graphics query may have printed part of it;
+/// clear the alternate screen so the first frame does not show it.
+pub(crate) fn clear_after_probe<B: ratatui::backend::Backend>(
+    terminal: &mut Terminal<B>,
+    detection: &crate::graphics::Detection,
+) -> std::io::Result<()> {
+    if matches!(detection.probe, crate::graphics::Probe::NotSent) {
+        Ok(())
+    } else {
+        terminal.clear()
+    }
+}
+
 pub(crate) fn run_pager(
     content: Vec<RenderedBlock>,
     max_content_width: u16,
     theme: &'static crate::theme::Theme,
+    graphics: crate::graphics::GraphicsSetting,
 ) -> Result<()> {
     enable_raw_mode()?;
     let mut stdout = stdout();
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
     let _guard = TerminalGuard;
+    let detection = crate::graphics::detect(graphics, crate::graphics::OutputTarget::Pager);
 
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
+    clear_after_probe(&mut terminal, &detection)?;
 
     let size = terminal.size()?;
-    let mut state = PagerState::new(content, size.height, size.width, max_content_width, theme);
+    let mut state = PagerState::new(content, size.height, size.width, max_content_width, theme)
+        .with_graphics(detection.caps);
 
     loop {
         terminal.draw(|f| {
