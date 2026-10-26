@@ -44,10 +44,12 @@ The installer detects your OS and architecture and drops the binary in `/usr/loc
 
 ## Graphics
 
-mdx decides at startup whether the terminal can show pixel graphics (no feature
-draws them yet). It turns graphics on only in the interactive pager, in kitty
-0.28 or later, outside tmux. Piped output and `mdx embed` never use graphics and
-never query the terminal. Turn graphics off with the CLI flag (which wins),
+mdx decides at startup whether the terminal can show pixel graphics. It turns
+graphics on only in the interactive pager, in kitty 0.28 or later, outside tmux.
+With graphics on, local PNG, JPEG and GIF images (`![alt](diagram.png)`) show
+inline, scaled to the content column; everywhere else they stay a text
+placeholder. Piped output and `mdx embed` never use graphics and never query
+the terminal. Turn graphics off with the CLI flag (which wins),
 the environment, or the config file:
 
 ```bash
@@ -110,12 +112,13 @@ including width 1; truncation retains a styled prefix, not all source text.
 wrapping/clipping boundaries that consume them.
 
 Graphics follow-up for [#9](https://github.com/aleandros/mdx/issues/9) and
-[#10](https://github.com/aleandros/mdx/issues/10), which have not landed:
+[#10](https://github.com/aleandros/mdx/issues/10). Inline images (#16) are
+covered; diagrams have not landed:
 
 - [ ] Feed the shared Markdown, diagram and pager generators to the Kitty backend.
-- [ ] Check each image/diagram placement reserves its assigned cell rectangle.
-- [ ] Check U+10EEEE placeholder rows have exactly the reserved width.
-- [ ] Compare graphics-off and non-TTY/embed output byte-for-byte with ASCII.
+- [x] Check each image placement reserves its assigned cell rectangle (diagrams: open).
+- [x] Check U+10EEEE placeholder rows have exactly the reserved width.
+- [x] Check graphics-off, non-TTY and embed output keep the ASCII image placeholder.
 
 ## License
 

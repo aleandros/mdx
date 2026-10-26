@@ -21,6 +21,18 @@ fn check(state: &PagerState) {
             RenderedBlock::Diagram { .. } | RenderedBlock::Image { .. }
         ));
     }
+    // Every image row belongs to its image's interactive block.
+    for (i, line) in state.flat_lines.iter().enumerate() {
+        if let FlatLine::ImageRow { block_index, .. } = line {
+            assert!(
+                state
+                    .interactive_blocks
+                    .iter()
+                    .any(|e| e.block_index == *block_index
+                        && (e.flat_line_index..e.flat_line_end).contains(&i))
+            );
+        }
+    }
     let matches: Vec<_> = if state.search_query.is_empty() {
         vec![]
     } else {
@@ -47,8 +59,14 @@ fn check(state: &PagerState) {
 proptest! {
     #![proptest_config(strategies::model_config(64))]
     #[test]
-    fn property_pager_model(content in strategies::rendered_blocks(), ops in strategies::pager_ops(), width in strategies::width()) {
+    fn property_pager_model(content in strategies::rendered_blocks(), ops in strategies::pager_ops(), width in strategies::width(), images in any::<bool>()) {
         let mut state = PagerState::new(content,20,width,100,crate::theme::Theme::default_theme());
+        if images {
+            // Graphics on: `test.png` takes several placeholder rows.
+            let mut store = crate::images::ImageStore::for_tests("/docs".into(),(10,20));
+            store.insert_ready("test.png",(400,200));
+            state = state.with_images(store);
+        }
         // Activating image placeholders must never spawn a desktop application.
         state.opener = None;
         check(&state);

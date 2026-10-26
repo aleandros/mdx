@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.18] - 2026-10-26
+
+### Added
+- Inline images in the pager. With graphics on (#14), local PNG, JPEG and GIF
+  images are drawn with Kitty Unicode placeholders, so they scroll, search and
+  redraw with the text. Paths are relative to the markdown file's directory, or
+  absolute. Images are scaled down to the content column and to 60% of the
+  pager height, keeping the aspect ratio, and refit on resize. Decoding runs on
+  a background thread. The alt text stays as a caption below the image. Watch
+  mode re-sends an image only when its mtime changes, and images are deleted
+  from the terminal on exit. Remote URLs, missing files, other formats,
+  `--graphics off`, piped output and `mdx embed` keep the text placeholder.
+  (#16)
+
+### Changed
+- `Enter` on an image opens local paths relative to the markdown file's
+  directory instead of the current directory.
+
 ## [0.1.17] - 2026-10-26
 
 ### Added

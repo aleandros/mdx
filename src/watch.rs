@@ -61,6 +61,14 @@ fn start_watcher(path: &Path) -> Result<(Box<dyn Watcher + Send>, mpsc::Receiver
     Ok((watcher, rx))
 }
 
+/// Directory relative image paths in `path` are resolved against.
+pub(crate) fn base_dir(path: &Path) -> std::path::PathBuf {
+    match path.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent.to_path_buf(),
+        _ => std::path::PathBuf::from("."),
+    }
+}
+
 fn read_file_with_retry(path: &Path) -> Option<String> {
     if let Ok(content) = std::fs::read_to_string(path) {
         Some(content)
@@ -309,7 +317,7 @@ pub(crate) fn run_watch(
         max_content_width,
         theme,
     )
-    .with_graphics(detection.caps);
+    .with_graphics(detection.caps, base_dir(path));
 
     // Start file watcher
     let (_watcher, rx) = start_watcher(path)?;
@@ -321,104 +329,118 @@ pub(crate) fn run_watch(
     let mut last_event_time: Option<Instant> = None;
     let mut needs_redraw = true;
 
-    loop {
-        // 1. Draw if needed
-        if needs_redraw {
-            terminal.draw(|f| {
-                let chunks = Layout::default()
-                    .direction(Direction::Vertical)
-                    .constraints([Constraint::Min(0), Constraint::Length(1)])
-                    .split(f.area());
-
-                pager.draw_content(f, chunks[0]);
-
-                let bottom_line = if let Some(search_line) = pager.search_bar_line() {
-                    search_line
-                } else {
-                    status.render()
-                };
-                f.render_widget(Paragraph::new(bottom_line), chunks[1]);
-            })?;
-            needs_redraw = false;
-        }
-
-        // 2. Poll for keyboard/mouse events (50ms timeout)
-        if event::poll(Duration::from_millis(50))? {
-            match event::read()? {
-                Event::Key(key) => match pager.handle_key_event(key) {
-                    KeyAction::Quit => break,
-                    KeyAction::Redraw => needs_redraw = true,
-                    KeyAction::Nothing => {}
-                },
-                Event::Mouse(mouse) if pager.handle_mouse_event(mouse) => {
-                    needs_redraw = true;
-                }
-                Event::Resize(w, h) => {
-                    let new_content_height = h.saturating_sub(1);
-                    pager.resize(w, new_content_height);
-                    needs_redraw = true;
-                }
-                _ => {}
+    let mut event_loop = || -> Result<()> {
+        loop {
+            // 1. Show images that finished decoding; send their data first
+            if pager.poll_images() {
+                needs_redraw = true;
             }
-        }
+            crate::pager::write_graphics(terminal.backend_mut(), &pager.take_graphics_output())?;
 
-        // 3. Drain file change events
-        while rx.try_recv().is_ok() {
-            last_event_time = Some(Instant::now());
-            pending_change = true;
-        }
+            // 2. Draw if needed
+            if needs_redraw {
+                terminal.draw(|f| {
+                    let chunks = Layout::default()
+                        .direction(Direction::Vertical)
+                        .constraints([Constraint::Min(0), Constraint::Length(1)])
+                        .split(f.area());
 
-        // 4. Debounce check
-        if pending_change
-            && let Some(t) = last_event_time
-            && t.elapsed() >= Duration::from_millis(100)
-        {
-            pending_change = false;
-            last_event_time = None;
+                    pager.draw_content(f, chunks[0]);
 
-            if let Some(content) = read_file_with_retry(path) {
-                let new_hash = content_hash(&content);
-                if new_hash != last_hash {
-                    let new_blocks = crate::parser::parse_markdown(&content);
-                    let new_groups = diff_and_render(
-                        &blocks,
-                        &rendered_groups,
-                        &new_blocks,
-                        width,
-                        highlighter,
-                        theme,
-                        mermaid_mode,
-                        &mut mermaid_cache,
-                    );
-                    let flat = flatten_groups(&new_groups);
+                    let bottom_line = if let Some(search_line) = pager.search_bar_line() {
+                        search_line
+                    } else {
+                        status.render()
+                    };
+                    f.render_widget(Paragraph::new(bottom_line), chunks[1]);
+                })?;
+                needs_redraw = false;
+            }
 
-                    if new_blocks.len() != blocks.len() {
-                        pager.expanded.clear();
-                        mermaid_cache.clear();
+            // 3. Poll for keyboard/mouse events (50ms timeout)
+            if event::poll(Duration::from_millis(50))? {
+                match event::read()? {
+                    Event::Key(key) => match pager.handle_key_event(key) {
+                        KeyAction::Quit => break,
+                        KeyAction::Redraw => needs_redraw = true,
+                        KeyAction::Nothing => {}
+                    },
+                    Event::Mouse(mouse) if pager.handle_mouse_event(mouse) => {
+                        needs_redraw = true;
                     }
+                    Event::Resize(w, h) => {
+                        if let Some(cell_px) = crate::pager::current_cell_px() {
+                            pager.set_cell_px(cell_px);
+                        }
+                        let new_content_height = h.saturating_sub(1);
+                        pager.resize(w, new_content_height);
+                        needs_redraw = true;
+                    }
+                    _ => {}
+                }
+            }
 
-                    pager.replace_content(flat);
+            // 4. Drain file change events
+            while rx.try_recv().is_ok() {
+                last_event_time = Some(Instant::now());
+                pending_change = true;
+            }
 
-                    blocks = new_blocks;
-                    rendered_groups = new_groups;
-                    last_hash = new_hash;
+            // 5. Debounce check
+            if pending_change
+                && let Some(t) = last_event_time
+                && t.elapsed() >= Duration::from_millis(100)
+            {
+                pending_change = false;
+                last_event_time = None;
 
-                    status.set_message("updated");
+                if let Some(content) = read_file_with_retry(path) {
+                    let new_hash = content_hash(&content);
+                    if new_hash != last_hash {
+                        let new_blocks = crate::parser::parse_markdown(&content);
+                        let new_groups = diff_and_render(
+                            &blocks,
+                            &rendered_groups,
+                            &new_blocks,
+                            width,
+                            highlighter,
+                            theme,
+                            mermaid_mode,
+                            &mut mermaid_cache,
+                        );
+                        let flat = flatten_groups(&new_groups);
+
+                        if new_blocks.len() != blocks.len() {
+                            pager.expanded.clear();
+                            mermaid_cache.clear();
+                        }
+
+                        pager.replace_content(flat);
+
+                        blocks = new_blocks;
+                        rendered_groups = new_groups;
+                        last_hash = new_hash;
+
+                        status.set_message("updated");
+                        needs_redraw = true;
+                    }
+                } else {
+                    status.set_message("file unreadable");
                     needs_redraw = true;
                 }
-            } else {
-                status.set_message("file unreadable");
+            }
+
+            // 6. Clear expired status messages
+            if status.tick() {
                 needs_redraw = true;
             }
         }
-
-        // 5. Clear expired status messages
-        if status.tick() {
-            needs_redraw = true;
-        }
-    }
-
-    Ok(())
+        Ok(())
+    };
+    let result = event_loop();
+    // Free transmitted images before leaving the alternate screen.
+    let _ = crate::pager::write_graphics(terminal.backend_mut(), &pager.delete_images());
+    result
 }
 
 #[cfg(test)]

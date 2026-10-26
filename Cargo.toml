@@ -1,6 +1,6 @@
 [package]
 name = "mermd"
-version = "0.1.17"
+version = "0.1.18"
 edition = "2024"
 description = "Terminal Markdown renderer with Mermaid flowcharts drawn as ASCII art"
 license = "MIT"
@@ -30,6 +30,7 @@ path = "src/main.rs"
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 crossterm = "0.29"
+image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "gif"] }
 notify = "6"
 pulldown-cmark = "0.12"
 ratatui = "0.30"

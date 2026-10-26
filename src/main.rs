@@ -2,6 +2,8 @@ mod config;
 mod embed;
 mod graphics;
 mod highlight;
+mod images;
+mod kitty;
 mod mermaid;
 mod pager;
 mod parser;
@@ -388,7 +390,15 @@ fn main() -> Result<()> {
         render::render_blocks(&blocks, render_width, &highlighter, ui_theme, mermaid_mode);
     if use_pager {
         setup_panic_hook();
-        pager::run_pager(rendered, max_content_width, ui_theme, graphics_setting)?;
+        pager::run_pager(
+            rendered,
+            max_content_width,
+            ui_theme,
+            graphics_setting,
+            args.file
+                .as_deref()
+                .map_or_else(|| PathBuf::from("."), watch::base_dir),
+        )?;
     } else {
         pipe_output(&rendered, color_mode)?;
     }
