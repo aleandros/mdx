@@ -5,12 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.1.16] - 2026-10-26
 
 ### Changed
-- Upgrade `ratatui` to 0.30 and `crossterm` to 0.29. Rendering and pager
-  behavior are unchanged; this unblocks `ratatui-image` for image placement.
-  (#15)
+- Upgrade `ratatui` to 0.30 and `crossterm` to 0.29. This unblocks
+  `ratatui-image` for image placement. (#15)
+
+### Fixed
+- Halfwidth katakana with voiced or semi-voiced sound marks (`ｶﾞ`, `ﾊﾟ`) no
+  longer garble the pager. Each mark now takes its own column, so the
+  following text is no longer shifted or overwritten.
 
 ## [0.1.15] - 2026-10-26
 
