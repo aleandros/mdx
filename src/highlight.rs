@@ -7,6 +7,13 @@ use syntect::parsing::SyntaxSet;
 /// Includes syntect defaults + custom grammars from syntaxes/ directory.
 static SYNTAX_SET_DATA: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/syntaxes.packdump"));
 
+/// Nord syntax theme, vendored from nordtheme/sublime-text (MIT); see
+/// `syntax-themes/NOTICE.md`. syntect's bundled themes don't include it.
+static NORD_TMTHEME: &[u8] = include_bytes!("../syntax-themes/Nord.tmTheme");
+
+/// Syntax theme used when none is configured.
+pub(crate) const DEFAULT_THEME: &str = "Nord";
+
 #[derive(Debug)]
 pub(crate) struct Highlighter {
     syntax_set: SyntaxSet,
@@ -33,6 +40,10 @@ impl Highlighter {
 
     pub(crate) fn new(theme_name: Option<String>) -> Result<Self, String> {
         let mut theme_set = ThemeSet::load_defaults();
+        let nord = ThemeSet::load_from_reader(&mut std::io::Cursor::new(NORD_TMTHEME))
+            .expect("embedded Nord.tmTheme is a valid theme");
+        theme_set.themes.insert(DEFAULT_THEME.to_string(), nord);
+        // User themes load last so a file with the same name overrides a built-in.
         if let Some(dir) = Self::user_syntax_themes_dir()
             && dir.is_dir()
         {
@@ -84,7 +95,7 @@ impl Highlighter {
         let lang = language?;
         let syntax = self.syntax_set.find_syntax_by_token(lang)?;
 
-        let theme_key = self.theme_name.as_deref().unwrap_or("base16-ocean.dark");
+        let theme_key = self.theme_name.as_deref().unwrap_or(DEFAULT_THEME);
         let theme = self.theme_set.themes.get(theme_key)?;
 
         let mut highlighter = HighlightLines::new(syntax, theme);
@@ -197,12 +208,50 @@ mod tests {
         let result = h.highlight_code(code, Some("rust"));
         assert!(result.is_some());
         let lines = result.unwrap();
-        // Default theme (base16-ocean.dark) should produce Rgb colors
+        // Default theme (Nord) should produce Rgb colors
         let has_rgb = lines.iter().any(|line| {
             line.iter()
                 .any(|span| matches!(span.style.fg, Some(Color::Rgb(_, _, _))))
         });
         assert!(has_rgb, "Default theme should produce Rgb colors");
+    }
+
+    #[test]
+    fn test_default_theme_is_nord() {
+        let default = Highlighter::new(None).unwrap();
+        let nord = Highlighter::new(Some(DEFAULT_THEME.to_string())).unwrap();
+        let ocean = Highlighter::new(Some("base16-ocean.dark".to_string())).unwrap();
+        let code = "// comment\nfn main() { let x = 1; }\n";
+        let highlighted = default.highlight_code(code, Some("rust"));
+        assert!(highlighted.is_some());
+        assert_eq!(highlighted, nord.highlight_code(code, Some("rust")));
+        assert_ne!(highlighted, ocean.highlight_code(code, Some("rust")));
+        assert!(default.available_themes().contains(&"Nord"));
+        assert!(default.available_themes().contains(&"base16-ocean.dark"));
+    }
+
+    #[test]
+    fn test_nord_syntax_colors_contrast_against_nord0() {
+        use crate::theme::{NORD0, contrast_ratio};
+        // Parse the embedded file directly: Highlighter::new also loads the
+        // user's syntax-themes dir, which may override "Nord".
+        let theme = ThemeSet::load_from_reader(&mut std::io::Cursor::new(NORD_TMTHEME)).unwrap();
+        let to_color = |c: syntect::highlighting::Color| Color::Rgb(c.r, c.g, c.b);
+
+        let plain = theme.settings.foreground.expect("Nord sets a foreground");
+        assert!(contrast_ratio(&to_color(plain), &NORD0) >= 4.5);
+
+        // Comments, punctuation and every other scope must reach 3:1.
+        let mut failures = Vec::new();
+        for item in &theme.scopes {
+            if let Some(fg) = item.style.foreground {
+                let ratio = contrast_ratio(&to_color(fg), &NORD0);
+                if ratio < 3.0 {
+                    failures.push(format!("{:?}: {ratio:.2}:1", item.scope));
+                }
+            }
+        }
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
     }
 
     #[test]

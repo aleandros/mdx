@@ -1,0 +1,14 @@
+---
+source: tests/snapshots.rs
+expression: output
+---
+# ER unicode
+
++-------------------------------------+            +-----------------------------------+
+| USER                                |            | ORDER                             |
+|-------------------------------------|            |-----------------------------------|
+| PK string id                        |||─places   | PK string   id                    |
+|    string name  名字 — display name |      └────o{ FK string   userId                |
+|    string email 電子郵件 address    |            |    datetime placedAt              |
++-------------------------------------+            |             下单时间, 以 UTC 为准 |
+                                                   +-----------------------------------+

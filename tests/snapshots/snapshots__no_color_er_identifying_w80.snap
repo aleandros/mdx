@@ -1,0 +1,16 @@
+---
+source: tests/snapshots.rs
+expression: output
+---
+# ER identifying vs non-identifying
+
++---+            +---+
+| A |||─strong──o{ B |
++---+            +---+
+
+
+
+
++---+            +---+
+| C |||..weak...o{ D |
++---+            +---+
