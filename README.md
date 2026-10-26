@@ -47,12 +47,17 @@ The installer detects your OS and architecture and drops the binary in `/usr/loc
 mdx decides at startup whether the terminal can show pixel graphics (no feature
 draws them yet). It turns graphics on only in the interactive pager, in kitty
 0.28 or later, outside tmux. Piped output and `mdx embed` never use graphics and
-never query the terminal. Turn graphics off with any of these:
+never query the terminal. Turn graphics off with the CLI flag (which wins),
+the environment, or the config file:
 
 ```bash
-mdx --graphics off README.md            # CLI flag (wins)
-MDX_GRAPHICS=off mdx README.md          # environment
-echo 'graphics = "off"' >> ~/.config/mdx/config.toml   # config file
+mdx --graphics off README.md
+MDX_GRAPHICS=off mdx README.md
+```
+
+```toml
+# ~/.config/mdx/config.toml or .mdx.toml
+graphics = "off"
 ```
 
 `mdx --debug-graphics` prints the decision and the reason. See

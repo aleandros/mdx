@@ -678,10 +678,10 @@ fn math_source_survives_stdout_and_embed() {
     }
 }
 
-fn graphics_fixture() -> std::path::PathBuf {
+fn graphics_fixture(name: &str) -> std::path::PathBuf {
     let dir = std::env::temp_dir().join("mdx_integration");
     std::fs::create_dir_all(&dir).expect("create fixture dir");
-    let path = dir.join("graphics.md");
+    let path = dir.join(format!("graphics_{name}.md"));
     std::fs::write(
         &path,
         "# Graphics\n\n![logo](logo.png)\n\n```mermaid\ngraph TD\n    A --> B\n```\n",
@@ -700,7 +700,7 @@ fn assert_no_graphics_query(bytes: &[u8]) {
 
 #[test]
 fn test_piped_output_never_sends_graphics_query() {
-    let path = graphics_fixture();
+    let path = graphics_fixture("piped");
     for env in ["auto", "off", ""] {
         for flag in [None, Some("auto"), Some("off")] {
             let mut cmd = Command::new(env!("CARGO_BIN_EXE_mdx"));
@@ -718,7 +718,7 @@ fn test_piped_output_never_sends_graphics_query() {
 
 #[test]
 fn test_embed_never_sends_graphics_query() {
-    let path = graphics_fixture();
+    let path = graphics_fixture("embed");
     let output = Command::new(env!("CARGO_BIN_EXE_mdx"))
         .args(["embed", "--width", "40"])
         .arg(&path)
@@ -765,14 +765,33 @@ fn test_debug_graphics_env_off() {
 }
 
 #[test]
-fn test_invalid_graphics_env_errors() {
-    let path = graphics_fixture();
+fn test_invalid_graphics_env_warns() {
+    let path = graphics_fixture("invalid_env");
     let output = Command::new(env!("CARGO_BIN_EXE_mdx"))
         .arg(&path)
         .env("MDX_GRAPHICS", "sixel")
         .output()
         .expect("failed to run mdx");
-    assert!(!output.status.success());
+    assert!(output.status.success(), "{output:?}");
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("MDX_GRAPHICS"), "stderr was: {stderr}");
+    assert!(
+        stderr.contains("ignoring invalid MDX_GRAPHICS"),
+        "stderr was: {stderr}"
+    );
+}
+
+#[test]
+fn test_debug_graphics_never_queries_without_terminal() {
+    // The query goes to /dev/tty, not stdout, so check the decision itself:
+    // with stdout piped no mode may send it, even with --pager.
+    for extra in [&[][..], &["--pager"], &["--no-pager"]] {
+        let output = Command::new(env!("CARGO_BIN_EXE_mdx"))
+            .args(["--graphics", "auto", "--debug-graphics"])
+            .args(extra)
+            .output()
+            .expect("failed to run mdx");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(stdout.contains("query: not sent"), "{extra:?}: {stdout}");
+        assert!(stdout.contains("graphics: off"), "{extra:?}: {stdout}");
+    }
 }

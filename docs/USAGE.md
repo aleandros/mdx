@@ -78,8 +78,11 @@ support will read.
    piped output and `mdx embed` never use graphics and never send a terminal
    query, whatever the setting.
 2. The terminal answers a Kitty graphics protocol query before its primary
-   device attributes (DA1) reply. mdx waits at most 100 ms (500 ms over SSH);
-   no answer means no graphics.
+   device attributes (DA1) reply. mdx waits 100 ms (500 ms over SSH) for the
+   terminal to start answering and then reads the reply to its end. No
+   answer in time means no graphics; a late reply is still read and
+   discarded (for up to 1 s) so it never reaches the pager as keystrokes. An invalid `MDX_GRAPHICS` value is ignored
+   with a warning.
 3. The terminal is known to support Unicode placeholders. Only kitty 0.28 or
    later is on this list; other terminals are added once verified.
 4. mdx is not running inside tmux. tmux passthrough is not supported yet, so

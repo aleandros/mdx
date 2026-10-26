@@ -338,7 +338,7 @@ fn main() -> Result<()> {
     } else {
         std::io::stdout().is_terminal()
     };
-    let graphics_setting = graphics::setting_from_env(args.graphics, config.graphics)?;
+    let graphics_setting = graphics::setting_from_env(args.graphics, config.graphics);
     let graphics_target = if use_pager || args.watch {
         graphics::OutputTarget::Pager
     } else {
@@ -346,6 +346,10 @@ fn main() -> Result<()> {
     };
     if args.debug_graphics {
         let detection = graphics::detect(graphics_setting, graphics_target);
+        if !matches!(detection.probe, graphics::Probe::NotSent) {
+            // Erase any part of the query a terminal printed instead of parsing.
+            print!("\r\x1b[2K");
+        }
         print!("{}", graphics::report(graphics_setting, &detection));
         return Ok(());
     }

@@ -23,6 +23,11 @@ const PROBE_TIMEOUT: Duration = Duration::from_millis(100);
 /// after the timeout would otherwise be read by the pager as keystrokes.
 const PROBE_TIMEOUT_SSH: Duration = Duration::from_millis(500);
 
+/// Longest wait for DA1 (always the last reply) after the query. A reply
+/// that has started is read to the end; after a timeout, a late reply is
+/// still swallowed until this cap so the pager does not read it as keys.
+const PROBE_REPLY_CAP: Duration = Duration::from_secs(1);
+
 /// Terminals whose Unicode placeholder support has been verified, with the
 /// first version that has it, matched against the `XTVERSION` reply.
 /// Ghostty, `WezTerm` and Konsole are candidates, not yet verified.
@@ -129,28 +134,35 @@ fn parse_mode(value: &str) -> Option<GraphicsMode> {
 }
 
 /// Resolve the effective setting: CLI flag, then `MDX_GRAPHICS`, then the
-/// config file, then `auto`. An empty environment value counts as unset.
+/// config file, then `auto`. An empty environment value counts as unset; an
+/// invalid one is ignored and returned as a warning, so a typo cannot break
+/// output that never uses graphics.
 pub(crate) fn resolve_setting(
     cli: Option<GraphicsMode>,
     env: Option<&str>,
     config: Option<GraphicsMode>,
-) -> anyhow::Result<GraphicsSetting> {
+) -> (GraphicsSetting, Option<String>) {
     if let Some(mode) = cli {
-        return Ok(GraphicsSetting {
+        let setting = GraphicsSetting {
             mode,
             source: SettingSource::Cli,
-        });
+        };
+        return (setting, None);
     }
+    let mut warning = None;
     if let Some(value) = env.filter(|v| !v.trim().is_empty()) {
-        let mode = parse_mode(value).ok_or_else(|| {
-            anyhow::anyhow!("invalid {ENV_VAR} value {value:?} (expected \"auto\" or \"off\")")
-        })?;
-        return Ok(GraphicsSetting {
-            mode,
-            source: SettingSource::Env,
-        });
+        if let Some(mode) = parse_mode(value) {
+            let setting = GraphicsSetting {
+                mode,
+                source: SettingSource::Env,
+            };
+            return (setting, None);
+        }
+        warning = Some(format!(
+            "ignoring invalid {ENV_VAR} value {value:?} (expected \"auto\" or \"off\")"
+        ));
     }
-    Ok(config.map_or(
+    let setting = config.map_or(
         GraphicsSetting {
             mode: GraphicsMode::Auto,
             source: SettingSource::Default,
@@ -159,16 +171,22 @@ pub(crate) fn resolve_setting(
             mode,
             source: SettingSource::Config,
         },
-    ))
+    );
+    (setting, warning)
 }
 
-/// Resolve the setting from the CLI flag, the process environment and the config.
+/// Resolve the setting from the CLI flag, the process environment and the
+/// config, printing a warning for an invalid `MDX_GRAPHICS` value.
 pub(crate) fn setting_from_env(
     cli: Option<GraphicsMode>,
     config: Option<GraphicsMode>,
-) -> anyhow::Result<GraphicsSetting> {
+) -> GraphicsSetting {
     let env = std::env::var(ENV_VAR).ok();
-    resolve_setting(cli, env.as_deref(), config)
+    let (setting, warning) = resolve_setting(cli, env.as_deref(), config);
+    if let Some(warning) = warning {
+        eprintln!("mdx: warning: {warning}");
+    }
+    setting
 }
 
 /// Decide everything that needs no terminal query. `None` means the terminal
@@ -258,16 +276,34 @@ fn query_bytes(id: u32) -> Vec<u8> {
 
 const ESC: u8 = 0x1b;
 
-fn find_st(buf: &[u8], from: usize) -> Option<usize> {
-    buf.get(from..)?
-        .windows(2)
-        .position(|w| w == [ESC, b'\\'])
-        .map(|p| from + p)
+/// How a string sequence (APC/DCS) starting at some offset ends.
+enum StringEnd {
+    /// Index of the ESC of the terminating ST.
+    Terminated(usize),
+    /// The buffer ends first; more bytes may complete it.
+    Incomplete,
+    /// Another escape sequence starts first, so this was not a reply.
+    Interrupted,
+}
+
+fn find_st(buf: &[u8], from: usize) -> StringEnd {
+    let Some(rest) = buf.get(from..) else {
+        return StringEnd::Incomplete;
+    };
+    match rest.iter().position(|&b| b == ESC) {
+        None => StringEnd::Incomplete,
+        Some(p) => match rest.get(p + 1) {
+            None => StringEnd::Incomplete,
+            Some(b'\\') => StringEnd::Terminated(from + p),
+            Some(_) => StringEnd::Interrupted,
+        },
+    }
 }
 
 /// Parse the replies read so far. Returns `None` until the DA1 reply has
-/// arrived; anything after it is not part of the reply. Unrelated bytes are
-/// skipped.
+/// arrived; anything after it is not part of the reply. Unrelated bytes,
+/// such as keys pressed during the query, are skipped: a sequence that is
+/// not well formed only skips its ESC.
 pub(crate) fn parse_reply(buf: &[u8], id: u32) -> Option<ProbeReply> {
     let mut reply = ProbeReply {
         graphics: GraphicsReply::NoAnswer,
@@ -282,8 +318,20 @@ pub(crate) fn parse_reply(buf: &[u8], id: u32) -> Option<ProbeReply> {
         }
         match buf.get(i + 1)? {
             // APC (graphics) and DCS (XTVERSION) strings end with ST.
-            b'_' | b'P' => {
-                let end = find_st(buf, i + 2)?;
+            &kind @ (b'_' | b'P') => {
+                let expected = if kind == b'_' { b'G' } else { b'>' };
+                if *buf.get(i + 2)? != expected {
+                    i += 1;
+                    continue;
+                }
+                let end = match find_st(buf, i + 2) {
+                    StringEnd::Terminated(end) => end,
+                    StringEnd::Incomplete => return None,
+                    StringEnd::Interrupted => {
+                        i += 1;
+                        continue;
+                    }
+                };
                 let body = String::from_utf8_lossy(&buf[i + 2..end]);
                 if let Some(graphics) = body.strip_prefix('G') {
                     parse_graphics(graphics, id, &mut reply);
@@ -294,10 +342,15 @@ pub(crate) fn parse_reply(buf: &[u8], id: u32) -> Option<ProbeReply> {
             }
             b'[' => {
                 let start = i + 2;
+                // Parameter and intermediate bytes, then one final byte.
                 let len = buf
                     .get(start..)?
                     .iter()
-                    .position(|b| (0x40..=0x7e).contains(b))?;
+                    .position(|b| !(0x20..=0x3f).contains(b))?;
+                if !(0x40..=0x7e).contains(&buf[start + len]) {
+                    i += 1;
+                    continue;
+                }
                 let params = &buf[start..start + len];
                 match buf[start + len] {
                     b'c' if params.first() == Some(&b'?') => return Some(reply),
@@ -392,6 +445,11 @@ pub(crate) fn detect(setting: GraphicsSetting, target: OutputTarget) -> Detectio
     }
 }
 
+/// Terminal-supplied text with control characters removed, safe to print.
+fn printable(text: &str) -> String {
+    text.chars().filter(|c| !c.is_control()).collect()
+}
+
 /// Human-readable report for `--debug-graphics`.
 pub(crate) fn report(setting: GraphicsSetting, detection: &Detection) -> String {
     let caps = &detection.caps;
@@ -412,15 +470,15 @@ pub(crate) fn report(setting: GraphicsSetting, detection: &Detection) -> String 
         Probe::Answered(reply) => match &reply.graphics {
             GraphicsReply::NoAnswer => "no graphics reply before DA1".to_string(),
             GraphicsReply::Ok => "OK".to_string(),
-            GraphicsReply::Error(message) => format!("error: {message}"),
+            GraphicsReply::Error(message) => format!("error: {}", printable(message)),
         },
     };
     let terminal = match &detection.probe {
         Probe::Answered(ProbeReply {
             version: Some(version),
             ..
-        }) => version.as_str(),
-        _ => "unknown",
+        }) => printable(version),
+        _ => "unknown".to_string(),
     };
     let cell = if caps.cell_px == (0, 0) {
         "unknown".to_string()
@@ -455,9 +513,10 @@ mod sys {
         }
     }
 
-    /// Send `query` to the controlling terminal and read replies until DA1
-    /// or `timeout`. Returns the parsed reply (`None` on timeout) and the
-    /// cell size from `TIOCGWINSZ`.
+    /// Send `query` to the controlling terminal and read replies until DA1.
+    /// Returns the parsed reply (`None` when nothing complete arrived in
+    /// time) and the cell size from `TIOCGWINSZ`. Input that is not part of
+    /// the reply, such as keys typed during the query, is consumed and lost.
     pub(super) fn probe(query: &[u8], timeout: Duration) -> std::io::Result<super::ProbeOutput> {
         let mut tty = File::options().read(true).write(true).open("/dev/tty")?;
         let already_raw = crossterm::terminal::is_raw_mode_enabled()?;
@@ -472,24 +531,22 @@ mod sys {
         tty.write_all(query)?;
         tty.flush()?;
 
-        let deadline = Instant::now() + timeout;
+        let sent = Instant::now();
         let mut buf = Vec::new();
-        let mut chunk = [0u8; 256];
-        loop {
-            if let Some(reply) = super::parse_reply(&buf, super::PROBE_IMAGE_ID) {
-                return Ok((Some(reply), winsize_cell));
-            }
-            let remaining = deadline.saturating_duration_since(Instant::now());
-            if remaining.is_zero() || !wait_readable(&tty, remaining)? {
-                break;
-            }
-            let n = tty.read(&mut chunk)?;
-            if n == 0 {
-                break;
-            }
-            buf.extend_from_slice(&chunk[..n]);
+        let mut reply = read_reply(&mut tty, &mut buf, sent + timeout)?;
+        if reply.is_none() && !buf.is_empty() {
+            // Something arrived: the terminal is answering, only slowly.
+            reply = read_reply(&mut tty, &mut buf, sent + super::PROBE_REPLY_CAP)?;
         }
-        // Drop a partial reply so the pager does not read it as keystrokes.
+        if reply.is_some() {
+            return Ok((reply, winsize_cell));
+        }
+        // No complete reply in time, so graphics stay off. A late reply may
+        // still be on its way: swallow it (up to DA1 or the cap), then drop
+        // anything queued, so the pager (or the shell, after
+        // --debug-graphics) does not read it as keystrokes. Only a terminal
+        // that never answers DA1 pays the full cap.
+        read_reply(&mut tty, &mut buf, sent + super::PROBE_REPLY_CAP)?;
         // SAFETY: tcflush only discards queued input on a valid, open fd.
         unsafe {
             libc::tcflush(tty.as_raw_fd(), libc::TCIFLUSH);
@@ -497,15 +554,41 @@ mod sys {
         Ok((None, winsize_cell))
     }
 
-    /// Wait until `tty` has input or `timeout` passes. Uses `select` because
+    /// Read into `buf` until it holds a complete reply or `deadline` passes.
+    fn read_reply(
+        tty: &mut File,
+        buf: &mut Vec<u8>,
+        deadline: Instant,
+    ) -> std::io::Result<Option<super::ProbeReply>> {
+        let mut chunk = [0u8; 256];
+        loop {
+            if let Some(reply) = super::parse_reply(buf, super::PROBE_IMAGE_ID) {
+                return Ok(Some(reply));
+            }
+            if !wait_readable(tty, deadline)? {
+                return Ok(None);
+            }
+            let n = tty.read(&mut chunk)?;
+            if n == 0 {
+                return Ok(None);
+            }
+            buf.extend_from_slice(&chunk[..n]);
+        }
+    }
+
+    /// Wait until `tty` has input or `deadline` passes. Uses `select` because
     /// macOS `poll` does not support tty devices.
-    fn wait_readable(tty: &File, timeout: Duration) -> std::io::Result<bool> {
+    fn wait_readable(tty: &File, deadline: Instant) -> std::io::Result<bool> {
         let fd = tty.as_raw_fd();
         let in_range = usize::try_from(fd).is_ok_and(|fd| fd < libc::FD_SETSIZE);
         if !in_range {
             return Err(std::io::Error::other("tty descriptor too large for select"));
         }
         loop {
+            let timeout = deadline.saturating_duration_since(Instant::now());
+            if timeout.is_zero() {
+                return Ok(false);
+            }
             // SAFETY: fd_set is plain data; FD_ZERO below initialises it.
             let mut set: libc::fd_set = unsafe { std::mem::zeroed() };
             // SAFETY: `set` is a valid, exclusively borrowed fd_set.
@@ -714,31 +797,65 @@ mod tests {
             Some(GraphicsMode::Auto),
             Some("off"),
             Some(GraphicsMode::Off),
-        )
-        .unwrap();
-        assert_eq!(s, setting(GraphicsMode::Auto, SettingSource::Cli));
+        );
+        assert_eq!(s, (setting(GraphicsMode::Auto, SettingSource::Cli), None));
     }
 
     #[test]
     fn precedence_env_over_config() {
-        let s = resolve_setting(None, Some("OFF"), Some(GraphicsMode::Auto)).unwrap();
-        assert_eq!(s, setting(GraphicsMode::Off, SettingSource::Env));
+        let s = resolve_setting(None, Some("OFF"), Some(GraphicsMode::Auto));
+        assert_eq!(s, (setting(GraphicsMode::Off, SettingSource::Env), None));
     }
 
     #[test]
     fn precedence_config_then_default() {
-        let s = resolve_setting(None, None, Some(GraphicsMode::Off)).unwrap();
-        assert_eq!(s, setting(GraphicsMode::Off, SettingSource::Config));
-        let s = resolve_setting(None, Some(""), None).unwrap();
-        assert_eq!(s, setting(GraphicsMode::Auto, SettingSource::Default));
+        let s = resolve_setting(None, None, Some(GraphicsMode::Off));
+        assert_eq!(s, (setting(GraphicsMode::Off, SettingSource::Config), None));
+        let s = resolve_setting(None, Some(""), None);
+        assert_eq!(
+            s,
+            (setting(GraphicsMode::Auto, SettingSource::Default), None)
+        );
     }
 
     #[test]
-    fn invalid_env_value_errors() {
-        let err = resolve_setting(None, Some("on"), None).unwrap_err();
-        assert!(err.to_string().contains("MDX_GRAPHICS"), "{err}");
+    fn invalid_env_value_warns_and_falls_back() {
+        let (s, warning) = resolve_setting(None, Some("on"), Some(GraphicsMode::Off));
+        assert_eq!(s, setting(GraphicsMode::Off, SettingSource::Config));
+        let warning = warning.unwrap();
+        assert!(warning.contains("MDX_GRAPHICS"), "{warning}");
         // The CLI flag makes the environment irrelevant.
-        assert!(resolve_setting(Some(GraphicsMode::Off), Some("on"), None).is_ok());
+        let (_, warning) = resolve_setting(Some(GraphicsMode::Off), Some("on"), None);
+        assert_eq!(warning, None);
+    }
+
+    #[test]
+    fn parse_survives_keys_pressed_during_query() {
+        // A lone Esc / Alt-[ before the reply must not swallow it.
+        let buf = concat(&[b"\x1b[", &graphics_ok(), DA1]);
+        assert_eq!(parse_reply(&buf, ID).unwrap().graphics, GraphicsReply::Ok);
+        // Alt-_ and Alt-P are not replies either.
+        let buf = concat(&[b"\x1b_x\x1bPq", &graphics_ok(), DA1]);
+        assert_eq!(parse_reply(&buf, ID).unwrap().graphics, GraphicsReply::Ok);
+        let buf = concat(&[b"\x1b_G", &graphics_ok(), DA1]);
+        assert_eq!(parse_reply(&buf, ID).unwrap().graphics, GraphicsReply::Ok);
+    }
+
+    #[test]
+    fn report_strips_control_characters() {
+        let detection = Detection {
+            caps: GraphicsCaps::unsupported("terminal rejected the Kitty graphics query"),
+            probe: Probe::Answered(ProbeReply {
+                graphics: GraphicsReply::Error("EBAD\x07\x1b[2J".to_string()),
+                version: Some("evil\x1b]0;x\x07".to_string()),
+                cell_px: None,
+            }),
+        };
+        let text = report(
+            setting(GraphicsMode::Auto, SettingSource::Default),
+            &detection,
+        );
+        assert!(!text.contains('\x1b') && !text.contains('\x07'), "{text:?}");
     }
 
     #[test]
