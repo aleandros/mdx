@@ -210,6 +210,11 @@ ui_theme = "clay"
 theme = "base16-ocean.dark"
 ```
 
+The syntax theme default doesn't follow `ui_theme`. If you set only `ui_theme`,
+for example to a light theme such as `paper`, code blocks now use `Nord`. Add
+`theme = "base16-ocean.dark"` (or `InspiredGitHub` for light backgrounds) to choose
+the code colors explicitly.
+
 Preview them all against sample markdown:
 
 ```bash

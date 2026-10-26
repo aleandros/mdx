@@ -127,10 +127,10 @@ impl Theme {
     /// Built-in theme names compiled into the binary.
     pub(crate) fn builtin_names() -> &'static [&'static str] {
         &[
+            "nord",
             "clay",
             "hearth",
             "frost",
-            "nord",
             "glacier",
             "steel",
             "solarized-dark",
@@ -227,10 +227,10 @@ impl Theme {
 
     pub(crate) fn all() -> &'static [&'static Theme] {
         static ALL: &[&Theme] = &[
+            &NORD,
             &CLAY,
             &HEARTH,
             &FROST,
-            &NORD,
             &GLACIER,
             &STEEL,
             &SOLARIZED_DARK,
@@ -620,6 +620,9 @@ mod tests {
             ("inline_code".into(), &theme.inline_code),
             ("diagram_node_text".into(), &theme.diagram_node_text),
             ("diagram_edge_label".into(), &theme.diagram_edge_label),
+            // A rule only needs 3:1, but code-block language labels
+            // (`[rust]`) are text drawn in the same color.
+            ("horizontal_rule".into(), &theme.horizontal_rule),
         ];
         text.extend(
             theme
@@ -628,8 +631,7 @@ mod tests {
                 .enumerate()
                 .map(|(i, c)| (format!("H{}", i + 1), c)),
         );
-        let non_text: [(&str, &Color); 6] = [
-            ("horizontal_rule", &theme.horizontal_rule),
+        let non_text: [(&str, &Color); 5] = [
             ("diagram_border", &theme.diagram_border),
             ("diagram_node_border", &theme.diagram_node_border),
             ("diagram_edge_stroke", &theme.diagram_edge_stroke),

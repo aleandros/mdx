@@ -689,7 +689,12 @@ const CLAY_H1: &str = "\x1b[1;38;2;210;140;40m";
 
 fn run_with(args: &[&str], config: Option<&std::path::Path>) -> String {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_mdx"));
-    cmd.args(args).env_remove("NO_COLOR");
+    cmd.args(args)
+        .env(
+            "XDG_CONFIG_HOME",
+            std::env::temp_dir().join("mdx_default_theme_no_config"),
+        )
+        .env_remove("NO_COLOR");
     if let Some(path) = config {
         cmd.arg("--config").arg(path);
     }

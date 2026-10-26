@@ -16,7 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   horizontal rules, and mermaid `style`/`classDef` colors snap to these colors
   too. The previous look is still available by name:
   `--ui-theme clay --theme base16-ocean.dark`, or `ui_theme`/`theme` in
-  `config.toml`. Its output is unchanged. (#20)
+  `config.toml`. Its output is unchanged. If you set only `ui_theme` (for example
+  a light theme), also set `theme = "base16-ocean.dark"` to keep the previous
+  code-block colors. (#20)
 
 ### Added
 - Bundled `Nord` syntax theme (`Nord.tmTheme` from nordtheme/sublime-text, MIT),

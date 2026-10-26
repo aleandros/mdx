@@ -15,11 +15,17 @@ enum Mode {
 
 fn run_mdx(file: &str, width: u16, mode: Mode) -> String {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_mdx"));
-    cmd.env_remove("NO_COLOR")
-        .arg(file)
-        .arg("--no-pager")
-        .arg("--width")
-        .arg(width.to_string());
+    // An empty config dir keeps the developer's own config.toml and themes
+    // out of the snapshots.
+    cmd.env(
+        "XDG_CONFIG_HOME",
+        std::env::temp_dir().join("mdx_snapshots_no_config"),
+    )
+    .env_remove("NO_COLOR")
+    .arg(file)
+    .arg("--no-pager")
+    .arg("--width")
+    .arg(width.to_string());
     match mode {
         Mode::Default => {}
         Mode::Clay => {

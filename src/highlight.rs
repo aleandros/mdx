@@ -233,8 +233,9 @@ mod tests {
     #[test]
     fn test_nord_syntax_colors_contrast_against_nord0() {
         use crate::theme::{NORD0, contrast_ratio};
-        let h = Highlighter::new(None).unwrap();
-        let theme = &h.theme_set.themes[DEFAULT_THEME];
+        // Parse the embedded file directly: Highlighter::new also loads the
+        // user's syntax-themes dir, which may override "Nord".
+        let theme = ThemeSet::load_from_reader(&mut std::io::Cursor::new(NORD_TMTHEME)).unwrap();
         let to_color = |c: syntect::highlighting::Color| Color::Rgb(c.r, c.g, c.b);
 
         let plain = theme.settings.foreground.expect("Nord sets a foreground");
@@ -251,12 +252,6 @@ mod tests {
             }
         }
         assert!(failures.is_empty(), "{}", failures.join("\n"));
-
-        let comment = h
-            .highlight_code("// note\n", Some("rust"))
-            .expect("rust is a known syntax");
-        let comment_fg = comment[0][0].style.fg.clone().expect("comment is colored");
-        assert_eq!(comment_fg, Color::Rgb(0x7b, 0x88, 0xa1));
     }
 
     #[test]
