@@ -56,6 +56,57 @@ the pager, plain stdout and `mdx embed`; equations are not typeset yet.
 | `--config <PATH>` | Use a specific config file (overrides user/project config) |
 | `--no-mermaid-rendering` | Show raw mermaid source without rendering |
 | `--split-mermaid-rendering` | Show mermaid source followed by the rendered diagram |
+| `--graphics <auto\|off>` | Pixel graphics in the pager (default: `auto`); see [Graphics](#graphics) |
+| `--debug-graphics` | Print whether graphics would be enabled, and why, then exit |
+
+## Graphics
+
+mdx decides once, at startup, whether it may draw pixel graphics. No feature
+draws graphics yet; this setting is the switch later image and diagram
+support will read.
+
+| Source | Example |
+|--------|---------|
+| CLI flag (wins) | `--graphics off` |
+| Environment | `MDX_GRAPHICS=off` |
+| Config file | `graphics = "off"` |
+| Default | `auto` |
+
+An invalid `MDX_GRAPHICS` value is ignored with a warning.
+
+`auto` turns graphics on only when all of these hold:
+
+1. Output is the interactive pager (or watch mode) on a terminal. Plain or
+   piped output and `mdx embed` never use graphics and never send a terminal
+   query, whatever the setting.
+2. The terminal answers a Kitty graphics protocol query before its primary
+   device attributes (DA1) reply. mdx reads until DA1 arrives, which takes
+   milliseconds; a terminal that never answers gives up after 1 s (2 s over
+   SSH) and means no graphics. Waiting for DA1 keeps a slow reply from
+   reaching the pager as keystrokes.
+3. The terminal is known to support Unicode placeholders. Only kitty 0.28 or
+   later is on this list; other terminals are added once verified.
+4. mdx is not running inside tmux. tmux passthrough is not supported yet, so
+   `auto` resolves to off when `TMUX` is set.
+
+mdx also records the terminal cell size in pixels, from `CSI 16 t` or the
+`TIOCGWINSZ` pixel fields.
+
+To see the decision and the reason, run the check from the terminal in question:
+
+```bash
+mdx --debug-graphics
+```
+
+```
+graphics: on
+reason: terminal supports Kitty graphics with Unicode placeholders
+setting: auto (from default)
+query: OK
+terminal: kitty(0.35.2)
+cell size: 10x20 px
+tmux: no
+```
 
 ## Interactive pager
 
@@ -179,6 +230,9 @@ max_width = 100
 # Mermaid diagram rendering
 no_mermaid_rendering = false
 split_mermaid_rendering = false
+
+# Pixel graphics in the pager: "auto" or "off" (see Graphics)
+graphics = "auto"
 ```
 
 ## Themes

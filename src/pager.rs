@@ -366,6 +366,8 @@ pub(crate) struct PagerState {
     search_matches: Vec<usize>,
     search_current: Option<usize>,
     search_direction: SearchDirection,
+    /// Startup graphics decision; no rendering reads it yet (#9).
+    graphics: crate::graphics::GraphicsCaps,
 }
 
 impl PagerState {
@@ -397,10 +399,17 @@ impl PagerState {
             search_matches: Vec::new(),
             search_current: None,
             search_direction: SearchDirection::Forward,
+            graphics: crate::graphics::GraphicsCaps::unsupported("not detected"),
         };
         state.rebuild_flat_lines();
         state.update_active_from_viewport();
         state
+    }
+
+    /// Attach the startup graphics decision.
+    pub(crate) fn with_graphics(mut self, graphics: crate::graphics::GraphicsCaps) -> Self {
+        self.graphics = graphics;
+        self
     }
 
     pub(crate) fn rebuild_flat_lines(&mut self) {
@@ -1116,21 +1125,43 @@ impl PagerState {
 
 // ─── Public entry point ────────────────────────────────────────────────────
 
+/// A terminal that ignores the graphics query may have printed part of it;
+/// clear the alternate screen so the first frame does not show it. Call it
+/// before creating the ratatui `Terminal`, whose `clear` would query the
+/// cursor position.
+pub(crate) fn clear_after_probe(
+    out: &mut impl std::io::Write,
+    detection: &crate::graphics::Detection,
+) -> std::io::Result<()> {
+    if matches!(detection.probe, crate::graphics::Probe::NotSent) {
+        Ok(())
+    } else {
+        execute!(
+            out,
+            crossterm::terminal::Clear(crossterm::terminal::ClearType::All)
+        )
+    }
+}
+
 pub(crate) fn run_pager(
     content: Vec<RenderedBlock>,
     max_content_width: u16,
     theme: &'static crate::theme::Theme,
+    graphics: crate::graphics::GraphicsSetting,
 ) -> Result<()> {
     enable_raw_mode()?;
     let mut stdout = stdout();
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
     let _guard = TerminalGuard;
+    let detection = crate::graphics::detect(graphics, crate::graphics::OutputTarget::Pager);
+    clear_after_probe(&mut stdout, &detection)?;
 
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
     let size = terminal.size()?;
-    let mut state = PagerState::new(content, size.height, size.width, max_content_width, theme);
+    let mut state = PagerState::new(content, size.height, size.width, max_content_width, theme)
+        .with_graphics(detection.caps);
 
     loop {
         terminal.draw(|f| {
@@ -1169,6 +1200,20 @@ pub(crate) fn run_pager(
 mod tests {
     use super::*;
     use crate::render::{SpanStyle, StyledLine, StyledSpan};
+
+    #[test]
+    fn clear_after_probe_only_clears_and_never_queries() {
+        let detection = |probe| crate::graphics::Detection {
+            caps: crate::graphics::GraphicsCaps::unsupported("test"),
+            probe,
+        };
+        let mut out = Vec::new();
+        clear_after_probe(&mut out, &detection(crate::graphics::Probe::NotSent)).unwrap();
+        assert!(out.is_empty());
+        clear_after_probe(&mut out, &detection(crate::graphics::Probe::TimedOut)).unwrap();
+        // A clear only: no cursor-position or other query the pager would have to read.
+        assert_eq!(out, b"\x1b[2J");
+    }
 
     fn line_text(line: &StyledLine) -> String {
         line.spans.iter().map(|s| s.text.as_str()).collect()

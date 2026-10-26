@@ -13,6 +13,8 @@ pub(crate) struct Config {
     pub(crate) max_width: Option<u16>,
     pub(crate) no_mermaid_rendering: Option<bool>,
     pub(crate) split_mermaid_rendering: Option<bool>,
+    /// Pixel graphics: `auto` (default) or `off`.
+    pub(crate) graphics: Option<crate::graphics::GraphicsMode>,
 }
 
 impl Config {
@@ -35,6 +37,7 @@ impl Config {
             split_mermaid_rendering: other
                 .split_mermaid_rendering
                 .or(self.split_mermaid_rendering),
+            graphics: other.graphics.or(self.graphics),
         }
     }
 
@@ -117,6 +120,9 @@ impl Config {
 # Mermaid diagram rendering
 # no_mermaid_rendering = false
 # split_mermaid_rendering = false
+
+# Pixel graphics in the pager: \"auto\" (when the terminal supports them) or \"off\"
+# graphics = \"auto\"
 "
     }
 }
@@ -247,6 +253,35 @@ mod tests {
         assert_eq!(config.width, Some(100));
         assert_eq!(config.no_mermaid_rendering, Some(true));
         assert_eq!(config.split_mermaid_rendering, Some(false));
+    }
+
+    #[test]
+    fn from_file_parses_graphics() {
+        let dir = std::env::temp_dir().join("mdx_config_test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("graphics.toml");
+        std::fs::write(&path, "graphics = \"off\"\n").unwrap();
+        let config = Config::from_file(&path).unwrap();
+        assert_eq!(config.graphics, Some(crate::graphics::GraphicsMode::Off));
+
+        std::fs::write(&path, "graphics = \"sixel\"\n").unwrap();
+        assert!(Config::from_file(&path).is_err());
+    }
+
+    #[test]
+    fn merge_graphics_overlay_wins() {
+        let base = Config {
+            graphics: Some(crate::graphics::GraphicsMode::Off),
+            ..Config::default()
+        };
+        let overlay = Config {
+            graphics: Some(crate::graphics::GraphicsMode::Auto),
+            ..Config::default()
+        };
+        assert_eq!(
+            base.merge(overlay).graphics,
+            Some(crate::graphics::GraphicsMode::Auto)
+        );
     }
 
     #[test]

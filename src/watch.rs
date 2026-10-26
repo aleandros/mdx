@@ -244,6 +244,7 @@ pub(crate) fn run_watch(
     highlighter: &crate::highlight::Highlighter,
     theme: &'static crate::theme::Theme,
     mermaid_mode: MermaidMode,
+    graphics: crate::graphics::GraphicsSetting,
 ) -> Result<()> {
     // Initial read and render
     let input = std::fs::read_to_string(path)?;
@@ -294,6 +295,8 @@ pub(crate) fn run_watch(
     let mut stdout = stdout();
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
     let _guard = TerminalGuard;
+    let detection = crate::graphics::detect(graphics, crate::graphics::OutputTarget::Pager);
+    crate::pager::clear_after_probe(&mut stdout, &detection)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
@@ -305,7 +308,8 @@ pub(crate) fn run_watch(
         term_size.width,
         max_content_width,
         theme,
-    );
+    )
+    .with_graphics(detection.caps);
 
     // Start file watcher
     let (_watcher, rx) = start_watcher(path)?;

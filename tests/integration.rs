@@ -682,6 +682,125 @@ fn math_source_survives_stdout_and_embed() {
     }
 }
 
+fn graphics_fixture(name: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join("mdx_integration");
+    std::fs::create_dir_all(&dir).expect("create fixture dir");
+    let path = dir.join(format!("graphics_{name}.md"));
+    std::fs::write(
+        &path,
+        "# Graphics\n\n![logo](logo.png)\n\n```mermaid\ngraph TD\n    A --> B\n```\n",
+    )
+    .expect("write fixture");
+    path
+}
+
+fn assert_no_graphics_query(bytes: &[u8]) {
+    assert!(
+        !bytes.windows(3).any(|w| w == b"\x1b_G"),
+        "output contains a graphics escape: {:?}",
+        String::from_utf8_lossy(bytes)
+    );
+}
+
+#[test]
+fn test_piped_output_never_sends_graphics_query() {
+    let path = graphics_fixture("piped");
+    for env in ["auto", "off", ""] {
+        for flag in [None, Some("auto"), Some("off")] {
+            let mut cmd = Command::new(env!("CARGO_BIN_EXE_mdx"));
+            cmd.arg(&path).env("MDX_GRAPHICS", env);
+            if let Some(flag) = flag {
+                cmd.args(["--graphics", flag]);
+            }
+            let output = cmd.output().expect("failed to run mdx");
+            assert!(output.status.success(), "{output:?}");
+            assert_no_graphics_query(&output.stdout);
+            assert_no_graphics_query(&output.stderr);
+        }
+    }
+}
+
+#[test]
+fn test_embed_never_sends_graphics_query() {
+    let path = graphics_fixture("embed");
+    let output = Command::new(env!("CARGO_BIN_EXE_mdx"))
+        .args(["embed", "--width", "40"])
+        .arg(&path)
+        .env("MDX_GRAPHICS", "auto")
+        .output()
+        .expect("failed to run mdx");
+    assert!(output.status.success(), "{output:?}");
+    assert_no_graphics_query(&output.stdout);
+}
+
+#[test]
+fn test_debug_graphics_reports_decision() {
+    let output = Command::new(env!("CARGO_BIN_EXE_mdx"))
+        .args(["--graphics", "auto", "--debug-graphics"])
+        .env_remove("MDX_GRAPHICS")
+        .output()
+        .expect("failed to run mdx");
+    assert!(output.status.success(), "{output:?}");
+    assert_no_graphics_query(&output.stdout);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("graphics: off"), "output was: {stdout}");
+    assert!(
+        stdout.contains("reason: output is not the interactive pager"),
+        "output was: {stdout}"
+    );
+    assert!(
+        stdout.contains("setting: auto (from --graphics)"),
+        "output was: {stdout}"
+    );
+}
+
+#[test]
+fn test_debug_graphics_env_off() {
+    let output = Command::new(env!("CARGO_BIN_EXE_mdx"))
+        .arg("--debug-graphics")
+        .env("MDX_GRAPHICS", "off")
+        .output()
+        .expect("failed to run mdx");
+    assert!(output.status.success(), "{output:?}");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("reason: disabled by MDX_GRAPHICS=off"),
+        "output was: {stdout}"
+    );
+}
+
+#[test]
+fn test_invalid_graphics_env_warns() {
+    let path = graphics_fixture("invalid_env");
+    let output = Command::new(env!("CARGO_BIN_EXE_mdx"))
+        .arg(&path)
+        .env("MDX_GRAPHICS", "sixel")
+        .output()
+        .expect("failed to run mdx");
+    assert!(output.status.success(), "{output:?}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("ignoring invalid MDX_GRAPHICS"),
+        "stderr was: {stderr}"
+    );
+}
+
+#[test]
+fn test_debug_graphics_never_queries_without_terminal() {
+    // The query goes to /dev/tty, not stdout, so check the decision itself:
+    // with stdout piped no mode may send it, even with --pager.
+    for extra in [&[][..], &["--pager"], &["--no-pager"]] {
+        let output = Command::new(env!("CARGO_BIN_EXE_mdx"))
+            .args(["--graphics", "auto", "--debug-graphics"])
+            .args(extra)
+            .output()
+            .expect("failed to run mdx");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(stdout.contains("query: not sent"), "{extra:?}: {stdout}");
+        assert!(stdout.contains("graphics: off"), "{extra:?}: {stdout}");
+    }
+}
+
 // ─── default theme (issue #20) ───────────────────────────────────────────
 
 const NORD_H1: &str = "\x1b[1;38;2;136;192;208m";

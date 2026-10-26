@@ -1,5 +1,6 @@
 mod config;
 mod embed;
+mod graphics;
 mod highlight;
 mod mermaid;
 mod pager;
@@ -117,6 +118,19 @@ struct Args {
     /// Show mermaid source followed by rendered diagram
     #[arg(long)]
     split_mermaid_rendering: bool,
+
+    #[expect(
+        clippy::doc_markdown,
+        reason = "clap displays this documentation verbatim in CLI help"
+    )]
+    /// Pixel graphics in the pager: auto (when the terminal supports them)
+    /// or off. Overrides MDX_GRAPHICS and the config [default: auto]
+    #[arg(long, value_enum, value_name = "MODE")]
+    graphics: Option<graphics::GraphicsMode>,
+
+    /// Print whether graphics would be enabled, and why, then exit
+    #[arg(long)]
+    debug_graphics: bool,
 }
 
 #[derive(clap::Args)]
@@ -324,6 +338,21 @@ fn main() -> Result<()> {
     } else {
         std::io::stdout().is_terminal()
     };
+    let graphics_setting = graphics::setting_from_env(args.graphics, config.graphics);
+    let graphics_target = if use_pager || args.watch {
+        graphics::OutputTarget::Pager
+    } else {
+        graphics::OutputTarget::Plain
+    };
+    if args.debug_graphics {
+        let detection = graphics::detect(graphics_setting, graphics_target);
+        if !matches!(detection.probe, graphics::Probe::NotSent) {
+            // Erase any part of the query a terminal printed instead of parsing.
+            print!("\r\x1b[2K");
+        }
+        print!("{}", graphics::report(graphics_setting, &detection));
+        return Ok(());
+    }
 
     // In the pager (and watch mode) the content column is capped so wide
     // terminals get margins; render to that column width so rules and
@@ -349,6 +378,7 @@ fn main() -> Result<()> {
             &highlighter,
             ui_theme,
             mermaid_mode,
+            graphics_setting,
         );
     }
 
@@ -358,7 +388,7 @@ fn main() -> Result<()> {
         render::render_blocks(&blocks, render_width, &highlighter, ui_theme, mermaid_mode);
     if use_pager {
         setup_panic_hook();
-        pager::run_pager(rendered, max_content_width, ui_theme)?;
+        pager::run_pager(rendered, max_content_width, ui_theme, graphics_setting)?;
     } else {
         pipe_output(&rendered, color_mode)?;
     }
@@ -498,6 +528,17 @@ mod tests {
     }
 
     #[test]
+    fn test_args_graphics_flag() {
+        let cli = Cli::parse_from(["mdx", "--graphics", "off", "file.md"]);
+        assert_eq!(cli.args.graphics, Some(graphics::GraphicsMode::Off));
+        let cli = Cli::parse_from(["mdx", "--graphics", "auto", "--debug-graphics"]);
+        assert_eq!(cli.args.graphics, Some(graphics::GraphicsMode::Auto));
+        assert!(cli.args.debug_graphics);
+        assert_eq!(Cli::parse_from(["mdx", "file.md"]).args.graphics, None);
+        assert!(Cli::try_parse_from(["mdx", "--graphics", "on", "file.md"]).is_err());
+    }
+
+    #[test]
     fn test_update_subcommand() {
         let cli = Cli::parse_from(["mdx", "update"]);
         assert!(matches!(cli.command, Some(Commands::Update)));
@@ -517,6 +558,8 @@ mod tests {
             config: None,
             no_mermaid_rendering: false,
             split_mermaid_rendering: false,
+            graphics: None,
+            debug_graphics: false,
         };
         let result = validate_watch_args(&args);
         assert!(result.is_err());
@@ -537,6 +580,8 @@ mod tests {
             config: None,
             no_mermaid_rendering: false,
             split_mermaid_rendering: false,
+            graphics: None,
+            debug_graphics: false,
         };
         let result = validate_watch_args(&args);
         assert!(result.is_err());
@@ -557,6 +602,8 @@ mod tests {
             config: None,
             no_mermaid_rendering: false,
             split_mermaid_rendering: false,
+            graphics: None,
+            debug_graphics: false,
         };
         let result = validate_watch_args(&args);
         assert!(result.is_ok());
