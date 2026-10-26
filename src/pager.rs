@@ -1323,6 +1323,21 @@ mod tests {
     }
 
     #[test]
+    fn halfwidth_sound_marks_do_not_swallow_following_text() {
+        // Terminals draw each ﾞ/ﾟ mark in its own column. ratatui 0.29 gave
+        // the base+mark grapheme a single cell, so the terminal shifted the
+        // rest of the line and later cells overwrote it.
+        let state = PagerState::new(vec![para("ｶﾞｷﾞ ﾊﾟ and more")], 5, 40, 100, theme());
+        let backend = TestBackend::new(40, 5);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| state.draw_content(f, f.area())).unwrap();
+        let buf = terminal.backend().buffer();
+        let and_col = (0..40u16).find(|&x| buf.cell((x, 0)).is_some_and(|c| c.symbol() == "a"));
+        // "ｶﾞｷﾞ ﾊﾟ " is 2+2+1+2+1 columns wide.
+        assert_eq!(and_col, Some(8));
+    }
+
+    #[test]
     fn content_width_helper_caps_and_uncaps() {
         assert_eq!(content_width(80, 100), 80);
         assert_eq!(content_width(200, 100), 100);
