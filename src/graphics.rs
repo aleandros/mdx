@@ -33,9 +33,15 @@ const TMUX_TIMEOUT: Duration = Duration::from_secs(1);
 /// What tmux is asked about this pane and the terminal its client runs in,
 /// separated by tabs: the server version, the pane's effective
 /// `allow-passthrough`, the client's terminal features (`RGB` when tmux
-/// sends 24-bit color) and the client terminal's `XTVERSION` reply.
-const TMUX_FORMAT: &str =
-    "#{version}\t#{allow-passthrough}\t#{client_termfeatures}\t#{client_termtype}";
+/// added 24-bit color), the client terminal's `XTVERSION` reply, the
+/// client's and the pane's tty, and `1` when the pane is the one the client
+/// shows active (its session's current window and that window's active
+/// pane).
+const TMUX_FORMAT: &str = concat!(
+    "#{version}\t#{allow-passthrough}\t#{client_termfeatures}\t#{client_termtype}",
+    "\t#{client_tty}\t#{pane_tty}",
+    "\t#{&&:#{pane_active},#{&&:#{window_active},#{==:#{client_session},#{session_name}}}}",
+);
 
 /// Terminals whose Unicode placeholder support has been verified, with the
 /// first version that has it, matched against the `XTVERSION` reply.
@@ -99,13 +105,14 @@ impl GraphicsCaps {
 /// The terminal's answer to the Kitty graphics query.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum GraphicsReply {
-    /// No graphics reply arrived before the DA1 reply.
+    /// No graphics reply arrived before the DA1 reply (outside tmux).
     NoAnswer,
     Ok,
     Error(String),
 }
 
-/// Replies collected up to and including the DA1 reply.
+/// Replies collected up to and including the reply that ends the query (see
+/// [`ReplyEnd`]).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ProbeReply {
     pub(crate) graphics: GraphicsReply,
@@ -128,6 +135,16 @@ pub(crate) struct TmuxInfo {
     /// The terminal outside tmux as its `XTVERSION` names it, e.g.
     /// `kitty(0.35.2)`; empty when tmux does not know.
     pub(crate) termtype: String,
+    /// The client's tty, which names its terminal in `show-messages -T`.
+    pub(crate) client_tty: String,
+    /// The pane's tty, to check that mdx runs in this pane.
+    pub(crate) pane_tty: String,
+    /// The client shows this pane as its active pane. Only then does tmux
+    /// deliver the terminal's reply to it rather than to another pane.
+    pub(crate) active: bool,
+    /// The client's terminal description has `setrgbf` and `setrgbb`, so tmux
+    /// sends 24-bit color even without the `RGB` feature.
+    pub(crate) terminal_rgb: bool,
 }
 
 impl TmuxInfo {
@@ -139,7 +156,15 @@ impl TmuxInfo {
             passthrough: next()?,
             features: next()?,
             termtype: next()?,
+            client_tty: next()?,
+            pane_tty: next()?,
+            active: next()? == "1",
+            terminal_rgb: false,
         })
+    }
+
+    fn has_rgb_feature(&self) -> bool {
+        self.features.split(',').any(|f| f.trim() == "RGB")
     }
 
     /// (major, minor) of [`Self::version`], ignoring a `next-` prefix and
@@ -153,8 +178,31 @@ impl TmuxInfo {
     }
 
     fn has_rgb(&self) -> bool {
-        self.features.split(',').any(|f| f.trim() == "RGB")
+        self.has_rgb_feature() || self.terminal_rgb
     }
+}
+
+/// Whether the terminal of the client on `tty`, in `tmux show-messages -T`
+/// output, has both `setrgbf` and `setrgbb`, which tmux uses for 24-bit
+/// color. The output lists one `Terminal N: NAME for TTY, flags=...:` header
+/// per client, then one `INDEX: NAME: (TYPE) VALUE` line per capability.
+fn terminal_sends_rgb(messages: &str, tty: &str) -> bool {
+    let header = format!(" for {tty},");
+    let mut ours = false;
+    let (mut fg, mut bg) = (false, false);
+    for line in messages.lines() {
+        if line.starts_with("Terminal ") {
+            ours = !tty.is_empty() && line.contains(&header);
+            continue;
+        }
+        if !ours {
+            continue;
+        }
+        let capability = line.trim_start().split_once(": ").map_or("", |(_, c)| c);
+        fg |= capability.starts_with("setrgbf: (string)");
+        bg |= capability.starts_with("setrgbb: (string)");
+    }
+    fg && bg
 }
 
 /// What happened to the terminal query.
@@ -293,6 +341,13 @@ fn decide_tmux(info: Option<&TmuxInfo>) -> Result<(), &'static str> {
     if !placeholders_known(Some(&info.termtype)) {
         return Err(
             "the terminal outside tmux is unknown or its Unicode placeholder support is not verified",
+        );
+    }
+    if !info.active {
+        // tmux hands the terminal's reply to the active pane, where a shell
+        // or editor would read it as keystrokes.
+        return Err(
+            "the mdx pane is not the active tmux pane, so the query's reply would go to another pane",
         );
     }
     Ok(())
@@ -522,13 +577,24 @@ fn env_is_set(name: &str) -> bool {
 pub(crate) fn detect(setting: GraphicsSetting, target: OutputTarget) -> Detection {
     if let Some(caps) = decide_without_probe(setting, target, std::io::stdout().is_terminal()) {
         return Detection {
-            caps,
+            caps: GraphicsCaps {
+                via_tmux: env_is_set("TMUX"),
+                ..caps
+            },
             probe: Probe::NotSent,
             tmux: None,
         };
     }
-    let via_tmux = env_is_set("TMUX");
-    let tmux = if via_tmux { ask_tmux() } else { None };
+    let mut tmux = if env_is_set("TMUX") { ask_tmux() } else { None };
+    // A `TMUX` inherited by a terminal outside tmux names a pane that is
+    // not ours; query that terminal directly.
+    let stray = tmux.as_ref().is_some_and(|info| {
+        sys::stdout_tty().is_some_and(|own| !info.pane_tty.is_empty() && info.pane_tty != own)
+    });
+    if stray {
+        tmux = None;
+    }
+    let via_tmux = env_is_set("TMUX") && !stray;
     if via_tmux && let Err(reason) = decide_tmux(tmux.as_ref()) {
         return Detection {
             caps: GraphicsCaps {
@@ -544,6 +610,9 @@ pub(crate) fn detect(setting: GraphicsSetting, target: OutputTarget) -> Detectio
     } else {
         PROBE_TIMEOUT
     };
+    // Inside tmux the graphics reply is the only end marker: tmux answers
+    // DA1 itself and swallows the outer terminal's DA1. A reply slower than
+    // the timeout therefore arrives after the probe, as keystrokes.
     let (query, end) = if via_tmux {
         (tmux_query_bytes(PROBE_IMAGE_ID), ReplyEnd::Graphics)
     } else {
@@ -587,28 +656,52 @@ pub(crate) fn detect(setting: GraphicsSetting, target: OutputTarget) -> Detectio
     }
 }
 
-/// Ask tmux about this pane (`$TMUX_PANE`) and its client, waiting at most
-/// [`TMUX_TIMEOUT`]. `None` when tmux cannot be run or does not answer.
+/// Ask tmux about this pane (`$TMUX_PANE`) and its client. `None` when tmux
+/// cannot be run or does not answer.
 fn ask_tmux() -> Option<TmuxInfo> {
+    let mut args = vec!["display-message".into(), "-p".into()];
+    if let Some(pane) = std::env::var_os("TMUX_PANE").filter(|p| !p.is_empty()) {
+        args.push("-t".into());
+        args.push(pane);
+    }
+    args.push(TMUX_FORMAT.into());
+    let mut info = TmuxInfo::parse(&run_tmux(&args)?)?;
+    if !info.has_rgb_feature() {
+        info.terminal_rgb = run_tmux(&["show-messages".into(), "-T".into()])
+            .is_some_and(|messages| terminal_sends_rgb(&messages, &info.client_tty));
+    }
+    Some(info)
+}
+
+/// Run `tmux` with `args`, waiting at most [`TMUX_TIMEOUT`]. Returns its
+/// output, or `None` when it cannot run, fails or takes too long.
+fn run_tmux(args: &[std::ffi::OsString]) -> Option<String> {
+    use std::io::Read;
     use std::process::{Command, Stdio};
     use std::time::Instant;
 
-    let mut command = Command::new("tmux");
-    command.arg("display-message").arg("-p");
-    if let Some(pane) = std::env::var_os("TMUX_PANE").filter(|p| !p.is_empty()) {
-        command.arg("-t").arg(pane);
-    }
-    let mut child = command
-        .arg(TMUX_FORMAT)
+    let mut child = Command::new("tmux")
+        .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
         .ok()?;
+    // Read on another thread, so output larger than the pipe buffer cannot
+    // block tmux while this one waits.
+    let Some(mut stdout) = child.stdout.take() else {
+        let _ = child.kill();
+        let _ = child.wait();
+        return None;
+    };
+    let reader = std::thread::spawn(move || {
+        let mut output = Vec::new();
+        stdout.read_to_end(&mut output).map(|_| output)
+    });
     let deadline = Instant::now() + TMUX_TIMEOUT;
-    loop {
+    let status = loop {
         match child.try_wait() {
-            Ok(Some(_)) => break,
+            Ok(Some(status)) => break status,
             Ok(None) if Instant::now() < deadline => {
                 std::thread::sleep(Duration::from_millis(5));
             }
@@ -618,12 +711,11 @@ fn ask_tmux() -> Option<TmuxInfo> {
                 return None;
             }
         }
-    }
-    let output = child.wait_with_output().ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    TmuxInfo::parse(&String::from_utf8_lossy(&output.stdout))
+    };
+    let output = reader.join().ok()?.ok()?;
+    status
+        .success()
+        .then(|| String::from_utf8_lossy(&output).into_owned())
 }
 
 /// Terminal-supplied text with control characters removed, safe to print.
@@ -667,10 +759,11 @@ pub(crate) fn report(setting: GraphicsSetting, detection: &Detection) -> String 
     };
     let tmux = match (&detection.tmux, caps.via_tmux) {
         (Some(info), _) => format!(
-            "yes, version {}, allow-passthrough {}, 24-bit color {}",
+            "yes, version {}, allow-passthrough {}, 24-bit color {}, active pane {}",
             non_empty(&printable(&info.version)),
             non_empty(&printable(&info.passthrough)),
             if info.has_rgb() { "yes" } else { "no" },
+            if info.active { "yes" } else { "no" },
         ),
         (None, true) => "yes (settings unknown)".to_string(),
         (None, false) => "no".to_string(),
@@ -837,6 +930,19 @@ mod sys {
         }
     }
 
+    /// Path of the terminal on stdout, e.g. `/dev/ttys004`.
+    pub(super) fn stdout_tty() -> Option<String> {
+        // SAFETY: ttyname returns null or a NUL-terminated string in a static
+        // buffer, copied below before anything else can call ttyname.
+        let name = unsafe { libc::ttyname(libc::STDOUT_FILENO) };
+        if name.is_null() {
+            return None;
+        }
+        // SAFETY: non-null, so a valid C string (see above).
+        let name = unsafe { std::ffi::CStr::from_ptr(name) };
+        Some(name.to_string_lossy().into_owned())
+    }
+
     /// Cell size from the pixel fields of `TIOCGWINSZ`, which many terminals
     /// leave at zero.
     fn winsize_cell(tty: &File) -> Option<(u16, u16)> {
@@ -870,6 +976,10 @@ mod sys {
             std::io::ErrorKind::Unsupported,
             "terminal queries are only implemented on Unix",
         ))
+    }
+
+    pub(super) fn stdout_tty() -> Option<String> {
+        None
     }
 }
 
@@ -1119,6 +1229,10 @@ mod tests {
             passthrough: passthrough.to_string(),
             features: features.to_string(),
             termtype: termtype.to_string(),
+            client_tty: "/dev/ttys001".to_string(),
+            pane_tty: "/dev/ttys002".to_string(),
+            active: true,
+            terminal_rgb: false,
         }
     }
 
@@ -1128,7 +1242,10 @@ mod tests {
 
     #[test]
     fn tmux_info_parses_display_message_output() {
-        let info = TmuxInfo::parse("3.3a\ton\tclipboard,RGB\tkitty(0.35.2)\n").unwrap();
+        let info = TmuxInfo::parse(
+            "3.3a\ton\tclipboard,RGB\tkitty(0.35.2)\t/dev/ttys001\t/dev/ttys002\t1\n",
+        )
+        .unwrap();
         assert_eq!(
             info,
             tmux_info("3.3a", "on", "clipboard,RGB", "kitty(0.35.2)")
@@ -1136,9 +1253,11 @@ mod tests {
         assert_eq!(info.version_number(), Some((3, 3)));
         assert!(info.has_rgb());
         // tmux before 3.3 expands the unknown option to nothing.
-        let old = TmuxInfo::parse("3.2a\t\tRGB\t\n").unwrap();
+        let old = TmuxInfo::parse("3.2a\t\tRGB\t\t/dev/ttys001\t/dev/ttys002\t0\n").unwrap();
         assert_eq!(old.passthrough, "");
+        assert!(!old.active);
         assert_eq!(TmuxInfo::parse("3.4"), None);
+        assert_eq!(TmuxInfo::parse("3.4\ton\tRGB\tkitty(0.35.2)"), None);
         assert_eq!(
             tmux_info("next-3.6", "", "", "").version_number(),
             Some((3, 6))
@@ -1201,6 +1320,45 @@ mod tests {
     }
 
     #[test]
+    fn tmux_rgb_from_the_terminal_description() {
+        let info = TmuxInfo {
+            features: "bpaste,title".to_string(),
+            terminal_rgb: true,
+            ..kitty_in_tmux()
+        };
+        assert_eq!(decide_tmux(Some(&info)), Ok(()));
+    }
+
+    #[test]
+    fn terminal_sends_rgb_reads_the_clients_terminal() {
+        let messages = "\
+Terminal 0: xterm-256color for /dev/ttys005, flags=0x20:
+ 209: setrgbb: [missing]
+ 210: setrgbf: [missing]
+Terminal 1: xterm-kitty for /dev/ttys006, flags=0x31:
+ 199: RGB: [missing]
+ 209: setrgbb: (string) \\033[48;2;%p1%d;%p2%d;%p3%dm
+ 210: setrgbf: (string) \\033[38;2;%p1%d;%p2%d;%p3%dm
+ 228: Tc: (flag) true
+";
+        assert!(terminal_sends_rgb(messages, "/dev/ttys006"));
+        assert!(!terminal_sends_rgb(messages, "/dev/ttys005"));
+        assert!(!terminal_sends_rgb(messages, "/dev/ttys00"));
+        assert!(!terminal_sends_rgb(messages, ""));
+        assert!(!terminal_sends_rgb("", "/dev/ttys006"));
+    }
+
+    #[test]
+    fn inactive_tmux_pane_resolves_off_without_asking() {
+        let info = TmuxInfo {
+            active: false,
+            ..kitty_in_tmux()
+        };
+        let reason = decide_tmux(Some(&info)).unwrap_err();
+        assert!(reason.contains("not the active tmux pane"), "{reason}");
+    }
+
+    #[test]
     fn unanswered_tmux_resolves_off() {
         assert!(decide_tmux(None).is_err());
     }
@@ -1236,6 +1394,20 @@ mod tests {
     }
 
     #[test]
+    fn tmux_reply_ends_at_an_error_for_our_image() {
+        let buf = concat(&[DA1, format!("\x1b_Gi={ID};EINVAL:bad\x1b\\").as_bytes()]);
+        let reply = parse_reply(&buf, ID, ReplyEnd::Graphics).unwrap();
+        assert_eq!(
+            reply.graphics,
+            GraphicsReply::Error("EINVAL:bad".to_string())
+        );
+        assert_eq!(
+            decide_from_tmux_reply(Some(&reply)),
+            (false, "terminal rejected the Kitty graphics query")
+        );
+    }
+
+    #[test]
     fn report_shows_tmux_settings() {
         let info = TmuxInfo {
             passthrough: "off".to_string(),
@@ -1261,7 +1433,9 @@ mod tests {
         );
         assert!(text.contains("terminal: kitty(0.35.2)"), "{text}");
         assert!(
-            text.contains("tmux: yes, version 3.4, allow-passthrough off, 24-bit color yes"),
+            text.contains(
+                "tmux: yes, version 3.4, allow-passthrough off, 24-bit color yes, active pane yes"
+            ),
             "{text}"
         );
     }

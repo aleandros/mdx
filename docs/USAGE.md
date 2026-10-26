@@ -123,18 +123,25 @@ Inside tmux, `auto` turns graphics on only when all of these hold, in
 addition to the first rule above:
 
 1. tmux is 3.3 or later and `allow-passthrough` is `on` or `all` for the pane.
-2. tmux sends 24-bit color to the outer terminal (the `RGB` terminal
-   feature), because the image id travels in the text color. tmux usually
+2. tmux sends 24-bit color to the outer terminal, because the image id
+   travels in the text color: the client has the `RGB` terminal feature, or
+   its terminal description has `setrgbf` and `setrgbb`. tmux usually
    detects it; if not, add `set -as terminal-features ",xterm-kitty:RGB"`.
 3. tmux reports the outer terminal (`client_termtype`, from its `XTVERSION`
    reply) as one with verified Unicode placeholder support, i.e. kitty 0.28
    or later.
-4. The Kitty graphics query, sent in a passthrough sequence, is answered
+4. mdx's pane is the active pane of the window the client shows. tmux hands
+   the terminal's reply to the active pane, so from any other pane the reply
+   would be typed into another program; mdx then leaves graphics off.
+5. The Kitty graphics query, sent in a passthrough sequence, is answered
    through tmux within 1 s (2 s over SSH). tmux answers DA1 itself, so mdx
    waits for the graphics reply instead.
 
-mdx reads these settings with `tmux display-message` and shows them, and the
-reason when graphics stay off, in `--debug-graphics`:
+mdx reads these settings with `tmux display-message` (and `tmux
+show-messages -T` for the terminal description) and shows them, and the
+reason when graphics stay off, in `--debug-graphics`. When `TMUX` is set but
+names a pane on another tty, as in a terminal started from a tmux shell, mdx
+queries its own terminal directly.
 
 ```
 graphics: off
@@ -143,7 +150,7 @@ setting: auto (from default)
 query: not sent
 terminal: kitty(0.35.2)
 cell size: unknown
-tmux: yes, version 3.4, allow-passthrough off, 24-bit color yes
+tmux: yes, version 3.4, allow-passthrough off, 24-bit color yes, active pane yes
 ```
 
 With graphics on, only image data and placements go through passthrough; the
@@ -157,6 +164,8 @@ limits:
   visible. An image that finishes loading or changes (watch mode) while the
   pane is hidden stays blank until it is sent again; `allow-passthrough all`
   avoids that.
+- A reply slower than the timeout (1 s, 2 s over SSH) reaches the pager as
+  keystrokes, because inside tmux the graphics reply is the only end marker.
 - Splitting or zooming the pane resizes it, and images are fitted to the new
   size.
 - With several tmux clients attached, mdx checks one client's terminal, and
