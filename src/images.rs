@@ -556,6 +556,12 @@ impl ImageStore {
         Self::without_worker(base_dir, cell_px)
     }
 
+    /// Whether no diagram was ever requested.
+    #[cfg(test)]
+    pub(crate) fn diagrams_is_empty(&self) -> bool {
+        self.diagrams.is_empty()
+    }
+
     /// Mark `diagram` as rasterized, as if the worker had finished.
     #[cfg(test)]
     pub(crate) fn insert_ready_diagram(

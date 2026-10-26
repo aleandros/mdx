@@ -173,13 +173,15 @@ ASCII with `--mermaid-graphics off` or `mermaid_graphics = "off"` in the config
 
 With graphics on, every diagram can be selected (`Tab`, or by scrolling it into
 view), and `i` switches the selected one between its image and its ASCII form.
-The blank row above the selected diagram says which form it is in, for
+The blank row above the selected diagram (or below it, when the row above is
+scrolled out of view) says which form it is in, for
 example `[image — i for ASCII]` or `[ASCII — i for image]` (`image loading`
 while it rasterizes, `image unavailable` when it cannot be drawn). The two forms
 take the same rows, so switching never moves the content above it. A collapsed
 diagram stays collapsed and shows the chosen form once expanded. The choice is
 kept per diagram across scrolling, resizing and watch-mode reloads, like
-expanded diagrams. Without graphics, `i` does nothing and no hint is shown.
+expanded diagrams. `Enter` still only expands and collapses large diagrams.
+Without graphics, `i` does nothing and no hint is shown.
 
 Search always matches diagram text. When `/`, `?`, `n` or `N` lands on a match
 inside a diagram shown as an image, that diagram switches to ASCII so the match

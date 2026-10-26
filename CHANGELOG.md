@@ -12,8 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   on, `i` switches the selected diagram between its image and its ASCII form,
   which stays available because its text can be selected and copied. Every
   diagram with an image can now be selected with `Tab` or by scrolling to it,
-  and the blank row above the selected diagram names its form (`[image — i
-  for ASCII]`, `[ASCII — i for image]`, `image loading`, `image unavailable`).
+  and the blank row above the selected diagram (below it when the row above
+  is scrolled away) names its form (`[image — i for ASCII]`,
+  `[ASCII — i for image]`, `image loading`, `image unavailable`). `Enter`
+  still only expands and collapses large diagrams.
   Both forms take the same rows, so switching does not scroll. Collapsed
   diagrams stay collapsed and show the chosen form when expanded. The choice
   is kept per diagram across scrolling, resizing and watch-mode reloads.

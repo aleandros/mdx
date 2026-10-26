@@ -289,8 +289,8 @@ pub(crate) fn run_watch(
         max_content_width,
         theme,
     )
-    .with_graphics(detection.caps, base_dir(path))
-    .with_mermaid_graphics(mermaid_graphics);
+    .with_mermaid_graphics(mermaid_graphics)
+    .with_graphics(detection.caps, base_dir(path));
 
     // Start file watcher
     let (_watcher, rx) = start_watcher(path)?;

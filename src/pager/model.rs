@@ -116,7 +116,7 @@ proptest! {
                     }
                     let old_len = state.flat_lines.len();
                     let mut expected_expanded = state.expanded.clone();
-                    if which == 8 && let Some(bi) = selected(&state) && matches!(state.content[bi],RenderedBlock::Diagram {..}) && !expected_expanded.remove(&bi) {
+                    if which == 8 && let Some(i) = state.active && state.interactive_blocks[i].collapsible && let Some(bi) = selected(&state) && matches!(state.content[bi],RenderedBlock::Diagram {..}) && !expected_expanded.remove(&bi) {
                         expected_expanded.insert(bi);
                     }
                     key(&mut state,code);
