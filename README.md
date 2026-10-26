@@ -37,7 +37,7 @@ The installer detects your OS and architecture and drops the binary in `/usr/loc
 - **ER diagrams** — entity tables with PK/FK attributes, wrapped comments, ASCII crow's foot cardinality, identifying / non-identifying relationships
 - **Interactive pager** — vim-style keybindings, search, tab-through diagrams, expand on demand
 - **Embeddable** — `mdx embed` gives you a bounded ANSI stream for other TUIs
-- **Themes** — 11 UI themes, syntect-powered syntax highlighting, project- and user-level config
+- **Themes** — 11 UI themes with a high-contrast [Nord](https://www.nordtheme.com) default, syntect-powered syntax highlighting, project- and user-level config
 - **Watch mode** — `mdx -W file.md` re-renders on save
 
 > **Diagram support is scoped.** Today mdx renders `graph` / `flowchart`, `sequenceDiagram`, and `erDiagram`. Class, state, gantt, and other types are not yet supported — PRs welcome.

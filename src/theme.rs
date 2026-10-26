@@ -21,6 +21,14 @@ struct UserTheme {
     diagram_node_text: String,
     diagram_edge_stroke: String,
     diagram_edge_label: String,
+    /// Dim (SGR 2) inline code and horizontal rules. Optional so theme files
+    /// written before this field existed keep loading with their old look.
+    #[serde(default = "default_dim_muted")]
+    dim_muted: bool,
+}
+
+fn default_dim_muted() -> bool {
+    true
 }
 
 /// Parses `#rrggbb` / `#RRGGBB` into a `Color::Rgb`.
@@ -66,6 +74,7 @@ impl UserTheme {
             diagram_node_text: parse_hex_color("diagram_node_text", &self.diagram_node_text)?,
             diagram_edge_stroke: parse_hex_color("diagram_edge_stroke", &self.diagram_edge_stroke)?,
             diagram_edge_label: parse_hex_color("diagram_edge_label", &self.diagram_edge_label)?,
+            dim_muted: self.dim_muted,
         })
     }
 }
@@ -87,6 +96,10 @@ pub(crate) struct Theme {
     pub(crate) diagram_node_text: Color,
     pub(crate) diagram_edge_stroke: Color,
     pub(crate) diagram_edge_label: Color,
+    /// Whether inline code and horizontal rules are also rendered dim
+    /// (SGR 2). Dimming lowers their contrast by a terminal-dependent amount,
+    /// so themes tuned to meet contrast targets turn it off.
+    pub(crate) dim_muted: bool,
 }
 
 impl Theme {
@@ -108,7 +121,7 @@ impl Theme {
     }
 
     pub(crate) fn default_theme() -> &'static Theme {
-        &CLAY
+        &NORD
     }
 
     /// Built-in theme names compiled into the binary.
@@ -276,6 +289,7 @@ static CLAY: Theme = Theme {
     diagram_node_text: Color::Rgb(190, 180, 160),
     diagram_edge_stroke: Color::Rgb(120, 160, 80),
     diagram_edge_label: Color::Rgb(130, 140, 110),
+    dim_muted: true,
 };
 
 static HEARTH: Theme = Theme {
@@ -301,6 +315,7 @@ static HEARTH: Theme = Theme {
     diagram_node_text: Color::Rgb(210, 200, 180),
     diagram_edge_stroke: Color::Rgb(100, 170, 90),
     diagram_edge_label: Color::Rgb(150, 140, 120),
+    dim_muted: true,
 };
 
 static FROST: Theme = Theme {
@@ -326,31 +341,37 @@ static FROST: Theme = Theme {
     diagram_node_text: Color::Rgb(160, 176, 192),
     diagram_edge_stroke: Color::Rgb(90, 175, 175),
     diagram_edge_label: Color::Rgb(135, 135, 175),
+    dim_muted: true,
 };
 
+/// Official Nord palette (<https://www.nordtheme.com/docs/colors-and-palettes>).
+/// Every color is at least 4.5:1 against nord0 `#2E3440`, so text roles meet
+/// WCAG AA and nothing is dimmed; nord3, nord10, nord11, nord12 and nord15 sit
+/// below that and are left out.
 static NORD: Theme = Theme {
     name: "nord",
     heading: [
-        Color::Rgb(136, 192, 208), // H1: Nord Frost
-        Color::Rgb(129, 161, 193), // H2: Nord Frost Dark
-        Color::Rgb(163, 190, 140), // H3: Nord Green
-        Color::Rgb(235, 203, 139), // H4: Nord Yellow
-        Color::Rgb(180, 142, 173), // H5: Nord Purple
-        Color::Rgb(94, 129, 172),  // H6: Nord Blue
+        Color::Rgb(136, 192, 208), // H1: nord8 Frost cyan, 6.24:1
+        Color::Rgb(129, 161, 193), // H2: nord9 Frost blue, 4.64:1
+        Color::Rgb(163, 190, 140), // H3: nord14 Aurora green, 6.13:1
+        Color::Rgb(235, 203, 139), // H4: nord13 Aurora yellow, 8.00:1
+        Color::Rgb(143, 188, 187), // H5: nord7 Frost teal, 5.99:1
+        Color::Rgb(229, 233, 240), // H6: nord5 Snow Storm, 10.26:1
     ],
-    body: Color::Rgb(216, 222, 233),
-    bold: Color::Rgb(216, 222, 233),
-    italic: Color::Rgb(216, 222, 233),
-    link: Color::Rgb(136, 192, 208),
-    inline_code: Color::Rgb(129, 161, 193),
-    horizontal_rule: Color::Rgb(76, 86, 106),
-    diagram_border: Color::Rgb(129, 161, 193),
-    diagram_collapsed: Color::Rgb(136, 192, 208),
-    diagram_node_fill: Color::Rgb(129, 161, 193),
-    diagram_node_border: Color::Rgb(136, 192, 208),
-    diagram_node_text: Color::Rgb(216, 222, 233),
-    diagram_edge_stroke: Color::Rgb(163, 190, 140),
-    diagram_edge_label: Color::Rgb(180, 142, 173),
+    body: Color::Rgb(216, 222, 233),                // nord4, 9.25:1
+    bold: Color::Rgb(216, 222, 233),                // nord4
+    italic: Color::Rgb(216, 222, 233),              // nord4
+    link: Color::Rgb(136, 192, 208),                // nord8
+    inline_code: Color::Rgb(143, 188, 187),         // nord7
+    horizontal_rule: Color::Rgb(129, 161, 193),     // nord9; also code-block language labels
+    diagram_border: Color::Rgb(129, 161, 193),      // nord9
+    diagram_collapsed: Color::Rgb(136, 192, 208),   // nord8
+    diagram_node_fill: Color::Rgb(129, 161, 193),   // nord9
+    diagram_node_border: Color::Rgb(136, 192, 208), // nord8
+    diagram_node_text: Color::Rgb(216, 222, 233),   // nord4
+    diagram_edge_stroke: Color::Rgb(163, 190, 140), // nord14
+    diagram_edge_label: Color::Rgb(235, 203, 139),  // nord13
+    dim_muted: false,
 };
 
 static GLACIER: Theme = Theme {
@@ -376,6 +397,7 @@ static GLACIER: Theme = Theme {
     diagram_node_text: Color::Rgb(185, 200, 215),
     diagram_edge_stroke: Color::Rgb(70, 180, 170),
     diagram_edge_label: Color::Rgb(130, 150, 180),
+    dim_muted: true,
 };
 
 static STEEL: Theme = Theme {
@@ -401,6 +423,7 @@ static STEEL: Theme = Theme {
     diagram_node_text: Color::Rgb(175, 180, 190),
     diagram_edge_stroke: Color::Rgb(150, 190, 140),
     diagram_edge_label: Color::Rgb(140, 150, 165),
+    dim_muted: true,
 };
 
 static SOLARIZED_DARK: Theme = Theme {
@@ -426,6 +449,7 @@ static SOLARIZED_DARK: Theme = Theme {
     diagram_node_text: Color::Rgb(131, 148, 150),
     diagram_edge_stroke: Color::Rgb(42, 161, 152),
     diagram_edge_label: Color::Rgb(108, 113, 196),
+    dim_muted: true,
 };
 
 static SOLARIZED_LIGHT: Theme = Theme {
@@ -451,6 +475,7 @@ static SOLARIZED_LIGHT: Theme = Theme {
     diagram_node_text: Color::Rgb(101, 123, 131),
     diagram_edge_stroke: Color::Rgb(42, 161, 152),
     diagram_edge_label: Color::Rgb(108, 113, 196),
+    dim_muted: true,
 };
 
 static PAPER: Theme = Theme {
@@ -476,6 +501,7 @@ static PAPER: Theme = Theme {
     diagram_node_text: Color::Rgb(55, 50, 45),
     diagram_edge_stroke: Color::Rgb(40, 105, 55),
     diagram_edge_label: Color::Rgb(90, 105, 120),
+    dim_muted: true,
 };
 
 static SNOW: Theme = Theme {
@@ -501,6 +527,7 @@ static SNOW: Theme = Theme {
     diagram_node_text: Color::Rgb(40, 55, 70),
     diagram_edge_stroke: Color::Rgb(10, 120, 120),
     diagram_edge_label: Color::Rgb(100, 115, 130),
+    dim_muted: true,
 };
 
 static LATTE: Theme = Theme {
@@ -526,16 +553,118 @@ static LATTE: Theme = Theme {
     diagram_node_text: Color::Rgb(76, 79, 105),
     diagram_edge_stroke: Color::Rgb(23, 146, 153),
     diagram_edge_label: Color::Rgb(136, 57, 239),
+    dim_muted: true,
 };
+
+/// WCAG 2.x relative luminance of an sRGB color.
+#[cfg(test)]
+fn relative_luminance(color: &Color) -> f64 {
+    let Color::Rgb(r, g, b) = color else {
+        panic!("contrast is only defined here for Rgb colors, got {color:?}");
+    };
+    let channel = |c: u8| {
+        let c = f64::from(c) / 255.0;
+        if c <= 0.039_28 {
+            c / 12.92
+        } else {
+            ((c + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    0.2126 * channel(*r) + 0.7152 * channel(*g) + 0.0722 * channel(*b)
+}
+
+/// WCAG 2.x contrast ratio, from 1.0 (identical) to 21.0.
+#[cfg(test)]
+pub(crate) fn contrast_ratio(a: &Color, b: &Color) -> f64 {
+    let (la, lb) = (relative_luminance(a), relative_luminance(b));
+    (la.max(lb) + 0.05) / (la.min(lb) + 0.05)
+}
+
+/// nord0, the Nord background the default theme's contrast is measured against.
+#[cfg(test)]
+pub(crate) const NORD0: Color = Color::Rgb(0x2E, 0x34, 0x40);
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn test_clay_is_default() {
+    fn test_nord_is_default() {
         let theme = Theme::default_theme();
-        assert_eq!(theme.name, "clay");
+        assert_eq!(theme.name, "nord");
+    }
+
+    #[test]
+    fn test_contrast_ratio_reference_values() {
+        let black = Color::Rgb(0, 0, 0);
+        let white = Color::Rgb(255, 255, 255);
+        assert!((contrast_ratio(&black, &white) - 21.0).abs() < 1e-9);
+        assert!((contrast_ratio(&white, &white) - 1.0).abs() < 1e-9);
+        // nord4 on nord0, the value quoted in issue #20.
+        let nord4 = Color::Rgb(0xD8, 0xDE, 0xE9);
+        assert!((contrast_ratio(&nord4, &NORD0) - 9.25).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_default_theme_contrast_against_nord0() {
+        let theme = Theme::default_theme();
+        // Dimming lowers contrast by a terminal-dependent amount, so the
+        // ratios below only hold if nothing is dimmed.
+        assert!(!theme.dim_muted, "default theme must not dim text");
+
+        let mut text: Vec<(String, &Color)> = vec![
+            ("body".into(), &theme.body),
+            ("bold".into(), &theme.bold),
+            ("italic".into(), &theme.italic),
+            ("link".into(), &theme.link),
+            ("inline_code".into(), &theme.inline_code),
+            ("diagram_node_text".into(), &theme.diagram_node_text),
+            ("diagram_edge_label".into(), &theme.diagram_edge_label),
+        ];
+        text.extend(
+            theme
+                .heading
+                .iter()
+                .enumerate()
+                .map(|(i, c)| (format!("H{}", i + 1), c)),
+        );
+        let non_text: [(&str, &Color); 6] = [
+            ("horizontal_rule", &theme.horizontal_rule),
+            ("diagram_border", &theme.diagram_border),
+            ("diagram_node_border", &theme.diagram_node_border),
+            ("diagram_edge_stroke", &theme.diagram_edge_stroke),
+            ("diagram_collapsed", &theme.diagram_collapsed),
+            // Not drawn directly, but mermaid `style`/`classDef` colors snap
+            // to it like any other theme color.
+            ("diagram_node_fill", &theme.diagram_node_fill),
+        ];
+
+        let mut failures = Vec::new();
+        for (role, color) in &text {
+            let ratio = contrast_ratio(color, &NORD0);
+            if ratio < 4.5 {
+                failures.push(format!("{role} {color:?}: {ratio:.2}:1 < 4.5:1"));
+            }
+        }
+        for (role, color) in non_text {
+            let ratio = contrast_ratio(color, &NORD0);
+            if ratio < 3.0 {
+                failures.push(format!("{role} {color:?}: {ratio:.2}:1 < 3:1"));
+            }
+        }
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
+        assert_eq!(
+            theme.all_colors().len(),
+            text.len() + non_text.len(),
+            "every theme color role is covered by the contrast check"
+        );
+    }
+
+    #[test]
+    fn test_only_default_theme_skips_dimming() {
+        for theme in Theme::all() {
+            assert_eq!(theme.dim_muted, theme.name != "nord", "{}", theme.name);
+        }
     }
 
     #[test]
@@ -685,6 +814,31 @@ diagram_edge_label = "#ffb86c"
         assert_eq!(theme.name, "my-custom");
         assert_eq!(theme.heading[0], Color::Rgb(255, 121, 198));
         assert_eq!(theme.body, Color::Rgb(248, 248, 242));
+        assert!(theme.dim_muted, "dim_muted defaults to true when omitted");
+
+        std::fs::write(
+            themes_dir.join("undimmed.toml"),
+            r##"
+heading = ["#ff79c6", "#bd93f9", "#8be9fd", "#50fa7b", "#ffb86c", "#6272a4"]
+body = "#f8f8f2"
+bold = "#f8f8f2"
+italic = "#f8f8f2"
+link = "#8be9fd"
+inline_code = "#50fa7b"
+horizontal_rule = "#6272a4"
+diagram_border = "#bd93f9"
+diagram_collapsed = "#8be9fd"
+diagram_node_fill = "#bd93f9"
+diagram_node_border = "#ff79c6"
+diagram_node_text = "#f8f8f2"
+diagram_edge_stroke = "#50fa7b"
+diagram_edge_label = "#ffb86c"
+dim_muted = false
+"##,
+        )
+        .unwrap();
+        let undimmed = Theme::resolve("undimmed").expect("dim_muted is a known field");
+        assert!(!undimmed.dim_muted);
 
         let _ = std::fs::remove_dir_all(&dir);
     }

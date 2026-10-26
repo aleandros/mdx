@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.15] - 2026-10-26
+
+### Changed
+- Default UI theme is now `nord`, and the default syntax theme is now `Nord`.
+  Several `clay` colors (H2, H6, links, inline code, rules) fell below WCAG
+  contrast targets on dark terminals. The `nord` theme is retuned to the
+  official palette: against nord0 `#2E3440`, text roles reach at least 4.5:1
+  and rules and diagram strokes at least 3:1. It no longer dims inline code or
+  horizontal rules, and mermaid `style`/`classDef` colors snap to these colors
+  too. The previous look is still available by name:
+  `--ui-theme clay --theme base16-ocean.dark`, or `ui_theme`/`theme` in
+  `config.toml`. Its output is unchanged. (#20)
+
+### Added
+- Bundled `Nord` syntax theme (`Nord.tmTheme` from nordtheme/sublime-text, MIT),
+  listed by `--theme=list`. Its comment color is lightened from `#616e88` to
+  `#7b88a1` to reach 3:1 contrast.
+- Optional `dim_muted` key for custom UI theme files (default `true`), which
+  controls whether inline code and horizontal rules are dimmed.
+
 ## [0.1.14] - 2026-10-26
 
 ### Fixed

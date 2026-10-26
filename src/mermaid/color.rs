@@ -149,14 +149,14 @@ mod tests {
 
     #[test]
     fn test_resolve_pure_red_to_nearest_clay() {
-        let theme = Theme::default_theme();
+        let theme = Theme::by_name("clay").unwrap();
         let resolved = resolve_color(&Color::Rgb(255, 0, 0), theme);
         assert_eq!(resolved, Color::Rgb(180, 90, 60));
     }
 
     #[test]
     fn test_resolve_exact_match_returns_same() {
-        let theme = Theme::default_theme();
+        let theme = Theme::by_name("clay").unwrap();
         let olive = Color::Rgb(120, 160, 80);
         let resolved = resolve_color(&olive, theme);
         assert_eq!(resolved, olive);

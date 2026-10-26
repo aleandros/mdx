@@ -167,7 +167,7 @@ fn render_inline(elem: &InlineElement, theme: &crate::theme::Theme) -> StyledSpa
             text: t.clone(),
             style: SpanStyle {
                 fg: Some(theme.inline_code.clone()),
-                dim: true,
+                dim: theme.dim_muted,
                 ..Default::default()
             },
         },
@@ -406,7 +406,7 @@ pub(crate) fn render_blocks(
                         text: rule_text,
                         style: SpanStyle {
                             fg: Some(theme.horizontal_rule.clone()),
-                            dim: true,
+                            dim: theme.dim_muted,
                             ..Default::default()
                         },
                     }],
@@ -556,9 +556,40 @@ mod tests {
             let span = &rule_line.spans[0];
             assert!(span.text.contains('─'), "Should contain rule character");
             assert!(span.text.len() >= 40, "Rule should be at least width chars");
-            assert!(span.style.dim, "Rule should be dim");
+            assert!(!span.style.dim, "Default (nord) rule is not dimmed");
         } else {
             panic!("Expected Lines variant");
+        }
+    }
+
+    #[test]
+    fn test_dim_muted_controls_inline_code_and_rule_dimming() {
+        let highlighter = crate::highlight::Highlighter::new(None).unwrap();
+        let blocks = vec![
+            Block::Paragraph {
+                content: vec![InlineElement::Code("x".to_string())],
+            },
+            Block::HorizontalRule,
+        ];
+        for (name, dim) in [("clay", true), ("nord", false)] {
+            let theme = crate::theme::Theme::by_name(name).unwrap();
+            assert_eq!(theme.dim_muted, dim);
+            let rendered = render_blocks(&blocks, 20, &highlighter, theme, MermaidMode::Render);
+            let spans: Vec<&StyledSpan> = rendered
+                .iter()
+                .filter_map(|b| match b {
+                    RenderedBlock::Lines(lines) => Some(lines),
+                    _ => None,
+                })
+                .flatten()
+                .flat_map(|l| &l.spans)
+                .filter(|s| s.text == "x" || s.text.contains('─'))
+                .collect();
+            assert_eq!(spans.len(), 2, "{name}: inline code and rule spans");
+            assert!(
+                spans.iter().all(|s| s.style.dim == dim),
+                "{name}: {spans:?}"
+            );
         }
     }
 

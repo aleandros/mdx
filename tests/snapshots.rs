@@ -198,18 +198,8 @@ snapshot_test!(snapshot_math_w80, "docs/examples/math.md", 80);
 // Recorded before the default changed to nord; selecting the old themes by
 // name must keep producing exactly this output.
 
-snapshot_test!(
-    clay_basic_w80,
-    "docs/examples/basic.md",
-    80,
-    Mode::Clay
-);
-snapshot_test!(
-    clay_basic_w120,
-    "docs/examples/basic.md",
-    120,
-    Mode::Clay
-);
+snapshot_test!(clay_basic_w80, "docs/examples/basic.md", 80, Mode::Clay);
+snapshot_test!(clay_basic_w120, "docs/examples/basic.md", 120, Mode::Clay);
 snapshot_test!(
     clay_flowchart_simple_w80,
     "docs/examples/flowchart-simple.md",
