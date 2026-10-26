@@ -59,6 +59,40 @@ cargo build --release
 # Binary at target/release/mdx
 ```
 
+## Testing
+
+Run `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, and
+`cargo test`. Shared generators live in `src/strategies.rs`; new properties
+should reuse them. Defaults are 32–64 cases per property to keep CI fast.
+
+```bash
+# Replay committed regressions plus the default random cases
+cargo test property_
+# Stress all properties and the pager state machine
+PROPTEST_CASES=2000 cargo test property_
+# Reproduce a particular random run (also copy any saved regression seed)
+PROPTEST_CASES=2000 PROPTEST_RNG_SEED=42 cargo test property_pager_model
+```
+
+Commit new `proptest-regressions/` entries with the fix, keeping the minimized
+counterexample in the seed comment. Proptest replays saved seeds before new
+cases. The parser oracle compares generated visible payload (not Markdown
+syntax or URL metadata); arbitrary Unicode also gets a separate panic check.
+Wrapping preserves non-whitespace characters and their styles, allowing an
+indivisible two-cell glyph on a one-column terminal. Rigid diagram rows remain
+horizontally scrollable. Embed clipping enforces the strict requested width,
+including width 1; truncation retains a styled prefix, not all source text.
+`render_blocks` produces logical lines, and width bounds are checked at the
+wrapping/clipping boundaries that consume them.
+
+Graphics follow-up for [#9](https://github.com/aleandros/mdx/issues/9) and
+[#10](https://github.com/aleandros/mdx/issues/10), which have not landed:
+
+- [ ] Feed the shared Markdown, diagram and pager generators to the Kitty backend.
+- [ ] Check each image/diagram placement reserves its assigned cell rectangle.
+- [ ] Check U+10EEEE placeholder rows have exactly the reserved width.
+- [ ] Compare graphics-off and non-TTY/embed output byte-for-byte with ASCII.
+
 ## License
 
 MIT — see [LICENSE.txt](LICENSE.txt).

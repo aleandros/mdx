@@ -1,0 +1,9 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 82cccf6a402e26f3ddbc274d79c103b32797563d162252831eca78d37de07989 # shrinks to input = GraphInput { direction: "TD", labels: [""], edges: [(0, 0), (0, 0)] }
+cc 8a4335fa346e1d710e4885abcd53849a6267f5683489f94f37baa484eb9ae353 # shrinks to input = GraphInput { direction: "TD", labels: ["fé漢nqa漢", "é"], edges: [(1, 0), (1, 0)] }
+cc f3d027f7fb5a55ad88897f583df339d48e1f850d1e3ec4384031d5ea64f3cc68 # shrinks to input = GraphInput { direction: "TD", labels: [""], edges: [(0, 0), (0, 0)] }, width = 1

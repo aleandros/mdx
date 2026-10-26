@@ -347,3 +347,20 @@ mod tests {
         assert!(!s.contains('\x1b'), "no-color output must not contain ESC");
     }
 }
+
+#[cfg(test)]
+mod properties {
+    use super::*;
+    use crate::strategies::{self, line_text, styled_chars};
+    use proptest::prelude::*;
+    proptest! {
+        #![proptest_config(strategies::model_config(64))]
+        #[test]
+        fn property_clip_is_bounded_styled_prefix(line in strategies::styled_line(), width in strategies::width()) {
+            let cut = truncate_line_width(&line, width as usize);
+            prop_assert!(UnicodeWidthStr::width(line_text(&cut).as_str()) <= width as usize);
+            prop_assert!(styled_chars(&line).starts_with(&styled_chars(&cut)));
+            prop_assert_eq!(&cut, &truncate_line_width(&cut, width as usize));
+        }
+    }
+}

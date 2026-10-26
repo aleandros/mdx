@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.1.13] - 2026-10-26
+## [0.1.14] - 2026-10-26
 
 ### Fixed
 - Preserve inline and display math as raw source with dollar delimiters in the
@@ -13,6 +13,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   math occupies a separate block without syntax highlighting. (#13)
 - Preserve raw HTML and footnote references instead of silently ignoring their
   text-carrying parser events.
+
+## [0.1.13] - 2026-10-26
+
+### Added
+- Shared shrinking generators and property tests for Markdown parsing, styled
+  wrapping/clipping, flowchart/sequence/ER layout, and pager flattening.
+- Pager operation model covering navigation, search, activation, resize and reload;
+  reproducible regression seeds and `PROPTEST_CASES` stress runs.
+
+### Fixed
+- Preserve inline/display math and table cell text instead of silently dropping it.
+- Wrap prose on terminals narrower than four columns and retain empty rendered
+  blocks in pager flattening.
+- Keep the selected interactive block on resize when it remains interactive.
+- Prevent parallel-edge and self-loop labels from overwriting one another or
+  node text; reserve space around ER cardinality markers.
 
 ## [0.1.12] - 2026-10-01
 

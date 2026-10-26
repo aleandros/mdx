@@ -159,6 +159,7 @@ pub(crate) enum KeyAction {
 
 // ─── FlatLine ──────────────────────────────────────────────────────────────
 
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) enum FlatLine {
     Styled(StyledLine),
     DiagramAscii {
@@ -187,7 +188,7 @@ pub(crate) enum FlatLine {
 /// Continuation lines are prefixed with the original leading-space indent
 /// (capped) so wrapped paragraphs and list items keep their visual rhythm.
 fn wrap_styled_line(line: &StyledLine, width: usize) -> Vec<StyledLine> {
-    if width < 4 {
+    if width == 0 {
         return vec![line.clone()];
     }
     let total: usize = line
@@ -405,6 +406,9 @@ impl PagerState {
         for (block_index, block) in self.content.iter().enumerate() {
             match block {
                 RenderedBlock::Lines(lines) => {
+                    if lines.is_empty() {
+                        self.flat_lines.push(FlatLine::Styled(StyledLine::empty()));
+                    }
                     for line in lines {
                         for wrapped in wrap_styled_line(line, wrap_width) {
                             self.flat_lines.push(FlatLine::Styled(wrapped));
@@ -502,6 +506,25 @@ impl PagerState {
         if !self.search_query.is_empty() {
             self.recompute_matches();
         }
+    }
+
+    pub(crate) fn resize(&mut self, width: u16, height: u16) {
+        self.terminal_width = width;
+        self.terminal_height = height;
+        self.rebuild_flat_lines();
+        self.clamp_scroll();
+        if self.active.is_none() {
+            self.update_active_from_viewport();
+        }
+    }
+
+    pub(crate) fn replace_content(&mut self, content: Vec<RenderedBlock>) {
+        self.content = content;
+        self.expanded
+            .retain(|&i| matches!(self.content.get(i), Some(RenderedBlock::Diagram { .. })));
+        self.rebuild_flat_lines();
+        self.clamp_scroll();
+        self.update_active_from_viewport();
     }
 
     pub(crate) fn max_scroll(&self) -> usize {
@@ -1109,11 +1132,7 @@ pub fn run_pager(
                 state.handle_mouse_event(mouse);
             }
             Event::Resize(w, h) => {
-                state.terminal_height = h;
-                state.terminal_width = w;
-                state.rebuild_flat_lines();
-                state.clamp_scroll();
-                state.update_active_from_viewport();
+                state.resize(w, h);
             }
             _ => {}
         }
@@ -1511,3 +1530,8 @@ mod tests {
         assert_eq!(DiagramKind::Er.label(), "ER Diagram");
     }
 }
+
+#[cfg(test)]
+mod model;
+#[cfg(test)]
+mod properties;

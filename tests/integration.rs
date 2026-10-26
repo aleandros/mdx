@@ -88,6 +88,7 @@ fn test_syntax_highlighting_produces_colors() {
     let output = Command::new(env!("CARGO_BIN_EXE_mdx"))
         .arg(&path)
         .arg("--no-pager")
+        .env_remove("NO_COLOR")
         .output()
         .expect("failed to run mdx");
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -134,6 +135,7 @@ fn test_theme_flag_produces_output() {
     let output = Command::new(env!("CARGO_BIN_EXE_mdx"))
         .arg(&path)
         .arg("--no-pager")
+        .env_remove("NO_COLOR")
         .arg("--theme=base16-eighties.dark")
         .output()
         .expect("failed to run mdx");
@@ -160,6 +162,7 @@ fn test_toml_syntax_highlighting() {
     let output = Command::new(env!("CARGO_BIN_EXE_mdx"))
         .arg(&path)
         .arg("--no-pager")
+        .env_remove("NO_COLOR")
         .output()
         .expect("failed to run mdx");
     let stdout = String::from_utf8_lossy(&output.stdout);

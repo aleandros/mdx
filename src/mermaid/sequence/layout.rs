@@ -714,3 +714,33 @@ mod tests {
         assert!(result.activations[0].y_start < result.activations[0].y_end);
     }
 }
+
+#[cfg(test)]
+mod properties {
+    use super::*;
+    use crate::strategies;
+    use proptest::prelude::*;
+    proptest! {
+        #![proptest_config(strategies::model_config(64))]
+        #[test]
+        fn property_sequence_geometry(input in strategies::graph()) {
+            let diagram = crate::mermaid::sequence::parse::parse_sequence(&input.sequence()).unwrap();
+            let result = layout(&diagram);
+            prop_assert_eq!(result.participants.len(),input.labels.len());
+            prop_assert_eq!(result.messages.len(),input.edges.len());
+            for (i,a) in result.participants.iter().enumerate() {
+                prop_assert!(a.x+a.width <= result.width && a.y+3 <= result.height);
+                for b in &result.participants[i+1..] { prop_assert!(a.x+a.width <= b.x || b.x+b.width <= a.x); }
+            }
+            for m in &result.messages {
+                prop_assert!(m.y < result.height);
+                prop_assert!(result.participants.iter().any(|p| p.center_x == m.from_x));
+                prop_assert!(result.participants.iter().any(|p| p.center_x == m.to_x));
+            }
+            let output = crate::mermaid::sequence::ascii::render(&result).join("\n");
+            for p in &result.participants { prop_assert_eq!(output.matches(&p.label).count(),1); }
+            for m in &result.messages { prop_assert_eq!(output.matches(&m.label).count(),1); }
+            prop_assert_eq!(format!("{result:?}"),format!("{:?}",layout(&diagram)));
+        }
+    }
+}
