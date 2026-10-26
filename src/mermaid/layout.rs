@@ -1314,7 +1314,7 @@ pub fn layout(chart: &FlowChart) -> LayoutResult {
             (y + shift_y as isize) as usize,
         )
     };
-    let positioned_edges: Vec<PositionedEdge> = raw_edges
+    let mut positioned_edges: Vec<PositionedEdge> = raw_edges
         .into_iter()
         .map(|(ei, points, label_pos)| {
             let edge = &chart.edges[ei];
@@ -1330,6 +1330,43 @@ pub fn layout(chart: &FlowChart) -> LayoutResult {
             }
         })
         .collect();
+
+    // Keep every label readable, even when parallel edges share a route.
+    // Move colliding labels right on their assigned row; this preserves the
+    // existing route and expands the reported canvas bounds below.
+    let mut occupied: Vec<(usize, usize, usize, usize)> = positioned_nodes
+        .iter()
+        .map(|n| (n.x, n.y, n.width, n.height))
+        .collect();
+    for edge in &positioned_edges {
+        if edge.er_meta.is_some() {
+            // Crow's-foot markers are painted after labels and extend up to
+            // two cells along the route from either endpoint.
+            for &(x, y) in edge.points.first().into_iter().chain(edge.points.last()) {
+                occupied.push((x.saturating_sub(2), y.saturating_sub(2), 5, 5));
+            }
+        }
+    }
+    for edge in &mut positioned_edges {
+        if let (Some((mut x, y)), Some(label)) = (edge.label_pos, edge.label.as_deref()) {
+            let width = display_width(label);
+            loop {
+                let next = occupied
+                    .iter()
+                    .filter(|&&(bx, by, bw, bh)| {
+                        y >= by && y < by + bh && x < bx + bw && bx < x + width
+                    })
+                    .map(|&(bx, _, bw, _)| bx + bw + 1)
+                    .max();
+                match next {
+                    Some(next) => x = next,
+                    None => break,
+                }
+            }
+            edge.label_pos = Some((x, y));
+            occupied.push((x, y, width + 1, 1));
+        }
+    }
 
     let (mut total_width, mut total_height) = if is_lr {
         (total_primary + shift_x, final_secondary_extent + shift_y)
@@ -2156,88 +2193,6 @@ mod tests {
         assert_eq!(result.nodes.len(), 5);
     }
 
-    /// Property-style sweep over pseudo-random DAGs (deterministic xorshift,
-    /// no extra dependencies) in all four directions. Invariants that must
-    /// hold for any input: no two node boxes overlap, every node lies within
-    /// the reported bounds, and the layout is deterministic.
-    #[test]
-    fn random_dags_have_no_overlapping_nodes_and_fit_bounds() {
-        let mut seed: u64 = 0x9E37_79B9_7F4A_7C15;
-        let mut next = move || {
-            seed ^= seed << 13;
-            seed ^= seed >> 7;
-            seed ^= seed << 17;
-            seed
-        };
-        for case in 0..40 {
-            let n = 3 + (next() % 18) as usize;
-            let nodes: Vec<Node> = (0..n)
-                .map(|i| make_node(&format!("N{i}"), &format!("Node {i}")))
-                .collect();
-            let m = n + (next() % (2 * n as u64)) as usize;
-            let mut edges = Vec::new();
-            for _ in 0..m {
-                let a = (next() % n as u64) as usize;
-                let b = (next() % n as u64) as usize;
-                if a == b {
-                    continue;
-                }
-                // Forward edges only → acyclic by construction.
-                let (a, b) = if a < b { (a, b) } else { (b, a) };
-                edges.push(make_edge(&format!("N{a}"), &format!("N{b}")));
-            }
-            for dir in [
-                Direction::TopDown,
-                Direction::BottomTop,
-                Direction::LeftRight,
-                Direction::RightLeft,
-            ] {
-                let chart = FlowChart {
-                    direction: dir.clone(),
-                    nodes: nodes.clone(),
-                    edges: edges.clone(),
-                    subgraphs: vec![],
-                };
-                let r1 = layout(&chart);
-                let r2 = layout(&chart);
-                for (a, b) in r1.nodes.iter().zip(&r2.nodes) {
-                    assert_eq!(
-                        (a.x, a.y, a.width, a.height),
-                        (b.x, b.y, b.width, b.height),
-                        "case {case} {dir:?}: layout is not deterministic for {}",
-                        a.id
-                    );
-                }
-                for node in &r1.nodes {
-                    assert!(
-                        node.x + node.width <= r1.width && node.y + node.height <= r1.height,
-                        "case {case} {dir:?}: {} at ({},{}) {}x{} exceeds bounds {}x{}",
-                        node.id,
-                        node.x,
-                        node.y,
-                        node.width,
-                        node.height,
-                        r1.width,
-                        r1.height
-                    );
-                }
-                for (i, a) in r1.nodes.iter().enumerate() {
-                    for b in &r1.nodes[i + 1..] {
-                        let overlap = a.x < b.x + b.width
-                            && b.x < a.x + a.width
-                            && a.y < b.y + b.height
-                            && b.y < a.y + a.height;
-                        assert!(
-                            !overlap,
-                            "case {case} {dir:?}: {} ({},{}) and {} ({},{}) overlap",
-                            a.id, a.x, a.y, b.id, b.x, b.y
-                        );
-                    }
-                }
-            }
-        }
-    }
-
     #[test]
     fn test_single_subgraph_no_regression() {
         use crate::mermaid::{Direction, Edge, EdgeStyle, FlowChart, Node, NodeShape, Subgraph};
@@ -2305,7 +2260,7 @@ mod tests {
 
     /// Every cell of every edge segment must lie outside the bounding box of
     /// any node that is not the edge's source or target (issue #2).
-    fn assert_edges_avoid_foreign_nodes(result: &LayoutResult, context: &str) {
+    pub(super) fn assert_edges_avoid_foreign_nodes(result: &LayoutResult, context: &str) {
         for edge in &result.edges {
             for seg in edge.points.windows(2) {
                 let ((x0, y0), (x1, y1)) = (seg[0], seg[1]);
@@ -2576,73 +2531,7 @@ mod tests {
         assert_eq!(w("B"), 4 + 4);
         assert_eq!(w("C"), 9 + 4);
     }
-
-    /// Property sweep over random graphs that may contain cycles, duplicate
-    /// edges and self-loops: no edge segment crosses a foreign node, every
-    /// point lies within the reported bounds, and the layout is deterministic.
-    #[test]
-    fn random_graphs_with_cycles_route_edges_around_nodes() {
-        let mut seed: u64 = 0xD1B5_4A32_D192_ED03;
-        let mut next = move || {
-            seed ^= seed << 13;
-            seed ^= seed >> 7;
-            seed ^= seed << 17;
-            seed
-        };
-        for case in 0..60 {
-            let n = 2 + (next() % 12) as usize;
-            let nodes: Vec<Node> = (0..n)
-                .map(|i| make_node(&format!("N{i}"), &format!("Node {i}")))
-                .collect();
-            let m = n + (next() % (2 * n as u64)) as usize;
-            let mut edges = Vec::new();
-            for _ in 0..m {
-                let a = (next() % n as u64) as usize;
-                let b = (next() % n as u64) as usize;
-                // Any direction, self-loops included.
-                let mut e = make_edge(&format!("N{a}"), &format!("N{b}"));
-                if next() % 4 == 0 {
-                    e.label = Some(format!("e{a}{b}"));
-                }
-                edges.push(e);
-            }
-            for dir in all_directions() {
-                let chart = FlowChart {
-                    direction: dir.clone(),
-                    nodes: nodes.clone(),
-                    edges: edges.clone(),
-                    subgraphs: vec![],
-                };
-                let r1 = layout(&chart);
-                let r2 = layout(&chart);
-                for (a, b) in r1.edges.iter().zip(&r2.edges) {
-                    assert_eq!(a.points, b.points, "case {case} {dir:?}: not deterministic");
-                }
-                assert_edges_avoid_foreign_nodes(&r1, &format!("case {case} {dir:?}"));
-                for e in &r1.edges {
-                    for &(x, y) in &e.points {
-                        assert!(
-                            x < r1.width && y < r1.height,
-                            "case {case} {dir:?}: point ({x},{y}) outside {}x{}",
-                            r1.width,
-                            r1.height
-                        );
-                    }
-                }
-                for (i, a) in r1.nodes.iter().enumerate() {
-                    for b in &r1.nodes[i + 1..] {
-                        let overlap = a.x < b.x + b.width
-                            && b.x < a.x + a.width
-                            && a.y < b.y + b.height
-                            && b.y < a.y + a.height;
-                        assert!(
-                            !overlap,
-                            "case {case} {dir:?}: {} and {} overlap",
-                            a.id, b.id
-                        );
-                    }
-                }
-            }
-        }
-    }
 }
+
+#[cfg(test)]
+mod properties;

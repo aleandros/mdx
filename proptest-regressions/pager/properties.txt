@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc f0d05dcac1b7becece6caea81b424f964698c222ec982e210c5b88e7a0023d21 # shrinks to line = StyledLine { spans: [StyledSpan { text: "漢a", style: SpanStyle { fg: None, bold: false, italic: false, dim: false } }] }, width = 1
+cc 03b10c520b5ee4e99449e2bbe7634ec802b99ad26b3ad824cd9e755bb627e865 # shrinks to content = [Lines([])], width = 1, height = 0

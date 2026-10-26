@@ -1,6 +1,6 @@
 [package]
 name = "mermd"
-version = "0.1.12"
+version = "0.1.13"
 edition = "2024"
 description = "Terminal Markdown renderer with Mermaid flowcharts drawn as ASCII art"
 license = "MIT"
@@ -17,6 +17,7 @@ include = [
     "README.md",
     "LICENSE.txt",
     "CHANGELOG.md",
+    "proptest-regressions/**/*",
 ]
 
 [[bin]]
@@ -37,6 +38,7 @@ unicode-width = "0.1"
 
 [dev-dependencies]
 insta = "1"
+proptest = "1.11"
 
 [build-dependencies]
 syntect = { version = "5", default-features = false, features = ["default-syntaxes", "yaml-load", "dump-create", "regex-fancy"] }

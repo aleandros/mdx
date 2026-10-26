@@ -346,11 +346,7 @@ pub fn run_watch(
                 }
                 Event::Resize(w, h) => {
                     let new_content_height = h.saturating_sub(1);
-                    pager.terminal_height = new_content_height;
-                    pager.terminal_width = w;
-                    pager.rebuild_flat_lines();
-                    pager.clamp_scroll();
-                    pager.update_active_from_viewport();
+                    pager.resize(w, new_content_height);
                     needs_redraw = true;
                 }
                 _ => {}
@@ -392,10 +388,7 @@ pub fn run_watch(
                         mermaid_cache.clear();
                     }
 
-                    pager.content = flat;
-                    pager.rebuild_flat_lines();
-                    pager.clamp_scroll();
-                    pager.update_active_from_viewport();
+                    pager.replace_content(flat);
 
                     blocks = new_blocks;
                     rendered_groups = new_groups;

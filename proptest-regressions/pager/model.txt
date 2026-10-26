@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 783b251b0e1d97bfe1279f17269b97cab85a2abc95fe076d878c41698fcfeb14 # shrinks to content = [], ops = [Reload([Diagram { lines: [StyledLine { spans: [StyledSpan { text: "", style: SpanStyle { fg: None, bold: false, italic: false, dim: false } }, StyledSpan { text: "aaa漢aa漢a漢漢aaa漢aaa漢aaaaaaaa漢aaaa漢a漢aaaaa", style: SpanStyle { fg: None, bold: false, italic: false, dim: false } }, StyledSpan { text: "漢a漢a漢", style: SpanStyle { fg: None, bold: false, italic: false, dim: false } }, StyledSpan { text: "漢漢漢aaaaaaa漢a漢a漢漢漢aaaaa漢aaaa漢aaaaaa漢a漢aaaaaa", style: SpanStyle { fg: None, bold: false, italic: false, dim: false } }, StyledSpan { text: "aaaa漢a漢漢", style: SpanStyle { fg: None, bold: false, italic: false, dim: false } }, StyledSpan { text: "a漢a漢漢aa漢aaaaaaaaaaaa漢a漢a漢aaa漢漢aaaa漢aa漢aa漢aaaa漢aaaa", style: SpanStyle { fg: None, bold: false, italic: false, dim: false } }] }], node_count: 0, edge_count: 0, kind: Flowchart }, Image { alt: "", url: "test.png" }]), Resize(1, 0)], width = 1
