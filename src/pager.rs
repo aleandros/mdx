@@ -1126,15 +1126,20 @@ impl PagerState {
 // ─── Public entry point ────────────────────────────────────────────────────
 
 /// A terminal that ignores the graphics query may have printed part of it;
-/// clear the alternate screen so the first frame does not show it.
-pub(crate) fn clear_after_probe<B: ratatui::backend::Backend>(
-    terminal: &mut Terminal<B>,
+/// clear the alternate screen so the first frame does not show it. Call it
+/// before creating the ratatui `Terminal`, whose `clear` would query the
+/// cursor position.
+pub(crate) fn clear_after_probe(
+    out: &mut impl std::io::Write,
     detection: &crate::graphics::Detection,
 ) -> std::io::Result<()> {
     if matches!(detection.probe, crate::graphics::Probe::NotSent) {
         Ok(())
     } else {
-        terminal.clear()
+        execute!(
+            out,
+            crossterm::terminal::Clear(crossterm::terminal::ClearType::All)
+        )
     }
 }
 
@@ -1149,10 +1154,10 @@ pub(crate) fn run_pager(
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
     let _guard = TerminalGuard;
     let detection = crate::graphics::detect(graphics, crate::graphics::OutputTarget::Pager);
+    clear_after_probe(&mut stdout, &detection)?;
 
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
-    clear_after_probe(&mut terminal, &detection)?;
 
     let size = terminal.size()?;
     let mut state = PagerState::new(content, size.height, size.width, max_content_width, theme)
@@ -1195,6 +1200,20 @@ pub(crate) fn run_pager(
 mod tests {
     use super::*;
     use crate::render::{SpanStyle, StyledLine, StyledSpan};
+
+    #[test]
+    fn clear_after_probe_only_clears_and_never_queries() {
+        let detection = |probe| crate::graphics::Detection {
+            caps: crate::graphics::GraphicsCaps::unsupported("test"),
+            probe,
+        };
+        let mut out = Vec::new();
+        clear_after_probe(&mut out, &detection(crate::graphics::Probe::NotSent)).unwrap();
+        assert!(out.is_empty());
+        clear_after_probe(&mut out, &detection(crate::graphics::Probe::TimedOut)).unwrap();
+        // A clear only: no cursor-position or other query the pager would have to read.
+        assert_eq!(out, b"\x1b[2J");
+    }
 
     fn line_text(line: &StyledLine) -> String {
         line.spans.iter().map(|s| s.text.as_str()).collect()
@@ -1346,6 +1365,21 @@ mod tests {
         assert!(text.contains("  $$\n  a^2 + b^2 = c^2\n  $$"), "{text}");
         assert!(text.contains("2. Next $y^2$"), "{text}");
         assert!(text.contains("Inline math across lines: $x y$."), "{text}");
+    }
+
+    #[test]
+    fn halfwidth_sound_marks_do_not_swallow_following_text() {
+        // Terminals draw each ﾞ/ﾟ mark in its own column. ratatui 0.29 gave
+        // the base+mark grapheme a single cell, so the terminal shifted the
+        // rest of the line and later cells overwrote it.
+        let state = PagerState::new(vec![para("ｶﾞｷﾞ ﾊﾟ and more")], 5, 40, 100, theme());
+        let backend = TestBackend::new(40, 5);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| state.draw_content(f, f.area())).unwrap();
+        let buf = terminal.backend().buffer();
+        let and_col = (0..40u16).find(|&x| buf.cell((x, 0)).is_some_and(|c| c.symbol() == "a"));
+        // "ｶﾞｷﾞ ﾊﾟ " is 2+2+1+2+1 columns wide.
+        assert_eq!(and_col, Some(8));
     }
 
     #[test]

@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.1.16] - 2026-10-26
+## [0.1.17] - 2026-10-26
 
 ### Added
 - Terminal graphics detection, decided once at startup: `--graphics auto|off`,
@@ -17,6 +17,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Rendering is unchanged. (#14)
 - `--debug-graphics` prints the graphics decision and the reason.
 - An invalid `MDX_GRAPHICS` value is ignored with a warning.
+
+## [0.1.16] - 2026-10-26
+
+### Changed
+- Upgrade `ratatui` to 0.30 and `crossterm` to 0.29. This unblocks
+  `ratatui-image` for image placement. (#15)
+
+### Fixed
+- Halfwidth katakana with voiced or semi-voiced sound marks (`ｶﾞ`, `ﾊﾟ`) no
+  longer garble the pager. Each mark now takes its own column, so the
+  following text is no longer shifted or overwritten.
 
 ## [0.1.15] - 2026-10-26
 

@@ -296,9 +296,9 @@ pub(crate) fn run_watch(
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
     let _guard = TerminalGuard;
     let detection = crate::graphics::detect(graphics, crate::graphics::OutputTarget::Pager);
+    crate::pager::clear_after_probe(&mut stdout, &detection)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
-    crate::pager::clear_after_probe(&mut terminal, &detection)?;
 
     let term_size = terminal.size()?;
     let content_height = term_size.height.saturating_sub(1);
