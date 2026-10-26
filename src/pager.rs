@@ -186,6 +186,15 @@ pub(crate) enum FlatLine {
         url: String,
         block_index: usize,
     },
+    /// One row of Kitty Unicode placeholders; the terminal draws row `row`
+    /// of image `id` there. An image takes one of these per reserved row,
+    /// followed by its `ImagePlaceholder` caption.
+    ImageRow {
+        block_index: usize,
+        id: u32,
+        row: u16,
+        cols: u16,
+    },
 }
 
 /// Word-wrap a styled line at `width` columns, preserving span styles.
@@ -366,8 +375,12 @@ pub(crate) struct PagerState {
     search_matches: Vec<usize>,
     search_current: Option<usize>,
     search_direction: SearchDirection,
-    /// Startup graphics decision; no rendering reads it yet (#9).
+    /// Startup graphics decision.
     graphics: crate::graphics::GraphicsCaps,
+    /// Directory that relative image paths are resolved against.
+    base_dir: std::path::PathBuf,
+    /// Inline images; present only when graphics are on.
+    images: Option<crate::images::ImageStore>,
 }
 
 impl PagerState {
@@ -400,18 +413,112 @@ impl PagerState {
             search_current: None,
             search_direction: SearchDirection::Forward,
             graphics: crate::graphics::GraphicsCaps::unsupported("not detected"),
+            base_dir: std::path::PathBuf::from("."),
+            images: None,
         };
         state.rebuild_flat_lines();
         state.update_active_from_viewport();
         state
     }
 
-    /// Attach the startup graphics decision.
-    pub(crate) fn with_graphics(mut self, graphics: crate::graphics::GraphicsCaps) -> Self {
+    /// Attach the startup graphics decision and the directory relative image
+    /// paths start from. With graphics on, local images are shown inline.
+    pub(crate) fn with_graphics(
+        mut self,
+        graphics: crate::graphics::GraphicsCaps,
+        base_dir: std::path::PathBuf,
+    ) -> Self {
         self.graphics = graphics;
+        let no_color = std::env::var_os("NO_COLOR");
+        if graphics.supported && crate::images::allowed_with_no_color(no_color.as_deref()) {
+            self.images = Some(crate::images::ImageStore::new(
+                base_dir.clone(),
+                graphics.cell_px,
+            ));
+        }
+        self.base_dir = base_dir;
+        self.rebuild_flat_lines();
+        self.update_active_from_viewport();
         self
     }
 
+    /// Use `images` for inline images, as `with_graphics` does with graphics on.
+    #[cfg(test)]
+    pub(crate) fn with_images(mut self, images: crate::images::ImageStore) -> Self {
+        self.images = Some(images);
+        self.rebuild_flat_lines();
+        self.update_active_from_viewport();
+        self
+    }
+
+    /// Most rows an image may take: 60% of the pager height.
+    fn max_image_rows(&self) -> u16 {
+        u16::try_from(u32::from(self.terminal_height) * 3 / 5)
+            .unwrap_or(u16::MAX)
+            .max(1)
+    }
+
+    /// Take finished image decodes and re-lay out if any changed. Returns
+    /// whether a redraw is needed.
+    pub(crate) fn poll_images(&mut self) -> bool {
+        if !self
+            .images
+            .as_mut()
+            .is_some_and(crate::images::ImageStore::poll)
+        {
+            return false;
+        }
+        self.rebuild_flat_lines();
+        self.clamp_scroll();
+        if self.active.is_none() {
+            self.update_active_from_viewport();
+        }
+        true
+    }
+
+    /// Whether image decodes are in flight, so the event loop should wake up
+    /// to collect them.
+    pub(crate) fn images_loading(&self) -> bool {
+        self.images
+            .as_ref()
+            .is_some_and(crate::images::ImageStore::loading)
+    }
+
+    /// Graphics escape sequences to write before the next frame.
+    pub(crate) fn take_graphics_output(&mut self) -> Vec<u8> {
+        self.images
+            .as_mut()
+            .map(crate::images::ImageStore::take_output)
+            .unwrap_or_default()
+    }
+
+    /// Escape sequences that delete every transmitted image, for exit.
+    pub(crate) fn delete_images(&mut self) -> Vec<u8> {
+        self.images
+            .as_mut()
+            .map(crate::images::ImageStore::delete_all)
+            .unwrap_or_default()
+    }
+
+    /// Check whether shown image files changed on disk (watch mode); changed
+    /// ones decode again and show up through [`Self::poll_images`].
+    pub(crate) fn refresh_images(&mut self) {
+        if let Some(images) = &mut self.images {
+            images.refresh();
+        }
+    }
+
+    /// Record a new cell size in pixels, e.g. after a font size change.
+    pub(crate) fn set_cell_px(&mut self, cell_px: (u16, u16)) {
+        if let Some(images) = &mut self.images {
+            images.set_cell_px(cell_px);
+        }
+    }
+
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one match lays out every block kind in document order"
+    )]
     pub(crate) fn rebuild_flat_lines(&mut self) {
         let prev_block_index = self.active.map(|i| self.interactive_blocks[i].block_index);
 
@@ -426,6 +533,7 @@ impl PagerState {
             usize::from(content_width(self.terminal_width, self.max_content_width));
         self.gutter = (terminal_width - self.content_width) / 2;
         let wrap_width = self.content_width;
+        let max_image_rows = self.max_image_rows();
 
         for (block_index, block) in self.content.iter().enumerate() {
             match block {
@@ -506,6 +614,21 @@ impl PagerState {
                 }
                 RenderedBlock::Image { alt, url } => {
                     let flat_line_index = self.flat_lines.len();
+                    let max_cols = u16::try_from(self.content_width).unwrap_or(u16::MAX);
+                    let layout = self
+                        .images
+                        .as_mut()
+                        .and_then(|images| images.layout(url, max_cols, max_image_rows));
+                    if let Some(layout) = layout {
+                        for row in 0..layout.rows {
+                            self.flat_lines.push(FlatLine::ImageRow {
+                                block_index,
+                                id: layout.id,
+                                row,
+                                cols: layout.cols,
+                            });
+                        }
+                    }
                     self.flat_lines.push(FlatLine::ImagePlaceholder {
                         alt: alt.clone(),
                         url: url.clone(),
@@ -514,7 +637,7 @@ impl PagerState {
                     self.interactive_blocks.push(InteractiveEntry {
                         block_index,
                         flat_line_index,
-                        flat_line_end: flat_line_index + 1,
+                        flat_line_end: self.flat_lines.len(),
                     });
                 }
             }
@@ -546,6 +669,13 @@ impl PagerState {
         self.content = content;
         self.expanded
             .retain(|&i| matches!(self.content.get(i), Some(RenderedBlock::Diagram { .. })));
+        if let Some(images) = &mut self.images {
+            images.retain(self.content.iter().filter_map(|block| match block {
+                RenderedBlock::Image { url, .. } => Some(url.as_str()),
+                _ => None,
+            }));
+            images.refresh();
+        }
         self.rebuild_flat_lines();
         self.clamp_scroll();
         self.update_active_from_viewport();
@@ -616,10 +746,16 @@ impl PagerState {
                 self.clamp_scroll();
             }
             RenderedBlock::Image { url, .. } => {
-                let url = url.clone();
+                // Open local files from the markdown file's directory.
+                let target = crate::images::resolve(url, &self.base_dir)
+                    .filter(|path| path.exists())
+                    .map_or_else(
+                        || std::ffi::OsString::from(url),
+                        std::path::PathBuf::into_os_string,
+                    );
                 if let Some(opener) = self.opener.as_ref() {
                     let _ = std::process::Command::new(opener)
-                        .arg(&url)
+                        .arg(&target)
                         .stdout(std::process::Stdio::null())
                         .stderr(std::process::Stdio::null())
                         .spawn();
@@ -701,8 +837,26 @@ impl PagerState {
                 };
                 (self.gutter, line)
             }
+            FlatLine::ImageRow { id, row, cols, .. } => {
+                let (r, g, b) = crate::kitty::id_color(*id);
+                let cells = Span::styled(
+                    crate::kitty::placeholder_row(*id, *row, *cols),
+                    Style::default().fg(RColor::Rgb(r, g, b)),
+                );
+                // Same gutter marker as an active expanded diagram, but only
+                // in a margin: without one it would push the last column off.
+                if self.gutter > 0 && self.is_in_active_block(flat_line_index) {
+                    let marker = Span::styled("▎", Style::default().fg(collapsed_color));
+                    (
+                        self.gutter.saturating_sub(1),
+                        Line::from(vec![marker, cells]),
+                    )
+                } else {
+                    (self.gutter, Line::from(cells))
+                }
+            }
             FlatLine::ImagePlaceholder { alt, .. } => {
-                let (prefix, modifier) = if self.is_active_indicator_line(flat_line_index) {
+                let (prefix, modifier) = if self.is_in_active_block(flat_line_index) {
                     ("▸", Modifier::empty())
                 } else {
                     (" ", Modifier::DIM)
@@ -776,6 +930,7 @@ impl PagerState {
                 )
             }
             FlatLine::ImagePlaceholder { alt, .. } => alt.clone(),
+            FlatLine::ImageRow { .. } => String::new(),
         }
     }
 
@@ -1143,11 +1298,32 @@ pub(crate) fn clear_after_probe(
     }
 }
 
+/// Cell size in pixels from the terminal's window size, if it reports one.
+pub(crate) fn current_cell_px() -> Option<(u16, u16)> {
+    let size = crossterm::terminal::window_size().ok()?;
+    if size.columns == 0 || size.rows == 0 || size.width == 0 || size.height == 0 {
+        return None;
+    }
+    Some((size.width / size.columns, size.height / size.rows))
+}
+
+/// Write queued graphics escape sequences (image data, placements) to the
+/// terminal. Call it before drawing a frame so placements exist before
+/// their placeholder cells do.
+pub(crate) fn write_graphics(out: &mut impl std::io::Write, bytes: &[u8]) -> std::io::Result<()> {
+    if bytes.is_empty() {
+        return Ok(());
+    }
+    out.write_all(bytes)?;
+    out.flush()
+}
+
 pub(crate) fn run_pager(
     content: Vec<RenderedBlock>,
     max_content_width: u16,
     theme: &'static crate::theme::Theme,
     graphics: crate::graphics::GraphicsSetting,
+    base_dir: std::path::PathBuf,
 ) -> Result<()> {
     enable_raw_mode()?;
     let mut stdout = stdout();
@@ -1161,9 +1337,21 @@ pub(crate) fn run_pager(
 
     let size = terminal.size()?;
     let mut state = PagerState::new(content, size.height, size.width, max_content_width, theme)
-        .with_graphics(detection.caps);
+        .with_graphics(detection.caps, base_dir);
 
+    let result = event_loop(&mut terminal, &mut state);
+    // Free transmitted images before leaving the alternate screen.
+    let _ = write_graphics(terminal.backend_mut(), &state.delete_images());
+    result
+}
+
+fn event_loop(
+    terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
+    state: &mut PagerState,
+) -> Result<()> {
     loop {
+        state.poll_images();
+        write_graphics(terminal.backend_mut(), &state.take_graphics_output())?;
         terminal.draw(|f| {
             let area = f.area();
             if let Some(search_line) = state.search_bar_line() {
@@ -1178,22 +1366,27 @@ pub(crate) fn run_pager(
             }
         })?;
 
+        // While images decode, wake up to show them as they arrive.
+        if state.images_loading() && !event::poll(std::time::Duration::from_millis(50))? {
+            continue;
+        }
         match event::read()? {
             Event::Key(key) => match state.handle_key_event(key) {
-                KeyAction::Quit => break,
+                KeyAction::Quit => return Ok(()),
                 KeyAction::Redraw | KeyAction::Nothing => {}
             },
             Event::Mouse(mouse) => {
                 state.handle_mouse_event(mouse);
             }
             Event::Resize(w, h) => {
+                if let Some(cell_px) = current_cell_px() {
+                    state.set_cell_px(cell_px);
+                }
                 state.resize(w, h);
             }
             _ => {}
         }
     }
-
-    Ok(())
 }
 
 #[cfg(test)]
@@ -1601,6 +1794,214 @@ mod tests {
             }
         }
         assert!(checked > 0, "no fixtures found in {}", dir.display());
+    }
+
+    // ─── Inline images (Kitty Unicode placeholders) ───────────────────────
+
+    fn image(alt: &str, url: &str) -> RenderedBlock {
+        RenderedBlock::Image {
+            alt: alt.into(),
+            url: url.into(),
+        }
+    }
+
+    /// A pager whose store already holds `a.png` at `px` pixels, with
+    /// 10x20-pixel cells. Returns the image id.
+    fn image_pager(
+        content: Vec<RenderedBlock>,
+        h: u16,
+        w: u16,
+        px: (u32, u32),
+    ) -> (PagerState, u32) {
+        let mut store = crate::images::ImageStore::for_tests("/docs".into(), (10, 20));
+        let id = store.insert_ready("a.png", px);
+        let mut state = PagerState::new(content, h, w, 100, theme()).with_images(store);
+        state.opener = None;
+        (state, id)
+    }
+
+    fn image_rows(state: &PagerState) -> Vec<(usize, u32, u16, u16)> {
+        state
+            .flat_lines
+            .iter()
+            .filter_map(|f| match f {
+                FlatLine::ImageRow {
+                    block_index,
+                    id,
+                    row,
+                    cols,
+                } => Some((*block_index, *id, *row, *cols)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn image_reserves_one_placeholder_row_per_cell_row() {
+        // 400x200 px in 10x20 cells: 40 columns, 10 rows.
+        let (state, id) = image_pager(
+            vec![para("intro"), image("cat", "a.png"), para("outro")],
+            40,
+            80,
+            (400, 200),
+        );
+        let rows = image_rows(&state);
+        assert_eq!(rows.len(), 10);
+        for (r, &(block_index, row_id, row, cols)) in rows.iter().enumerate() {
+            assert_eq!((block_index, row_id, cols), (1, id, 40));
+            assert_eq!(usize::from(row), r);
+        }
+        // The caption follows the image, and the block spans both.
+        assert!(matches!(
+            state.flat_lines[11],
+            FlatLine::ImagePlaceholder { block_index: 1, .. }
+        ));
+        let entry = &state.interactive_blocks[0];
+        assert_eq!((entry.flat_line_index, entry.flat_line_end), (1, 12));
+    }
+
+    #[test]
+    fn image_cells_carry_placeholders_and_the_id_color() {
+        let (state, id) = image_pager(vec![image("cat", "a.png")], 40, 120, (400, 200));
+        // Terminal 120, cap 100 → gutter 10.
+        let backend = TestBackend::new(120, 40);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| state.draw_content(f, f.area())).unwrap();
+        let buf = terminal.backend().buffer();
+        let (r, g, b) = crate::kitty::id_color(id);
+        for y in 0..10u16 {
+            for x in 0..40u16 {
+                let cell = buf.cell((10 + x, y)).unwrap();
+                let expected = crate::kitty::placeholder_row(id, y, 40)
+                    .chars()
+                    .skip(usize::from(x) * 3)
+                    .take(3)
+                    .collect::<String>();
+                assert_eq!(cell.symbol(), expected, "cell ({x}, {y})");
+                assert_eq!(cell.fg, RColor::Rgb(r, g, b));
+            }
+            assert_eq!(
+                buf.cell((50, y)).unwrap().symbol(),
+                " ",
+                "nothing past the image"
+            );
+        }
+        let caption: String = (0..120u16)
+            .map(|x| buf.cell((x, 10)).unwrap().symbol().to_string())
+            .collect();
+        assert!(
+            caption.contains("[Image: cat — Enter to open]"),
+            "{caption}"
+        );
+    }
+
+    #[test]
+    fn active_image_marks_the_gutter_without_shifting_cells() {
+        let (mut state, _) = image_pager(vec![image("cat", "a.png")], 40, 120, (400, 200));
+        state.active = Some(0);
+        let rows = screen(&state, 120, 40);
+        for row in &rows[..10] {
+            assert_eq!(leading_spaces(row), 9, "{row:?}");
+            assert_eq!(row.chars().nth(9), Some('▎'));
+            assert_eq!(row.chars().nth(10), Some(crate::kitty::PLACEHOLDER));
+        }
+        assert!(rows[10].trim_start().starts_with("▸ [Image: cat"));
+    }
+
+    #[test]
+    fn active_image_without_a_margin_has_no_marker() {
+        // 80 columns, cap 100 → no gutter; a full-width image must not shift.
+        let (mut state, _) = image_pager(vec![image("wide", "a.png")], 40, 80, (2000, 400));
+        state.active = Some(0);
+        let rows = screen(&state, 80, 40);
+        assert!(
+            rows[0].chars().all(|c| c == crate::kitty::PLACEHOLDER)
+                || rows[0].starts_with(crate::kitty::PLACEHOLDER)
+        );
+        assert_eq!(
+            rows[0]
+                .chars()
+                .filter(|&c| c == crate::kitty::PLACEHOLDER)
+                .count(),
+            80
+        );
+        assert!(!rows[0].contains('▎'));
+    }
+
+    #[test]
+    fn image_height_is_capped_at_60_percent_of_the_pager() {
+        // 200x2000 px would be 100 rows; a 20-row pager allows 12.
+        let (state, _) = image_pager(vec![image("tall", "a.png")], 20, 80, (200, 2000));
+        let rows = image_rows(&state);
+        assert_eq!(rows.len(), 12);
+        // 12 rows of 20 px = 240 px high → 24 px wide, rounded up to 3 cells.
+        assert_eq!(rows[0].3, 3, "width scaled with the height");
+    }
+
+    #[test]
+    fn resize_refits_the_image_and_places_it_again() {
+        let (mut state, id) = image_pager(vec![image("wide", "a.png")], 40, 120, (2000, 400));
+        // 2000x400 px into 100 columns (1000 px) → 200 px = 10 rows.
+        assert_eq!(image_rows(&state).len(), 10);
+        assert_eq!(image_rows(&state)[0].3, 100);
+        assert_eq!(
+            state.take_graphics_output(),
+            crate::kitty::place(id, 100, 10)
+        );
+        state.resize(60, 40);
+        // 60 columns (600 px) → 120 px = 6 rows.
+        assert_eq!(image_rows(&state).len(), 6);
+        assert_eq!(image_rows(&state)[0].3, 60);
+        assert_eq!(state.take_graphics_output(), crate::kitty::place(id, 60, 6));
+        // Same size again: no new placement.
+        state.resize(60, 40);
+        assert!(state.take_graphics_output().is_empty());
+    }
+
+    #[test]
+    fn search_and_tab_work_across_image_rows() {
+        let mut content = vec![para("top")];
+        content.extend((0..30).map(|i| para(&format!("filler {i}"))));
+        content.push(image("needle", "a.png"));
+        content.push(para("after the needle"));
+        let (mut state, _) = image_pager(content, 10, 80, (400, 200));
+        // 10-row pager → at most 6 image rows.
+        assert_eq!(image_rows(&state).len(), 6);
+        state.search_query = "needle".into();
+        state.recompute_matches();
+        // The caption and the following paragraph match; image rows do not.
+        assert_eq!(state.search_matches, vec![37, 38]);
+
+        state.scroll = 0;
+        state.update_active_from_viewport();
+        assert_eq!(state.active, None);
+        state.cycle_active(CycleDirection::Forward);
+        assert_eq!(state.active, Some(0));
+        let first_row = state.interactive_blocks[0].flat_line_index;
+        assert_eq!(first_row, 31);
+        assert!(state.scroll <= first_row && first_row < state.scroll + 10);
+        for i in 31..38 {
+            assert!(state.is_in_active_block(i), "line {i} in the active image");
+        }
+    }
+
+    #[test]
+    fn graphics_off_and_unusable_images_keep_the_text_placeholder() {
+        let content = vec![
+            image("remote", "https://example.com/a.png"),
+            image("loading", "b.png"),
+            image("ready", "a.png"),
+        ];
+        let plain = PagerState::new(content.clone(), 40, 80, 100, theme());
+        assert!(image_rows(&plain).is_empty());
+        let plain_screen = screen(&plain, 80, 40);
+
+        let (state, _) = image_pager(content, 40, 80, (400, 200));
+        // Only the ready local image gets rows; the others render as today.
+        assert_eq!(image_rows(&state).len(), 10);
+        let rows = screen(&state, 80, 40);
+        assert_eq!(rows[0], plain_screen[0]);
+        assert_eq!(rows[1], plain_screen[1]);
     }
 
     #[test]

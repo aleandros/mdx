@@ -61,9 +61,9 @@ the pager, plain stdout and `mdx embed`; equations are not typeset yet.
 
 ## Graphics
 
-mdx decides once, at startup, whether it may draw pixel graphics. No feature
-draws graphics yet; this setting is the switch later image and diagram
-support will read.
+mdx decides once, at startup, whether it may draw pixel graphics. With
+graphics on, the pager shows local images inline (see
+[Inline images](#inline-images)).
 
 | Source | Example |
 |--------|---------|
@@ -108,6 +108,32 @@ cell size: 10x20 px
 tmux: no
 ```
 
+### Inline images
+
+With graphics on, `![alt](path)` images show inline in the pager, drawn with
+Kitty Unicode placeholders, so they scroll with the text:
+
+- **Local files only.** The path is relative to the markdown file's directory
+  (the current directory for stdin), absolute, or a `file://` URL. Remote URLs
+  (`http://`, `https://`, `data:`) keep the text placeholder.
+- **Formats:** PNG, JPEG and GIF (first frame). A missing file or another
+  format keeps the text placeholder.
+- **Size:** the natural size, scaled down (never up) to the content column and
+  to 60% of the pager height, keeping the aspect ratio. Resizing the terminal
+  fits the image again.
+- Images decode on a background thread; the text placeholder shows until the
+  image is ready. The alt text stays below the image as a caption, so search
+  finds it, and `Tab` / `Enter` select and open the image as before.
+- Watch mode checks image files once a second and sends an image again only
+  when its file's modification time has changed. On exit mdx deletes its
+  images from the terminal.
+- Only regular files are read, and decoding is capped at 16384 px a side and
+  256 MiB.
+
+Plain or piped output, `mdx embed`, `--graphics off` and `NO_COLOR` (the image
+id travels in the text color, which `NO_COLOR` removes) print images as
+`[Image: alt](url)`, as before.
+
 ## Interactive pager
 
 When the output is a TTY, mdx launches an interactive pager with vim-style keybindings.
@@ -140,7 +166,7 @@ When the output is a TTY, mdx launches an interactive pager with vim-style keybi
 | Key | Action |
 |-----|--------|
 | `Tab` / `Shift-Tab` | Cycle through diagrams/images |
-| `Enter` | Expand/collapse diagram, open image |
+| `Enter` | Expand/collapse diagram, open image (local paths open from the markdown file's directory) |
 
 **General**
 

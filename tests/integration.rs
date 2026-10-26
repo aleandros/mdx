@@ -868,3 +868,44 @@ fn old_defaults_selectable_from_config_file() {
         assert_eq!(from_config, from_flags, "{base:?}");
     }
 }
+
+#[test]
+fn test_local_images_stay_text_outside_the_pager() {
+    let dir = std::env::temp_dir().join(format!("mdx_integration_images_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    image::RgbImage::from_pixel(40, 20, image::Rgb([200, 30, 30]))
+        .save(dir.join("cat.png"))
+        .unwrap();
+    let path = dir.join("images.md");
+    std::fs::write(&path, "# Pets\n\n![cat](cat.png)\n\n![](cat.png)\n").unwrap();
+
+    let runs: [&[&str]; 3] = [
+        &["--no-pager"],
+        &["--no-pager", "--graphics", "auto"],
+        &["embed", "--width", "60"],
+    ];
+    for args in runs {
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_mdx"));
+        if args[0] == "embed" {
+            cmd.args(args).arg(&path);
+        } else {
+            cmd.arg(&path).args(args);
+        }
+        let output = cmd
+            .env("NO_COLOR", "1")
+            .env_remove("MDX_GRAPHICS")
+            .output()
+            .expect("failed to run mdx");
+        assert!(output.status.success(), "{args:?}: {output:?}");
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        // No graphics command, no placeholder cell, no image data.
+        assert!(!stdout.contains("\x1b_G"), "{args:?}: {stdout:?}");
+        assert!(!stdout.contains('\u{10EEEE}'), "{args:?}: {stdout:?}");
+        assert!(
+            stdout.contains("[Image: cat](cat.png)"),
+            "{args:?}: {stdout}"
+        );
+        assert!(stdout.contains("[Image](cat.png)"), "{args:?}: {stdout}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
