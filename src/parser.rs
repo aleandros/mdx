@@ -6,8 +6,8 @@ pub enum InlineElement {
     Bold(String),
     Italic(String),
     Code(String),
-    // Lists hold inline elements, so keep display math here until rendering the item.
-    DisplayMath(String),
+    // Lists hold inline elements, so keep raw blocks here until rendering the item.
+    CodeBlock(String),
     Link { text: String, url: String },
     SoftBreak,
 }
@@ -69,6 +69,7 @@ pub fn parse_markdown(input: &str) -> Vec<Block> {
     // Temporary storage for code block accumulation
     let mut in_code_block: Option<(Option<String>, bool)> = None; // (language, is_mermaid)
     let mut code_buf = String::new();
+    let mut html_buf = String::new();
 
     // Image tracking state
     let mut in_image: Option<String> = None; // stores the URL while collecting alt text
@@ -82,7 +83,11 @@ pub fn parse_markdown(input: &str) -> Vec<Block> {
         // Normalize text-like events so they share the current container routing,
         // including image alt text and list items.
         let event = match event {
-            Event::InlineMath(text) => Event::Code(format!("${text}$").into()),
+            Event::InlineMath(text) => {
+                // Like inline code, inline math must occupy one terminal line.
+                let text = text.replace("\r\n", " ").replace(['\r', '\n'], " ");
+                Event::Code(format!("${text}$").into())
+            }
             Event::InlineHtml(text) => Event::Text(text),
             Event::FootnoteReference(label) => Event::Text(format!("[^{label}]").into()),
             other => other,
@@ -283,7 +288,7 @@ pub fn parse_markdown(input: &str) -> Vec<Block> {
                 if in_image.is_some() {
                     image_alt_buf.push_str(&source);
                 } else if in_list_item {
-                    list_item_buf.push(InlineElement::DisplayMath(source));
+                    list_item_buf.push(InlineElement::CodeBlock(source));
                 } else {
                     // Display math can occur mid-paragraph or mid-heading. Flush
                     // preceding text before emitting the block to keep source order.
@@ -304,11 +309,20 @@ pub fn parse_markdown(input: &str) -> Vec<Block> {
                 }
             }
 
-            Event::Html(text) => {
-                blocks.push(Block::CodeBlock {
-                    language: None,
-                    content: text.into_string(),
-                });
+            Event::Start(Tag::HtmlBlock) => html_buf.clear(),
+            Event::Html(text) => html_buf.push_str(&text),
+            Event::End(TagEnd::HtmlBlock) => {
+                // One HTML block can contain several Html events. Keep them
+                // contiguous and in the same container as the surrounding text.
+                let content = std::mem::take(&mut html_buf);
+                if in_list_item {
+                    list_item_buf.push(InlineElement::CodeBlock(content));
+                } else {
+                    blocks.push(Block::CodeBlock {
+                        language: None,
+                        content,
+                    });
+                }
             }
 
             Event::SoftBreak => {
@@ -340,7 +354,7 @@ pub fn parse_markdown(input: &str) -> Vec<Block> {
             }
 
             // Intentionally ignore unsupported structural Start/End tags
-            // (block quotes, tables, strikethrough, HTML blocks, footnote
+            // (block quotes, tables, strikethrough, footnote
             // definitions, metadata and definition lists), HardBreak and
             // TaskListMarker. All text-carrying events are handled above.
             _ => {}
@@ -468,7 +482,7 @@ mod tests {
                     items: vec![
                         vec![
                             InlineElement::Text("Before ".into()),
-                            InlineElement::DisplayMath("$$b^2$$".into()),
+                            InlineElement::CodeBlock("$$b^2$$".into()),
                             InlineElement::Text(" after".into())
                         ],
                         vec![InlineElement::Text("Next".into())],
@@ -525,6 +539,48 @@ mod tests {
                     content: vec![InlineElement::Text("Footnote body".into())]
                 },
             ]
+        );
+    }
+
+    #[test]
+    fn test_inline_math_normalizes_line_endings_like_inline_code() {
+        for input in ["Before $x\ny$ after", "Before $x\r\ny$ after"] {
+            assert_eq!(
+                parse_markdown(input),
+                vec![Block::Paragraph {
+                    content: vec![
+                        InlineElement::Text("Before ".into()),
+                        InlineElement::Code("$x y$".into()),
+                        InlineElement::Text(" after".into()),
+                    ]
+                }]
+            );
+        }
+    }
+
+    #[test]
+    fn test_raw_html_stays_inside_its_list_item() {
+        assert_eq!(
+            parse_markdown("- Before\n\n  <div>\n  HTML\n  </div>\n\n  After\n"),
+            vec![Block::List {
+                ordered: false,
+                items: vec![vec![
+                    InlineElement::Text("Before".into()),
+                    InlineElement::CodeBlock("<div>\nHTML\n</div>\n".into()),
+                    InlineElement::Text("After".into()),
+                ]]
+            },]
+        );
+    }
+
+    #[test]
+    fn test_multiline_html_is_one_raw_block() {
+        assert_eq!(
+            parse_markdown("<div>\nHTML\n</div>\n"),
+            vec![Block::CodeBlock {
+                language: None,
+                content: "<div>\nHTML\n</div>\n".into(),
+            }]
         );
     }
 

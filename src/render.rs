@@ -136,7 +136,7 @@ fn color_ansi_code(color: &Color) -> &'static str {
 
 fn render_inline(elem: &InlineElement, theme: &crate::theme::Theme) -> StyledSpan {
     match elem {
-        InlineElement::Text(t) | InlineElement::DisplayMath(t) => StyledSpan {
+        InlineElement::Text(t) | InlineElement::CodeBlock(t) => StyledSpan {
             text: t.clone(),
             style: SpanStyle {
                 fg: Some(theme.body.clone()),
@@ -254,7 +254,7 @@ pub fn render_blocks(
                         | InlineElement::Bold(t)
                         | InlineElement::Italic(t)
                         | InlineElement::Code(t)
-                        | InlineElement::DisplayMath(t) => t.clone(),
+                        | InlineElement::CodeBlock(t) => t.clone(),
                         InlineElement::Link { text, .. } => text.clone(),
                         InlineElement::SoftBreak => " ".to_string(),
                     })
@@ -376,7 +376,7 @@ pub fn render_blocks(
                     let continuation = " ".repeat(prefix.len());
                     let mut spans = vec![StyledSpan::plain(prefix)];
                     for elem in item {
-                        if let InlineElement::DisplayMath(source) = elem {
+                        if let InlineElement::CodeBlock(source) = elem {
                             lines.push(StyledLine { spans });
                             lines.push(StyledLine::empty());
                             lines.extend(render_code_block_lines(

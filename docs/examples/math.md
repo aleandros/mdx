@@ -15,3 +15,6 @@ Before $$E = mc^2$$ after.
 2. Next $y^2$
 
 Currency: $5 and $10.
+
+Inline math across lines: $x
+y$.

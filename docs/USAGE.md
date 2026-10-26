@@ -37,7 +37,8 @@ mdx -W README.md
 ### Math
 
 Math is displayed as raw source with its dollar delimiters. Inline math such as
-`$a^2$` stays in the text and uses inline-code styling. Display math (`$$...$$`)
+`$a^2$` stays in the text and uses inline-code styling; line breaks inside inline
+math become spaces. Display math (`$$...$$`)
 appears in a separate block without syntax highlighting. This fallback works in
 the pager, plain stdout and `mdx embed`; equations are not typeset yet.
 

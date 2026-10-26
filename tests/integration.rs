@@ -697,5 +697,6 @@ fn math_source_survives_stdout_and_embed() {
         assert!(text.contains("  $$\n  a^2 + b^2 = c^2\n  $$\n"), "{text}");
         assert!(text.contains("Currency: $5 and $10."), "{text}");
         assert!(text.contains("2. Next $y^2$"), "{text}");
+        assert!(text.contains("Inline math across lines: $x y$."), "{text}");
     }
 }

@@ -1276,6 +1276,7 @@ mod tests {
         assert!(text.contains("Before $a^2$ after."), "{text}");
         assert!(text.contains("  $$\n  a^2 + b^2 = c^2\n  $$"), "{text}");
         assert!(text.contains("2. Next $y^2$"), "{text}");
+        assert!(text.contains("Inline math across lines: $x y$."), "{text}");
     }
 
     #[test]
