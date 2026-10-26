@@ -36,11 +36,14 @@ mdx -W README.md
 
 ### Math
 
-Math is displayed as raw source with its dollar delimiters. Inline math such as
-`$a^2$` stays in the text and uses inline-code styling; line breaks inside inline
-math become spaces. Display math (`$$...$$`)
-appears in a separate block without syntax highlighting. This fallback works in
-the pager, plain stdout and `mdx embed`; equations are not typeset yet.
+Inline math such as `$a^2$` is displayed as raw source with its dollar
+delimiters: it stays in the text and uses inline-code styling, and line breaks
+inside it become spaces. Display math (`$$...$$`) appears in a separate block
+without syntax highlighting. This raw-source form works in the pager, plain
+stdout and `mdx embed`.
+
+With [graphics](#graphics) on, the pager typesets display math as an image
+instead (see [Display math as images](#display-math-as-images)).
 
 ### Flags
 
@@ -64,8 +67,9 @@ the pager, plain stdout and `mdx embed`; equations are not typeset yet.
 
 mdx decides once, at startup, whether it may draw pixel graphics. With
 graphics on, the pager shows local images inline (see
-[Inline images](#inline-images)) and draws Mermaid diagrams as images (see
-[Diagrams as images](#diagrams-as-images)).
+[Inline images](#inline-images)), draws Mermaid diagrams as images (see
+[Diagrams as images](#diagrams-as-images)) and typesets display math (see
+[Display math as images](#display-math-as-images)).
 
 | Source | Example |
 |--------|---------|
@@ -248,6 +252,34 @@ Without graphics, `i` does nothing and no hint is shown.
 Search always matches diagram text. When `/`, `?`, `n` or `N` lands on a match
 inside a diagram shown as an image, that diagram switches to ASCII so the match
 is visible; press `i` to go back to the image.
+
+### Display math as images
+
+With graphics on, each display math block (`$$...$$`) is typeset with
+[RaTeX](https://github.com/erweixin/RaTeX), which follows KaTeX's layout and
+uses the KaTeX fonts (embedded in mdx, so nothing needs installing).
+Fractions, sums and integrals with limits, matrices (`pmatrix`, `bmatrix`,
+`vmatrix`), `aligned`, `cases`, accents and the usual symbol fonts all work;
+[docs/examples/math-display.md](examples/math-display.md) is a sample.
+
+- **Sized to the text.** One em is 0.8 of a cell's height, about the size of
+  the surrounding text. The formula takes as many rows as its height needs,
+  and is centered in the content column.
+- **Theme colors.** Glyphs use the UI theme's body text color (`\color` in the
+  formula still applies), on a transparent background.
+- **Search.** The image's first row carries the formula's source, so `/`
+  finds display math by its TeX.
+- Formulas typeset on the same background thread as images; the source shows
+  until the image is ready. Typeset formulas are cached by source, theme and
+  cell size.
+- A formula that does not typeset (invalid or unsupported TeX), one larger
+  than 4096 pixels, or one that would have to shrink below half its size to
+  fit the content column keeps its raw source, as above. A narrower content
+  column scales wider formulas down.
+
+Inline math (`$...$`) and display math inside list items stay raw source.
+Plain or piped output, `mdx embed`, `--graphics off` and `NO_COLOR` show the
+raw source.
 
 ## Interactive pager
 

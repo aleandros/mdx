@@ -8,6 +8,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::SystemTime;
 
@@ -143,22 +144,25 @@ fn decode(path: &Path) -> Result<Decoded, image::ImageError> {
     Ok(Decoded { px, png })
 }
 
-/// Rasterize an SVG diagram to PNG.
-fn rasterize(svg: &str) -> anyhow::Result<Decoded> {
-    let raster = crate::mermaid::svg::rasterize(svg)?;
-    Ok(Decoded {
-        px: raster.px,
-        png: raster.png,
-    })
+impl From<crate::mermaid::svg::Raster> for Decoded {
+    fn from(raster: crate::mermaid::svg::Raster) -> Self {
+        Decoded {
+            px: raster.px,
+            png: raster.png,
+        }
+    }
 }
 
-/// A rasterized diagram: the source key and cell size it was drawn for.
+/// A rasterized diagram or formula: the source key and cell size it was
+/// drawn for.
 type DiagramKey = (u64, (u16, u16));
 
 #[derive(Debug)]
 enum Job {
     Decode(PathBuf),
     Rasterize(DiagramKey, String),
+    /// Typeset display math for the key's cell size, then rasterize it.
+    Typeset(DiagramKey, Arc<crate::math::MathImage>),
 }
 
 #[derive(Debug)]
@@ -166,7 +170,7 @@ enum Done {
     /// A finished decode: the path, the file's mtime before decoding, and
     /// the image (or `None` if the file is missing or not a supported image).
     Decoded(PathBuf, Option<SystemTime>, Option<Decoded>),
-    /// A finished diagram, or `None` if it could not be rasterized.
+    /// A finished diagram or formula, or `None` if it could not be drawn.
     Rasterized(DiagramKey, Option<Decoded>),
 }
 
@@ -197,10 +201,17 @@ impl Worker {
                             Done::Decoded(path, mtime, decoded)
                         }
                         Job::Rasterize(key, svg) => {
-                            let raster = std::panic::catch_unwind(|| rasterize(&svg))
+                            let raster =
+                                std::panic::catch_unwind(|| crate::mermaid::svg::rasterize(&svg))
+                                    .ok()
+                                    .and_then(Result::ok);
+                            Done::Rasterized(key, raster.map(Decoded::from))
+                        }
+                        Job::Typeset(key, math) => {
+                            let raster = std::panic::catch_unwind(|| math.rasterize(key.1))
                                 .ok()
                                 .and_then(Result::ok);
-                            Done::Rasterized(key, raster)
+                            Done::Rasterized(key, raster.map(Decoded::from))
                         }
                     };
                     if result_tx.send(done).is_err() {
@@ -235,18 +246,18 @@ struct Entry {
     loading: bool,
 }
 
-/// A diagram drawn as an image.
+/// A diagram or formula drawn as an image.
 #[derive(Debug)]
 struct DiagramEntry {
     id: u32,
-    /// `Ready` holds the raster size; the placement is always the diagram's
-    /// own cell rectangle.
+    /// `Ready` holds the raster size. A diagram is placed over its own cell
+    /// rectangle; a formula over the cells its raster covers.
     status: Status,
     placed: Option<(u16, u16)>,
 }
 
 /// Images shown in the pager: local files keyed by resolved path, and
-/// rasterized diagrams keyed by source and cell size.
+/// rasterized diagrams and formulas keyed by source and cell size.
 #[derive(Debug)]
 pub(crate) struct ImageStore {
     base_dir: PathBuf,
@@ -405,6 +416,56 @@ impl ImageStore {
             .is_some_and(|d| d.status == Status::Pending)
     }
 
+    /// Image id and placement for display math `math`, at its natural size
+    /// in cells or scaled down to `max_cols`, or `None` while it typesets,
+    /// when it failed, and when it would have to shrink below half its size
+    /// (the source text reads better). The first call for a formula and
+    /// cell size starts typesetting it.
+    pub(crate) fn math(
+        &mut self,
+        math: &Arc<crate::math::MathImage>,
+        max_cols: u16,
+    ) -> Option<ImageLayout> {
+        let key = (math.key(), self.cell_px);
+        if !self.diagrams.contains_key(&key) {
+            let id = self.alloc_id();
+            let status = if self.send(Job::Typeset(key, Arc::clone(math))) {
+                Status::Pending
+            } else {
+                Status::Failed
+            };
+            let entry = DiagramEntry {
+                id,
+                status,
+                placed: None,
+            };
+            self.diagrams.insert(key, entry);
+            return None;
+        }
+        let entry = self.diagrams.get_mut(&key)?;
+        let Status::Ready { px } = entry.status else {
+            return None;
+        };
+        let cell_w = if self.cell_px.0 == 0 {
+            kitty::FALLBACK_CELL_PX.0
+        } else {
+            self.cell_px.0
+        };
+        if px.0.div_ceil(u32::from(cell_w)) > u32::from(max_cols) * 2 {
+            return None;
+        }
+        let (cols, rows) = kitty::fit_cells(px, self.cell_px, max_cols, kitty::MAX_CELLS)?;
+        if entry.placed != Some((cols, rows)) {
+            entry.placed = Some((cols, rows));
+            self.output.extend(kitty::place(entry.id, cols, rows));
+        }
+        Some(ImageLayout {
+            id: entry.id,
+            cols,
+            rows,
+        })
+    }
+
     /// Image id and placement size for `url`, fitted to `max_cols x
     /// max_rows`, or `None` while it loads, when it is not a local image, or
     /// when it failed. The first call for a path starts decoding it. Queues
@@ -532,7 +593,7 @@ impl ImageStore {
         });
     }
 
-    /// Forget the diagrams whose key is not in `keys`, or that were drawn
+    /// Forget the diagrams and formulas whose key is not in `keys`, or that were drawn
     /// for another cell size, deleting them from the terminal.
     pub(crate) fn retain_diagrams(&mut self, keys: impl IntoIterator<Item = u64>) {
         let keep: HashSet<u64> = keys.into_iter().collect();
@@ -595,6 +656,26 @@ impl ImageStore {
             DiagramEntry {
                 id,
                 status: Status::Ready { px: (1, 1) },
+                placed: None,
+            },
+        );
+        id
+    }
+
+    /// Mark display math `math` as typeset with size `px`, as if the worker
+    /// had finished.
+    #[cfg(test)]
+    pub(crate) fn insert_ready_math(
+        &mut self,
+        math: &crate::math::MathImage,
+        px: (u32, u32),
+    ) -> u32 {
+        let id = self.alloc_id();
+        self.diagrams.insert(
+            (math.key(), self.cell_px),
+            DiagramEntry {
+                id,
+                status: Status::Ready { px },
                 placed: None,
             },
         );
@@ -889,6 +970,62 @@ mod tests {
         assert!(store.take_output().is_empty());
         let deleted = String::from_utf8(store.delete_all()).unwrap();
         assert!(deleted.contains(&format!("a=d,d=I,i={}", layout.id)));
+    }
+
+    fn math(tex: &str) -> Arc<crate::math::MathImage> {
+        Arc::new(crate::math::MathImage::new(
+            tex,
+            crate::theme::Theme::default_theme(),
+        ))
+    }
+
+    #[test]
+    fn math_typesets_in_the_background_at_its_natural_size() {
+        let formula = math(r"\sum_{i=1}^{n} i = \frac{n(n+1)}{2}");
+        let mut store = ImageStore::new(PathBuf::from("/docs"), (10, 20));
+        assert_eq!(store.math(&formula, 80), None, "first call only typesets");
+        assert!(store.loading());
+        wait_for(&mut store);
+        let layout = store.math(&formula, 80).unwrap();
+        assert!(layout.rows >= 2, "{layout:?}");
+        let out = String::from_utf8(store.take_output()).unwrap();
+        assert!(out.contains(&format!("a=t,f=100,t=d,i={}", layout.id)));
+        let (cols, rows) = (layout.cols, layout.rows);
+        assert!(out.contains(&format!("a=p,U=1,i={},p=1,c={cols},r={rows}", layout.id)));
+        // Cached by source, theme and cell size.
+        assert_eq!(store.math(&formula, 80), Some(layout));
+        assert!(store.take_output().is_empty());
+        // Narrower than the formula: scaled down and placed again.
+        let narrow = store.math(&formula, cols - 2).unwrap();
+        assert_eq!(narrow.id, layout.id);
+        assert!(narrow.cols <= cols - 2 && narrow.rows <= rows);
+        assert!(!store.take_output().is_empty());
+        // Under half its width: the source text reads better.
+        assert_eq!(store.math(&formula, cols / 2 - 1), None);
+    }
+
+    #[test]
+    fn math_that_fails_to_typeset_keeps_the_source() {
+        let formula = math(r"\notarealcommand{x}");
+        let mut store = ImageStore::new(PathBuf::from("/docs"), (10, 20));
+        assert_eq!(store.math(&formula, 80), None);
+        wait_for(&mut store);
+        assert_eq!(store.math(&formula, 80), None);
+        assert!(!store.loading());
+        assert!(store.take_output().is_empty(), "nothing sent");
+    }
+
+    #[test]
+    fn math_is_kept_by_retain_diagrams_while_referenced() {
+        let formula = math("x");
+        let mut store = ImageStore::for_tests(PathBuf::from("/docs"), (10, 20));
+        let id = store.insert_ready_math(&formula, (10, 20));
+        assert_eq!(store.math(&formula, 80).map(|l| l.id), Some(id));
+        store.take_output();
+        store.retain_diagrams([formula.key()]);
+        assert!(store.take_output().is_empty());
+        store.retain_diagrams([]);
+        assert_eq!(store.take_output(), kitty::delete(id));
     }
 
     #[test]

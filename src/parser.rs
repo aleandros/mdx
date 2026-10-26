@@ -32,6 +32,10 @@ pub(crate) enum Block {
     MermaidBlock {
         content: String,
     },
+    /// Display math (`$$ ... $$`); `tex` is the source between the delimiters.
+    Math {
+        tex: String,
+    },
     List {
         ordered: bool,
         items: Vec<Vec<InlineElement>>,
@@ -314,9 +318,8 @@ pub(crate) fn parse_markdown(input: &str) -> Vec<Block> {
                             _ => Block::Paragraph { content },
                         });
                     }
-                    blocks.push(Block::CodeBlock {
-                        language: None,
-                        content: source,
+                    blocks.push(Block::Math {
+                        tex: text.to_string(),
                     });
                 }
             }
@@ -413,9 +416,8 @@ mod tests {
                 Block::Paragraph {
                     content: vec![InlineElement::Text("Before".into())]
                 },
-                Block::CodeBlock {
-                    language: None,
-                    content: "$$\na^2 + b^2 = c^2\n$$".into()
+                Block::Math {
+                    tex: "\na^2 + b^2 = c^2\n".into()
                 },
                 Block::Paragraph {
                     content: vec![InlineElement::Text("After".into())]
@@ -432,10 +434,7 @@ mod tests {
                 Block::Paragraph {
                     content: vec![InlineElement::Text("Before ".into())]
                 },
-                Block::CodeBlock {
-                    language: None,
-                    content: "$$a^2$$".into()
-                },
+                Block::Math { tex: "a^2".into() },
                 Block::Paragraph {
                     content: vec![InlineElement::Text(" after.".into())]
                 },
@@ -481,10 +480,7 @@ mod tests {
                     level: 1,
                     content: vec![InlineElement::Text("Before ".into())]
                 },
-                Block::CodeBlock {
-                    language: None,
-                    content: "$$a^2$$".into()
-                },
+                Block::Math { tex: "a^2".into() },
                 Block::Header {
                     level: 1,
                     content: vec![InlineElement::Text(" after".into())]
@@ -791,6 +787,7 @@ mod properties {
                 Block::CodeBlock { content, .. } | Block::MermaidBlock { content } => {
                     content.clone()
                 }
+                Block::Math { tex } => format!("$${tex}$$"),
                 Block::Image { alt, .. } => alt.clone(),
                 Block::HorizontalRule => String::new(),
             })

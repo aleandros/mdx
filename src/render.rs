@@ -113,6 +113,12 @@ pub(crate) enum RenderedBlock {
         alt: String,
         url: String,
     },
+    /// Display math. `lines` is the raw `$$ ... $$` source, shown wherever
+    /// the formula is not drawn as an image.
+    Math {
+        lines: Vec<StyledLine>,
+        image: std::sync::Arc<crate::math::MathImage>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -295,6 +301,16 @@ pub(crate) fn render_blocks(
                 let mut all_lines = lines;
                 all_lines.push(StyledLine::empty());
                 out.push(RenderedBlock::Lines(all_lines));
+            }
+
+            Block::Math { tex } => {
+                let mut lines =
+                    render_code_block_lines(None, &format!("$${tex}$$"), highlighter, theme);
+                lines.push(StyledLine::empty());
+                out.push(RenderedBlock::Math {
+                    lines,
+                    image: std::sync::Arc::new(crate::math::MathImage::new(tex, theme)),
+                });
             }
 
             Block::MermaidBlock { content } => {

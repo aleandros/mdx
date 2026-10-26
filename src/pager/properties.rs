@@ -20,7 +20,7 @@ proptest! {
         prop_assert_eq!(&wrapped, &wrap_styled_line(&line,usize::from(width)));
     }
     #[test]
-    fn property_flatten_preserves_block_order(content in strategies::rendered_blocks(), width in strategies::width(), height in 0u16..50, image_px in prop::option::of((1u32..3000,1u32..3000))) {
+    fn property_flatten_preserves_block_order(content in strategies::rendered_blocks(), width in strategies::width(), height in 0u16..50, image_px in prop::option::of((1u32..3000,1u32..3000)), math_px in prop::option::of((1u32..3000,1u32..3000))) {
         let mut pager = PagerState::new(content,height,width,100,crate::theme::Theme::default_theme());
         // With graphics on, the strategies' `test.png` is a decoded image.
         let image_id = image_px.map(|px| {
@@ -28,6 +28,11 @@ proptest! {
             let id = store.insert_ready("test.png",px);
             pager.images = Some(store);
             id
+        });
+        // With graphics on, the strategies' formula may have been typeset.
+        let math_id = math_px.filter(|_| pager.images.is_some()).map(|px| {
+            let math = crate::math::MathImage::new(strategies::MATH_TEX,crate::theme::Theme::default_theme());
+            pager.images.as_mut().unwrap().insert_ready_math(&math,px)
         });
         for expanded in [false,true] {
             pager.expanded = if expanded { (0..pager.content.len()).collect() } else { HashSet::new() };
@@ -42,6 +47,37 @@ proptest! {
                             for expected in wrap_styled_line(line,pager.content_width) {
                                 prop_assert_eq!(&pager.flat_lines[cursor], &FlatLine::Styled(expected));
                                 cursor += 1;
+                            }
+                        }
+                    }
+                    RenderedBlock::Math { lines,.. } => {
+                        let max_cols = u16::try_from(pager.content_width).unwrap();
+                        // Shown as an image unless it would shrink below half its width.
+                        let fitted = math_id.zip(math_px)
+                            .filter(|(_,px)| px.0.div_ceil(10) <= u32::from(max_cols) * 2)
+                            .and_then(|(id,px)| Some((id,crate::kitty::fit_cells(px,(10,20),max_cols,crate::kitty::MAX_CELLS)?)));
+                        if let Some((id,(cols,rows))) = fitted {
+                            // Image rows centered in the content column, then a blank line.
+                            prop_assert!(cols <= max_cols);
+                            for row in 0..rows {
+                                match &pager.flat_lines[cursor] {
+                                    FlatLine::DiagramImage { id: got,row: r,cols: c,indent,.. } => {
+                                        prop_assert_eq!((*got,*r,*c),(id,row,cols));
+                                        prop_assert_eq!(*indent, pager.gutter + (pager.content_width - usize::from(cols)) / 2);
+                                    }
+                                    other => prop_assert!(false,"expected math image row, got {other:?}"),
+                                }
+                                cursor += 1;
+                            }
+                            prop_assert_eq!(&pager.flat_lines[cursor], &FlatLine::Styled(StyledLine::empty())); cursor += 1;
+                        } else {
+                            // Not typeset: the source, exactly as text.
+                            if lines.is_empty() { cursor += 1; }
+                            for line in lines {
+                                for expected in wrap_styled_line(line,pager.content_width) {
+                                    prop_assert_eq!(&pager.flat_lines[cursor], &FlatLine::Styled(expected));
+                                    cursor += 1;
+                                }
                             }
                         }
                     }

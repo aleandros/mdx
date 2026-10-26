@@ -1,6 +1,6 @@
 [package]
 name = "mermd"
-version = "0.1.21"
+version = "0.1.22"
 edition = "2024"
 description = "Terminal Markdown renderer with Mermaid flowcharts drawn as ASCII art"
 license = "MIT"
@@ -34,6 +34,10 @@ crossterm = "0.29"
 image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "gif"] }
 notify = "6"
 pulldown-cmark = "0.12"
+ratex-layout = "0.1.15"
+ratex-parser = "0.1.15"
+ratex-svg = { version = "0.1.15", features = ["embed-fonts"] }
+ratex-types = "0.1.15"
 ratatui = "0.30"
 resvg = { version = "0.49", default-features = false, features = ["text", "system-fonts", "memmap-fonts"] }
 serde = { version = "1", features = ["derive"] }

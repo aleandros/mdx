@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.22] - 2026-10-26
+
+### Added
+- Display math as images in the pager. With graphics on (#14), each `$$...$$`
+  block is typeset with RaTeX (KaTeX layout and fonts, embedded in mdx),
+  rasterized with `resvg` and shown with Kitty Unicode placeholders (#16):
+  fractions, sums and integrals with limits, matrices, `aligned`, `cases` and
+  accents. Formulas are sized so one em is 0.8 of a cell's height, take as
+  many rows as they need, are centered in the content column, and use the
+  theme's body text color on a transparent background. They typeset on the
+  image thread and are cached by source, theme and cell size. Search finds a
+  formula by its source. A formula that fails to typeset, is larger than 4096
+  pixels, or would shrink below half its size to fit the column keeps the raw
+  source from #13; so do inline math, display math in list items, plain and
+  piped output, `mdx embed`, `--graphics off` and `NO_COLOR`. A corpus of
+  formulas is in `docs/examples/math-display.md`. (#19)
+
 ## [0.1.21] - 2026-10-26
 
 ### Added

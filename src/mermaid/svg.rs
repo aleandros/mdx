@@ -1084,7 +1084,7 @@ fn draw_participant(canvas: &mut Canvas, p: &PositionedParticipant, palette: &Pa
 // Rasterizing
 // ---------------------------------------------------------------------------
 
-/// A rasterized diagram: its size in pixels and the PNG data.
+/// A rasterized diagram or formula: its size in pixels and the PNG data.
 #[derive(Debug)]
 pub(crate) struct Raster {
     pub(crate) px: (u32, u32),
@@ -1106,21 +1106,39 @@ fn fonts() -> Arc<resvg::usvg::fontdb::Database> {
 
 /// Rasterize `svg` to PNG at its own size.
 pub(crate) fn rasterize(svg: &str) -> anyhow::Result<Raster> {
+    rasterize_centered(svg, |size| size)
+}
+
+/// Rasterize `svg` to PNG, centered on a transparent canvas whose size
+/// `canvas` picks from the SVG's own size (both in pixels). The canvas must
+/// be at least as large as the SVG.
+pub(crate) fn rasterize_centered(
+    svg: &str,
+    canvas: impl FnOnce((u32, u32)) -> (u32, u32),
+) -> anyhow::Result<Raster> {
     let options = resvg::usvg::Options {
         fontdb: fonts(),
         ..Default::default()
     };
     let tree = resvg::usvg::Tree::from_str(svg, &options)?;
     let size = tree.size().to_int_size();
-    let mut pixmap = resvg::tiny_skia::Pixmap::new(size.width(), size.height())
-        .ok_or_else(|| anyhow::anyhow!("empty diagram image"))?;
+    let (w, h) = canvas((size.width(), size.height()));
+    let mut pixmap =
+        resvg::tiny_skia::Pixmap::new(w, h).ok_or_else(|| anyhow::anyhow!("empty image"))?;
+    // Whole-pixel offsets keep horizontal rules (fraction bars) sharp.
+    let offset = |canvas: u32, own: u32| {
+        f32::from(u16::try_from(canvas.saturating_sub(own) / 2).unwrap_or(0))
+    };
     resvg::render(
         &tree,
-        resvg::tiny_skia::Transform::default(),
+        resvg::tiny_skia::Transform::from_translate(
+            offset(w, size.width()),
+            offset(h, size.height()),
+        ),
         &mut pixmap.as_mut(),
     );
     Ok(Raster {
-        px: (size.width(), size.height()),
+        px: (w, h),
         png: encode_png(&pixmap)?,
     })
 }

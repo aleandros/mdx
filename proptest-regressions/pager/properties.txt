@@ -6,3 +6,4 @@
 # everyone who runs the test benefits from these saved cases.
 cc f0d05dcac1b7becece6caea81b424f964698c222ec982e210c5b88e7a0023d21 # shrinks to line = StyledLine { spans: [StyledSpan { text: "漢a", style: SpanStyle { fg: None, bold: false, italic: false, dim: false } }] }, width = 1
 cc 03b10c520b5ee4e99449e2bbe7634ec802b99ad26b3ad824cd9e755bb627e865 # shrinks to content = [Lines([])], width = 1, height = 0
+cc a765ccb3f39d325e3a55ae17892c6e05e7a513f1661af2f00d3289521c5f5bff # shrinks to content = [Math { lines: [], image: MathImage { tex: "\\frac{a}{b}", color: (216, 222, 233), key: 2968776715565342804 } }], width = 1, height = 0, image_px = Some((1, 1)), math_px = Some((21, 1))
