@@ -1,11 +1,15 @@
 use crate::mermaid;
 use crate::parser::{Block, InlineElement};
+use std::fmt::Write as _;
 
 // ─── Styled output types ───────────────────────────────────────────────────
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[allow(dead_code)]
-pub enum Color {
+#[expect(
+    dead_code,
+    reason = "the ANSI palette includes colors available to themes and renderers"
+)]
+pub(crate) enum Color {
     Red,
     Green,
     Yellow,
@@ -21,21 +25,21 @@ pub enum Color {
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
-pub struct SpanStyle {
-    pub fg: Option<Color>,
-    pub bold: bool,
-    pub italic: bool,
-    pub dim: bool,
+pub(crate) struct SpanStyle {
+    pub(crate) fg: Option<Color>,
+    pub(crate) bold: bool,
+    pub(crate) italic: bool,
+    pub(crate) dim: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct StyledSpan {
-    pub text: String,
-    pub style: SpanStyle,
+pub(crate) struct StyledSpan {
+    pub(crate) text: String,
+    pub(crate) style: SpanStyle,
 }
 
 impl StyledSpan {
-    pub fn plain(text: impl Into<String>) -> Self {
+    pub(crate) fn plain(text: impl Into<String>) -> Self {
         StyledSpan {
             text: text.into(),
             style: SpanStyle::default(),
@@ -44,25 +48,25 @@ impl StyledSpan {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct StyledLine {
-    pub spans: Vec<StyledSpan>,
+pub(crate) struct StyledLine {
+    pub(crate) spans: Vec<StyledSpan>,
 }
 
 impl StyledLine {
-    pub fn empty() -> Self {
+    pub(crate) fn empty() -> Self {
         StyledLine { spans: vec![] }
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DiagramKind {
+pub(crate) enum DiagramKind {
     Flowchart,
     Er,
     Sequence,
 }
 
 impl DiagramKind {
-    pub fn label(&self) -> &'static str {
+    pub(crate) fn label(self) -> &'static str {
         match self {
             DiagramKind::Flowchart => "Flowchart",
             DiagramKind::Er => "ER Diagram",
@@ -71,7 +75,7 @@ impl DiagramKind {
     }
 
     /// Nouns for primary/secondary count (e.g. "5 nodes, 3 edges").
-    pub fn count_nouns(&self) -> (&'static str, &'static str) {
+    pub(crate) fn count_nouns(self) -> (&'static str, &'static str) {
         match self {
             DiagramKind::Flowchart => ("nodes", "edges"),
             DiagramKind::Er => ("entities", "relationships"),
@@ -83,7 +87,7 @@ impl DiagramKind {
 fn detect_diagram_kind(content: &str) -> DiagramKind {
     let first = content
         .lines()
-        .map(|l| l.trim())
+        .map(str::trim)
         .find(|l| !l.is_empty() && !l.starts_with("%%"))
         .unwrap_or("");
     match first {
@@ -94,7 +98,7 @@ fn detect_diagram_kind(content: &str) -> DiagramKind {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum RenderedBlock {
+pub(crate) enum RenderedBlock {
     Lines(Vec<StyledLine>),
     Diagram {
         lines: Vec<StyledLine>,
@@ -109,7 +113,7 @@ pub enum RenderedBlock {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MermaidMode {
+pub(crate) enum MermaidMode {
     Render,
     Raw,
     Split,
@@ -168,7 +172,7 @@ fn render_inline(elem: &InlineElement, theme: &crate::theme::Theme) -> StyledSpa
             },
         },
         InlineElement::Link { text, url } => StyledSpan {
-            text: format!("{} ({})", text, url),
+            text: format!("{text} ({url})"),
             style: SpanStyle {
                 fg: Some(theme.link.clone()),
                 ..Default::default()
@@ -185,7 +189,7 @@ fn render_inline_elements(content: &[InlineElement], theme: &crate::theme::Theme
 }
 
 fn render_code_block_lines(
-    language: &Option<String>,
+    language: Option<&str>,
     content: &str,
     highlighter: &crate::highlight::Highlighter,
     theme: &crate::theme::Theme,
@@ -196,7 +200,7 @@ fn render_code_block_lines(
     if let Some(lang) = language {
         lines.push(StyledLine {
             spans: vec![StyledSpan {
-                text: format!("  [{}]", lang),
+                text: format!("  [{lang}]"),
                 style: SpanStyle {
                     fg: Some(theme.horizontal_rule.clone()),
                     ..Default::default()
@@ -206,7 +210,7 @@ fn render_code_block_lines(
     }
 
     // Try syntax highlighting
-    if let Some(highlighted) = highlighter.highlight_code(content, language.as_deref()) {
+    if let Some(highlighted) = highlighter.highlight_code(content, language) {
         for spans in highlighted {
             let mut indented = vec![StyledSpan::plain("  ")];
             indented.extend(spans);
@@ -217,7 +221,7 @@ fn render_code_block_lines(
         for line in content.lines() {
             lines.push(StyledLine {
                 spans: vec![StyledSpan {
-                    text: format!("  {}", line),
+                    text: format!("  {line}"),
                     style: SpanStyle {
                         fg: Some(theme.body.clone()),
                         ..Default::default()
@@ -232,7 +236,11 @@ fn render_code_block_lines(
 
 // ─── Main rendering entry point ────────────────────────────────────────────
 
-pub fn render_blocks(
+#[expect(
+    clippy::too_many_lines,
+    reason = "block dispatch keeps rendering behavior for each Markdown kind together"
+)]
+pub(crate) fn render_blocks(
     blocks: &[Block],
     width: u16,
     highlighter: &crate::highlight::Highlighter,
@@ -244,8 +252,8 @@ pub fn render_blocks(
     for block in blocks {
         match block {
             Block::Header { level, content } => {
-                let color = theme.heading[(*level as usize - 1).min(5)].clone();
-                let prefix = "#".repeat(*level as usize);
+                let color = theme.heading[(usize::from(*level) - 1).min(5)].clone();
+                let prefix = "#".repeat(usize::from(*level));
                 // Build the header text from inline elements (plain text)
                 let text: String = content
                     .iter()
@@ -262,7 +270,7 @@ pub fn render_blocks(
 
                 let header_line = StyledLine {
                     spans: vec![StyledSpan {
-                        text: format!("{} {}", prefix, text),
+                        text: format!("{prefix} {text}"),
                         style: SpanStyle {
                             fg: Some(color),
                             bold: true,
@@ -279,7 +287,8 @@ pub fn render_blocks(
             }
 
             Block::CodeBlock { language, content } => {
-                let lines = render_code_block_lines(language, content, highlighter, theme);
+                let lines =
+                    render_code_block_lines(language.as_deref(), content, highlighter, theme);
                 let mut all_lines = lines;
                 all_lines.push(StyledLine::empty());
                 out.push(RenderedBlock::Lines(all_lines));
@@ -288,12 +297,8 @@ pub fn render_blocks(
             Block::MermaidBlock { content } => {
                 let render_as_code = || {
                     RenderedBlock::Lines({
-                        let mut lines = render_code_block_lines(
-                            &Some("mermaid".to_string()),
-                            content,
-                            highlighter,
-                            theme,
-                        );
+                        let mut lines =
+                            render_code_block_lines(Some("mermaid"), content, highlighter, theme);
                         lines.push(StyledLine::empty());
                         lines
                     })
@@ -306,60 +311,58 @@ pub fn render_blocks(
                         out.push(render_as_code());
                     }
                     MermaidMode::Render => {
-                        match mermaid::render_mermaid(content, theme, width as usize) {
-                            Ok((lines, node_count, edge_count)) => {
-                                out.push(RenderedBlock::Diagram {
-                                    lines,
-                                    node_count,
-                                    edge_count,
-                                    kind,
-                                });
-                            }
-                            Err(_) => {
-                                let warning_line = StyledLine {
-                                    spans: vec![StyledSpan {
-                                        text: "[mermaid: parse error]".to_string(),
-                                        style: SpanStyle {
-                                            fg: Some(Color::Red),
-                                            ..Default::default()
-                                        },
-                                    }],
-                                };
-                                let code_lines =
-                                    render_code_block_lines(&None, content, highlighter, theme);
-                                let mut all_lines = vec![warning_line];
-                                all_lines.extend(code_lines);
-                                all_lines.push(StyledLine::empty());
-                                out.push(RenderedBlock::Lines(all_lines));
-                            }
+                        if let Ok((lines, node_count, edge_count)) =
+                            mermaid::render_mermaid(content, theme, usize::from(width))
+                        {
+                            out.push(RenderedBlock::Diagram {
+                                lines,
+                                node_count,
+                                edge_count,
+                                kind,
+                            });
+                        } else {
+                            let warning_line = StyledLine {
+                                spans: vec![StyledSpan {
+                                    text: "[mermaid: parse error]".to_string(),
+                                    style: SpanStyle {
+                                        fg: Some(Color::Red),
+                                        ..Default::default()
+                                    },
+                                }],
+                            };
+                            let code_lines =
+                                render_code_block_lines(None, content, highlighter, theme);
+                            let mut all_lines = vec![warning_line];
+                            all_lines.extend(code_lines);
+                            all_lines.push(StyledLine::empty());
+                            out.push(RenderedBlock::Lines(all_lines));
                         }
                     }
                     MermaidMode::Split => {
                         out.push(render_as_code());
-                        match mermaid::render_mermaid(content, theme, width as usize) {
-                            Ok((lines, node_count, edge_count)) => {
-                                out.push(RenderedBlock::Diagram {
-                                    lines,
-                                    node_count,
-                                    edge_count,
-                                    kind,
-                                });
-                            }
-                            Err(_) => {
-                                let warning_line = StyledLine {
-                                    spans: vec![StyledSpan {
-                                        text: "[mermaid: parse error]".to_string(),
-                                        style: SpanStyle {
-                                            fg: Some(Color::Red),
-                                            ..Default::default()
-                                        },
-                                    }],
-                                };
-                                out.push(RenderedBlock::Lines(vec![
-                                    warning_line,
-                                    StyledLine::empty(),
-                                ]));
-                            }
+                        if let Ok((lines, node_count, edge_count)) =
+                            mermaid::render_mermaid(content, theme, usize::from(width))
+                        {
+                            out.push(RenderedBlock::Diagram {
+                                lines,
+                                node_count,
+                                edge_count,
+                                kind,
+                            });
+                        } else {
+                            let warning_line = StyledLine {
+                                spans: vec![StyledSpan {
+                                    text: "[mermaid: parse error]".to_string(),
+                                    style: SpanStyle {
+                                        fg: Some(Color::Red),
+                                        ..Default::default()
+                                    },
+                                }],
+                            };
+                            out.push(RenderedBlock::Lines(vec![
+                                warning_line,
+                                StyledLine::empty(),
+                            ]));
                         }
                     }
                 }
@@ -379,12 +382,7 @@ pub fn render_blocks(
                         if let InlineElement::CodeBlock(source) = elem {
                             lines.push(StyledLine { spans });
                             lines.push(StyledLine::empty());
-                            lines.extend(render_code_block_lines(
-                                &None,
-                                source,
-                                highlighter,
-                                theme,
-                            ));
+                            lines.extend(render_code_block_lines(None, source, highlighter, theme));
                             lines.push(StyledLine::empty());
                             spans = vec![StyledSpan::plain(continuation.clone())];
                         } else {
@@ -401,7 +399,8 @@ pub fn render_blocks(
 
             Block::HorizontalRule => {
                 let rule_char = '─';
-                let rule_text: String = std::iter::repeat_n(rule_char, width as usize).collect();
+                let rule_text: String =
+                    std::iter::repeat_n(rule_char, usize::from(width)).collect();
                 let rule_line = StyledLine {
                     spans: vec![StyledSpan {
                         text: rule_text,
@@ -429,8 +428,14 @@ pub fn render_blocks(
 
 // ─── ANSI output ──────────────────────────────────────────────────────────
 
-pub fn styled_line_to_ansi(line: &StyledLine, no_color: bool) -> String {
-    if no_color {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ColorMode {
+    Ansi,
+    Plain,
+}
+
+pub(crate) fn styled_line_to_ansi(line: &StyledLine, color_mode: ColorMode) -> String {
+    if color_mode == ColorMode::Plain {
         return line.spans.iter().map(|s| s.text.as_str()).collect();
     }
 
@@ -450,7 +455,7 @@ pub fn styled_line_to_ansi(line: &StyledLine, no_color: bool) -> String {
         }
         if let Some(ref color) = style.fg {
             match color {
-                Color::Rgb(r, g, b) => codes.push(format!("38;2;{};{};{}", r, g, b)),
+                Color::Rgb(r, g, b) => codes.push(format!("38;2;{r};{g};{b}")),
                 other => codes.push(color_ansi_code(other).to_string()),
             }
         }
@@ -459,7 +464,8 @@ pub fn styled_line_to_ansi(line: &StyledLine, no_color: bool) -> String {
             result.push_str(&span.text);
         } else {
             let code_str = codes.join(";");
-            result.push_str(&format!("\x1b[{}m{}\x1b[0m", code_str, span.text));
+            write!(result, "\x1b[{}m{}\x1b[0m", code_str, span.text)
+                .expect("writing to a String cannot fail");
         }
     }
     result
@@ -682,7 +688,7 @@ mod tests {
                 StyledSpan::plain(" world"),
             ],
         };
-        let output = styled_line_to_ansi(&line, true);
+        let output = styled_line_to_ansi(&line, ColorMode::Plain);
         assert!(!output.contains('\x1b'), "Should have no escape codes");
         assert_eq!(output, "Hello world");
     }
@@ -698,11 +704,10 @@ mod tests {
                 },
             }],
         };
-        let output = styled_line_to_ansi(&line, false);
+        let output = styled_line_to_ansi(&line, ColorMode::Ansi);
         assert!(
             output.contains("\x1b[38;2;255;100;50m"),
-            "Should use 24-bit color escape: {}",
-            output
+            "Should use 24-bit color escape: {output}"
         );
         assert!(output.contains("colored"));
     }
@@ -719,7 +724,7 @@ mod tests {
                 },
             }],
         };
-        let output = styled_line_to_ansi(&line, false);
+        let output = styled_line_to_ansi(&line, ColorMode::Ansi);
         assert!(output.contains('\x1b'), "Should contain escape codes");
         assert!(output.contains("Bold"), "Should contain the text");
     }
@@ -801,8 +806,8 @@ mod properties {
                 let a = render_blocks(&blocks,width,&highlighter,theme,mode);
                 prop_assert_eq!(&a, &render_blocks(&blocks,width,&highlighter,theme,mode));
                 for line in crate::embed::flatten_blocks(&a) {
-                    let cut = crate::embed::truncate_line_width(&line,width as usize);
-                    prop_assert!(unicode_width::UnicodeWidthStr::width(strategies::line_text(&cut).as_str()) <= width as usize);
+                    let cut = crate::embed::truncate_line_width(&line,usize::from(width));
+                    prop_assert!(unicode_width::UnicodeWidthStr::width(strategies::line_text(&cut).as_str()) <= usize::from(width));
                 }
             }
         }

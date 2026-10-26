@@ -4,7 +4,7 @@ use crate::mermaid::ascii::Canvas;
 use crate::mermaid::{MermaidEdgeStyle, NodeStyle, display_width};
 use crate::render::SpanStyle;
 
-fn stroke_style(style: &Option<NodeStyle>) -> SpanStyle {
+fn stroke_style(style: Option<&NodeStyle>) -> SpanStyle {
     match style {
         Some(ns) => {
             let fg = ns.stroke.clone().or_else(|| ns.fill.clone());
@@ -17,7 +17,7 @@ fn stroke_style(style: &Option<NodeStyle>) -> SpanStyle {
     }
 }
 
-fn label_style(style: &Option<NodeStyle>) -> SpanStyle {
+fn label_style(style: Option<&NodeStyle>) -> SpanStyle {
     match style {
         Some(ns) if ns.color.is_some() => SpanStyle {
             fg: ns.color.clone(),
@@ -27,7 +27,7 @@ fn label_style(style: &Option<NodeStyle>) -> SpanStyle {
     }
 }
 
-fn edge_line_style(style: &Option<MermaidEdgeStyle>) -> SpanStyle {
+fn edge_line_style(style: Option<&MermaidEdgeStyle>) -> SpanStyle {
     match style {
         Some(es) if es.stroke.is_some() => SpanStyle {
             fg: es.stroke.clone(),
@@ -37,7 +37,7 @@ fn edge_line_style(style: &Option<MermaidEdgeStyle>) -> SpanStyle {
     }
 }
 
-fn edge_label_style(style: &Option<MermaidEdgeStyle>) -> SpanStyle {
+fn edge_label_style(style: Option<&MermaidEdgeStyle>) -> SpanStyle {
     match style {
         Some(es) => {
             let fg = es.label_color.clone().or_else(|| es.stroke.clone());
@@ -50,8 +50,8 @@ fn edge_label_style(style: &Option<MermaidEdgeStyle>) -> SpanStyle {
     }
 }
 
-#[allow(dead_code)]
-pub fn render(layout: &SequenceLayout) -> Vec<String> {
+#[cfg(test)]
+pub(crate) fn render(layout: &SequenceLayout) -> Vec<String> {
     if layout.width == 0 || layout.height == 0 {
         return vec![];
     }
@@ -102,13 +102,13 @@ pub fn render(layout: &SequenceLayout) -> Vec<String> {
     draw_participants(&mut canvas, layout);
 
     let mut lines = canvas.to_lines();
-    while lines.last().map(|l: &String| l.is_empty()).unwrap_or(false) {
+    while lines.last().is_some_and(|l: &String| l.is_empty()) {
         lines.pop();
     }
     lines
 }
 
-pub fn render_styled(layout: &SequenceLayout) -> Vec<crate::render::StyledLine> {
+pub(crate) fn render_styled(layout: &SequenceLayout) -> Vec<crate::render::StyledLine> {
     if layout.width == 0 || layout.height == 0 {
         return vec![];
     }
@@ -145,7 +145,7 @@ pub fn render_styled(layout: &SequenceLayout) -> Vec<crate::render::StyledLine> 
     draw_participants(&mut canvas, layout);
 
     let mut lines = canvas.to_styled_lines();
-    while lines.last().map(|l| l.spans.is_empty()).unwrap_or(false) {
+    while lines.last().is_some_and(|l| l.spans.is_empty()) {
         lines.pop();
     }
     lines
@@ -246,7 +246,7 @@ fn draw_fragment(canvas: &mut Canvas, frag: &PositionedFragment) {
     };
 
     // Top border row
-    let top_inner = format!("─ {} ", header_label);
+    let top_inner = format!("─ {header_label} ");
     canvas.set(x, y, '┌');
     // Write "─ {kind} [{label}] ", then fill the remainder with ─
     let mut col = x + 1 + canvas.draw_text_clipped(x + 1, y, &top_inner, w - 2);
@@ -270,7 +270,7 @@ fn draw_fragment(canvas: &mut Canvas, frag: &PositionedFragment) {
         }
         canvas.set(x, dy, '├');
         let div_inner = if let Some(lbl) = div_label {
-            format!("─ [{}] ", lbl)
+            format!("─ [{lbl}] ")
         } else {
             "─".to_string()
         };
@@ -317,8 +317,8 @@ fn draw_message(canvas: &mut Canvas, msg: &super::layout::PositionedMessage) {
     let y = msg.y;
     let label_row = y;
     let arrow_row = y + 1;
-    let els = edge_line_style(&msg.edge_style);
-    let els_label = edge_label_style(&msg.edge_style);
+    let els = edge_line_style(msg.edge_style.as_ref());
+    let els_label = edge_label_style(msg.edge_style.as_ref());
 
     let left_x = msg.from_x.min(msg.to_x);
     let right_x = msg.from_x.max(msg.to_x);
@@ -386,8 +386,8 @@ fn draw_message(canvas: &mut Canvas, msg: &super::layout::PositionedMessage) {
 fn draw_self_message(canvas: &mut Canvas, msg: &super::layout::PositionedMessage) {
     let x = msg.from_x;
     let y = msg.y;
-    let els = edge_line_style(&msg.edge_style);
-    let els_label = edge_label_style(&msg.edge_style);
+    let els = edge_line_style(msg.edge_style.as_ref());
+    let els_label = edge_label_style(msg.edge_style.as_ref());
 
     // Row 0: ──┐ label
     canvas.set_styled(x, y, '─', &els);
@@ -497,41 +497,41 @@ fn draw_participants(canvas: &mut Canvas, layout: &SequenceLayout) {
     }
 }
 
-fn draw_participant_box(canvas: &mut Canvas, p: &super::layout::PositionedParticipant) {
-    let x = p.x;
-    let y = p.y; // always 0
-    let w = p.width;
-    let h = 3;
-    let ss = stroke_style(&p.style);
-    let ls = label_style(&p.style);
+fn draw_participant_box(canvas: &mut Canvas, participant: &super::layout::PositionedParticipant) {
+    let x = participant.x;
+    let y = participant.y; // always 0
+    let width = participant.width;
+    let height = 3;
+    let ss = stroke_style(participant.style.as_ref());
+    let ls = label_style(participant.style.as_ref());
 
     // Clear area first (overwrite any lifeline chars)
-    for row in 0..h {
-        for col in 0..w {
+    for row in 0..height {
+        for col in 0..width {
             canvas.set(x + col, y + row, ' ');
         }
     }
 
     // Top border
     canvas.set_styled(x, y, '┌', &ss);
-    for i in 1..w - 1 {
+    for i in 1..width - 1 {
         canvas.set_styled(x + i, y, '─', &ss);
     }
-    canvas.set_styled(x + w - 1, y, '┐', &ss);
+    canvas.set_styled(x + width - 1, y, '┐', &ss);
 
     // Middle row with label
     canvas.set_styled(x, y + 1, '│', &ss);
-    canvas.set_styled(x + w - 1, y + 1, '│', &ss);
+    canvas.set_styled(x + width - 1, y + 1, '│', &ss);
     // Center the label with 1 space padding on each side
-    let label_x = x + 1 + (w - 2).saturating_sub(display_width(&p.label)) / 2;
-    canvas.draw_text_styled(label_x, y + 1, &p.label, &ls);
+    let label_x = x + 1 + (width - 2).saturating_sub(display_width(&participant.label)) / 2;
+    canvas.draw_text_styled(label_x, y + 1, &participant.label, &ls);
 
     // Bottom border
     canvas.set_styled(x, y + 2, '└', &ss);
-    for i in 1..w - 1 {
+    for i in 1..width - 1 {
         canvas.set_styled(x + i, y + 2, '─', &ss);
     }
-    canvas.set_styled(x + w - 1, y + 2, '┘', &ss);
+    canvas.set_styled(x + width - 1, y + 2, '┘', &ss);
 }
 
 // ---------------------------------------------------------------------------
@@ -574,8 +574,7 @@ mod tests {
         );
         assert!(
             output.contains(">>") || output.contains("─"),
-            "Should contain arrow characters, got:\n{}",
-            output
+            "Should contain arrow characters, got:\n{output}"
         );
     }
 

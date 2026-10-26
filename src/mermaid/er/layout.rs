@@ -1,8 +1,8 @@
 use super::{EntityLine, EntityLineKind, ErDiagram};
 use crate::mermaid::{Edge, EdgeStyle, FlowChart, Node, NodeShape, display_width};
 
-pub fn to_flowchart(diagram: &mut ErDiagram, max_box_width: usize) -> FlowChart {
-    for entity in diagram.entities.iter_mut() {
+pub(crate) fn to_flowchart(diagram: &mut ErDiagram, max_box_width: usize) -> FlowChart {
+    for entity in &mut diagram.entities {
         layout_entity(entity, max_box_width);
     }
 
@@ -110,7 +110,7 @@ fn layout_entity(entity: &mut super::Entity, max_box_width: usize) {
             }
             Some(c) => {
                 if display_width(c) <= inline_comment_budget && inline_comment_budget > 0 {
-                    let combined = format!("{}{} ", base, c);
+                    let combined = format!("{base}{c} ");
                     max_row_w = max_row_w.max(display_width(&combined));
                     row_lines.push(EntityLine {
                         kind: EntityLineKind::AttrRow,
@@ -124,7 +124,7 @@ fn layout_entity(entity: &mut super::Entity, max_box_width: usize) {
                     });
                     let pad = " ".repeat(continuation_indent);
                     for chunk in wrap_words(c, continuation_budget) {
-                        let line = format!("{}{} ", pad, chunk);
+                        let line = format!("{pad}{chunk} ");
                         max_row_w = max_row_w.max(display_width(&line));
                         row_lines.push(EntityLine {
                             kind: EntityLineKind::CommentRow,
@@ -318,8 +318,7 @@ mod tests {
         let ty_col_1 = r1.find("int").unwrap();
         assert_eq!(
             ty_col_0, ty_col_1,
-            "type column not aligned: `{}` vs `{}`",
-            r0, r1
+            "type column not aligned: `{r0}` vs `{r1}`"
         );
         let name_col_0 = r0.find("id").unwrap();
         let name_col_1 = r1.find("ttlMillis").unwrap();
@@ -544,6 +543,6 @@ mod width_tests {
 }
 
 #[cfg(test)]
-pub fn layout_entity_for_test(entity: &mut super::Entity, max_box_width: usize) {
-    layout_entity(entity, max_box_width)
+pub(crate) fn layout_entity_for_test(entity: &mut super::Entity, max_box_width: usize) {
+    layout_entity(entity, max_box_width);
 }

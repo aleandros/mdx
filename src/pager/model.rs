@@ -56,9 +56,9 @@ proptest! {
             match op {
                 PagerOp::Key(which) => {
                     let old_scroll = state.scroll;
-                    let max = state.flat_lines.len().saturating_sub(state.terminal_height as usize);
+                    let max = state.flat_lines.len().saturating_sub(usize::from(state.terminal_height));
                     let page = usize::from(state.terminal_height).saturating_sub(1).max(1);
-                    let code = [KeyCode::Char('j'),KeyCode::Char('k'),KeyCode::Char('g'),KeyCode::Char('G'),KeyCode::PageDown,KeyCode::PageUp,KeyCode::Tab,KeyCode::BackTab,KeyCode::Enter,KeyCode::Char('n'),KeyCode::Char('N'),KeyCode::Char('l')][which as usize];
+                    let code = [KeyCode::Char('j'),KeyCode::Char('k'),KeyCode::Char('g'),KeyCode::Char('G'),KeyCode::PageDown,KeyCode::PageUp,KeyCode::Tab,KeyCode::BackTab,KeyCode::Enter,KeyCode::Char('n'),KeyCode::Char('N'),KeyCode::Char('l')][usize::from(which)];
                     let expected_scroll = match which {
                         0 => Some((old_scroll+1).min(max)),
                         1 => Some(old_scroll.saturating_sub(1)),
@@ -102,8 +102,8 @@ proptest! {
                 PagerOp::ReloadDiagram(input) => {
                     let theme = crate::theme::Theme::default_theme();
                     let mut content = Vec::new();
-                    for (source, kind) in [(input.flowchart(false),DiagramKind::Flowchart),(input.sequence(),DiagramKind::Sequence),(input.er(),DiagramKind::Er)] {
-                        let (lines,node_count,edge_count) = crate::mermaid::render_mermaid(&source,theme,state.terminal_width as usize).unwrap();
+                    for (source, kind) in [(input.flowchart(crate::strategies::Topology::Cyclic),DiagramKind::Flowchart),(input.sequence(),DiagramKind::Sequence),(input.er(),DiagramKind::Er)] {
+                        let (lines,node_count,edge_count) = crate::mermaid::render_mermaid(&source,theme,usize::from(state.terminal_width)).unwrap();
                         content.push(RenderedBlock::Diagram { lines,node_count,edge_count,kind });
                     }
                     state.replace_content(content);

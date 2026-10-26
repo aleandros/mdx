@@ -8,7 +8,7 @@ use syntect::parsing::SyntaxSet;
 static SYNTAX_SET_DATA: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/syntaxes.packdump"));
 
 #[derive(Debug)]
-pub struct Highlighter {
+pub(crate) struct Highlighter {
     syntax_set: SyntaxSet,
     theme_set: ThemeSet,
     theme_name: Option<String>,
@@ -19,7 +19,7 @@ impl Highlighter {
     /// `$XDG_CONFIG_HOME/mdx/syntax-themes`, falling back to
     /// `~/.config/mdx/syntax-themes`. Each file is keyed by its file stem,
     /// e.g. `Dracula.tmTheme` is selected with `--theme Dracula`.
-    pub fn user_syntax_themes_dir() -> Option<std::path::PathBuf> {
+    pub(crate) fn user_syntax_themes_dir() -> Option<std::path::PathBuf> {
         let config_dir = std::env::var("XDG_CONFIG_HOME")
             .ok()
             .map(std::path::PathBuf::from)
@@ -31,7 +31,7 @@ impl Highlighter {
         Some(config_dir.join("mdx").join("syntax-themes"))
     }
 
-    pub fn new(theme_name: Option<String>) -> Result<Self, String> {
+    pub(crate) fn new(theme_name: Option<String>) -> Result<Self, String> {
         let mut theme_set = ThemeSet::load_defaults();
         if let Some(dir) = Self::user_syntax_themes_dir()
             && dir.is_dir()
@@ -43,8 +43,12 @@ impl Highlighter {
         if let Some(ref name) = theme_name
             && !theme_set.themes.contains_key(name.as_str())
         {
-            let mut available: Vec<&str> = theme_set.themes.keys().map(|s| s.as_str()).collect();
-            available.sort();
+            let mut available: Vec<&str> = theme_set
+                .themes
+                .keys()
+                .map(std::string::String::as_str)
+                .collect();
+            available.sort_unstable();
             return Err(format!(
                 "Unknown theme '{}'. Available themes:\n  {}",
                 name,
@@ -59,15 +63,20 @@ impl Highlighter {
         })
     }
 
-    pub fn available_themes(&self) -> Vec<&str> {
-        let mut names: Vec<&str> = self.theme_set.themes.keys().map(|s| s.as_str()).collect();
-        names.sort();
+    pub(crate) fn available_themes(&self) -> Vec<&str> {
+        let mut names: Vec<&str> = self
+            .theme_set
+            .themes
+            .keys()
+            .map(std::string::String::as_str)
+            .collect();
+        names.sort_unstable();
         names
     }
 
     /// Highlight code, returning styled spans per line.
     /// Returns None if the language is unrecognized or absent.
-    pub fn highlight_code(
+    pub(crate) fn highlight_code(
         &self,
         code: &str,
         language: Option<&str>,
@@ -133,8 +142,7 @@ mod tests {
         let err = result.unwrap_err();
         assert!(
             err.contains("Unknown theme"),
-            "Error should mention unknown theme: {}",
-            err
+            "Error should mention unknown theme: {err}"
         );
     }
 
@@ -232,8 +240,7 @@ mod tests {
             let result = h.highlight_code("x", Some(token));
             assert!(
                 result.is_some(),
-                "Token '{}' should resolve to a syntax",
-                token
+                "Token '{token}' should resolve to a syntax"
             );
         }
     }

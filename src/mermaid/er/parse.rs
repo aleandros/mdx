@@ -3,7 +3,7 @@ use anyhow::{Result, bail};
 use super::{Cardinality, Entity, ErDiagram, Relationship};
 use crate::mermaid::Direction;
 
-/// Returns (left_card, right_card, identifying, after_op_idx) on success,
+/// Returns (`left_card`, `right_card`, identifying, `after_op_idx`) on success,
 /// or None if no valid relationship operator is found.
 fn try_parse_relationship_op(s: &str) -> Option<(Cardinality, Cardinality, bool, usize)> {
     const LEFT_TOKENS: &[(&str, Cardinality)] = &[
@@ -57,7 +57,7 @@ fn parse_relationship_line(line: &str) -> Result<Option<Relationship>> {
         None => (after_op, ""),
     };
     if right.is_empty() {
-        bail!("Relationship missing right entity: `{}`", line);
+        bail!("Relationship missing right entity: `{line}`");
     }
 
     let label = {
@@ -107,7 +107,7 @@ fn parse_attribute_line(line: &str) -> Result<super::Attribute> {
         let after = &rest[open + 1..];
         let close = after
             .find('"')
-            .ok_or_else(|| anyhow::anyhow!("Unterminated comment in attribute: `{}`", line))?;
+            .ok_or_else(|| anyhow::anyhow!("Unterminated comment in attribute: `{line}`"))?;
         let c = after[..close].to_string();
         rest = rest[..open].trim();
         Some(c)
@@ -122,18 +122,18 @@ fn parse_attribute_line(line: &str) -> Result<super::Attribute> {
         .to_string();
     let name = parts
         .next()
-        .ok_or_else(|| anyhow::anyhow!("Attribute missing name: `{}`", line))?
+        .ok_or_else(|| anyhow::anyhow!("Attribute missing name: `{line}`"))?
         .to_string();
     let key_token = parts.next();
     if parts.next().is_some() {
-        bail!("Unexpected extra tokens in attribute: `{}`", line);
+        bail!("Unexpected extra tokens in attribute: `{line}`");
     }
     let key = match key_token {
         None => super::KeyKind::None,
         Some("PK") => super::KeyKind::Pk,
         Some("FK") => super::KeyKind::Fk,
-        Some("PK,FK") | Some("FK,PK") => super::KeyKind::PkFk,
-        Some(other) => bail!("Unknown key marker: `{}`", other),
+        Some("PK,FK" | "FK,PK") => super::KeyKind::PkFk,
+        Some(other) => bail!("Unknown key marker: `{other}`"),
     };
     Ok(super::Attribute {
         ty,
@@ -143,7 +143,32 @@ fn parse_attribute_line(line: &str) -> Result<super::Attribute> {
     })
 }
 
-pub fn parse_er(input: &str) -> Result<ErDiagram> {
+fn ensure_entity(
+    name: &str,
+    entity_order: &mut Vec<String>,
+    entities: &mut std::collections::HashMap<String, Entity>,
+) {
+    if !entities.contains_key(name) {
+        entity_order.push(name.to_string());
+        entities.insert(
+            name.to_string(),
+            Entity {
+                name: name.to_string(),
+                attributes: Vec::new(),
+                rendered_lines: Vec::new(),
+                width: 0,
+                height: 0,
+                node_style: None,
+            },
+        );
+    }
+}
+
+#[expect(
+    clippy::too_many_lines,
+    reason = "one pass maintains entity, relationship, and style declaration order"
+)]
+pub(crate) fn parse_er(input: &str) -> Result<ErDiagram> {
     let mut lines = input.lines().peekable();
 
     // Header line.
@@ -156,7 +181,7 @@ pub fn parse_er(input: &str) -> Result<ErDiagram> {
                     continue;
                 }
                 if trimmed != "erDiagram" {
-                    bail!("Expected `erDiagram` header, got `{}`", trimmed);
+                    bail!("Expected `erDiagram` header, got `{trimmed}`");
                 }
                 break;
             }
@@ -173,27 +198,6 @@ pub fn parse_er(input: &str) -> Result<ErDiagram> {
         std::collections::HashMap::new();
     let mut class_assignments: Vec<(Vec<String>, String)> = Vec::new();
 
-    fn ensure_entity(
-        name: &str,
-        entity_order: &mut Vec<String>,
-        entities: &mut std::collections::HashMap<String, Entity>,
-    ) {
-        if !entities.contains_key(name) {
-            entity_order.push(name.to_string());
-            entities.insert(
-                name.to_string(),
-                Entity {
-                    name: name.to_string(),
-                    attributes: Vec::new(),
-                    rendered_lines: Vec::new(),
-                    width: 0,
-                    height: 0,
-                    node_style: None,
-                },
-            );
-        }
-    }
-
     let body_lines: Vec<&str> = lines.collect();
     let mut i = 0;
     while i < body_lines.len() {
@@ -208,7 +212,7 @@ pub fn parse_er(input: &str) -> Result<ErDiagram> {
                 "BT" => Direction::BottomTop,
                 "LR" => Direction::LeftRight,
                 "RL" => Direction::RightLeft,
-                other => bail!("Unknown direction: `{}`", other),
+                other => bail!("Unknown direction: `{other}`"),
             };
             direction_explicit = true;
             continue;
@@ -257,28 +261,33 @@ pub fn parse_er(input: &str) -> Result<ErDiagram> {
                 attrs.push(attr);
             }
             if !closed {
-                bail!("Unclosed entity block for `{}`", name);
+                bail!("Unclosed entity block for `{name}`");
             }
             ensure_entity(&name, &mut entity_order, &mut entities);
-            let e = entities.get_mut(&name).unwrap();
+            let e = entities
+                .get_mut(&name)
+                .expect("entity was inserted when its name was recorded");
             e.attributes = attrs;
             continue;
         }
 
         // A line containing `--` or `..` that didn't parse as a relationship is an error.
         if trimmed.contains("--") || trimmed.contains("..") {
-            bail!("Unrecognized cardinality token: `{}`", trimmed);
+            bail!("Unrecognized cardinality token: `{trimmed}`");
         }
 
         // Other lines: silently ignored to match Mermaid's leniency.
     }
 
     // Apply class assignments first (so explicit `style` lines override class).
+
     for (entity_ids, cls) in &class_assignments {
         if let Some(style) = class_defs.get(cls) {
             for id in entity_ids {
                 ensure_entity(id, &mut entity_order, &mut entities);
-                let e = entities.get_mut(id).unwrap();
+                let e = entities
+                    .get_mut(id)
+                    .expect("entity was inserted when its name was recorded");
                 e.node_style = Some(style.clone());
             }
         }
@@ -288,13 +297,19 @@ pub fn parse_er(input: &str) -> Result<ErDiagram> {
     // style on overlapping entities).
     for (id, style) in &node_styles {
         ensure_entity(id, &mut entity_order, &mut entities);
-        let e = entities.get_mut(id).unwrap();
+        let e = entities
+            .get_mut(id)
+            .expect("entity was inserted when its name was recorded");
         e.node_style = Some(style.clone());
     }
 
     let entities_vec: Vec<Entity> = entity_order
         .into_iter()
-        .map(|n| entities.remove(&n).unwrap())
+        .map(|n| {
+            entities
+                .remove(&n)
+                .expect("entity was inserted when its name was recorded")
+        })
         .collect();
 
     Ok(ErDiagram {

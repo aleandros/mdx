@@ -6,7 +6,11 @@ use super::{
 use crate::mermaid::color::{parse_edge_style_props, parse_node_style_props};
 use crate::mermaid::{MermaidEdgeStyle, NodeStyle};
 
-pub fn parse_sequence(input: &str) -> anyhow::Result<SequenceDiagram> {
+#[expect(
+    clippy::too_many_lines,
+    reason = "one pass preserves nested fragment and participant declaration order"
+)]
+pub(crate) fn parse_sequence(input: &str) -> anyhow::Result<SequenceDiagram> {
     let mut lines = input.lines().peekable();
 
     // Find and validate the header
@@ -210,7 +214,6 @@ pub fn parse_sequence(input: &str) -> anyhow::Result<SequenceDiagram> {
         // Message — try to parse arrow
         if let Some(event) = parse_message(line, &mut participants) {
             push_event!(event);
-            continue;
         }
     }
 
@@ -230,20 +233,20 @@ pub fn parse_sequence(input: &str) -> anyhow::Result<SequenceDiagram> {
         if let Some(p) = participants.iter_mut().find(|p| p.id == *id) {
             let existing = p.style.get_or_insert_with(NodeStyle::default);
             if style.fill.is_some() {
-                existing.fill = style.fill.clone();
+                existing.fill.clone_from(&style.fill);
             }
             if style.stroke.is_some() {
-                existing.stroke = style.stroke.clone();
+                existing.stroke.clone_from(&style.stroke);
             }
             if style.color.is_some() {
-                existing.color = style.color.clone();
+                existing.color.clone_from(&style.color);
             }
         }
     }
 
     // Apply link styles to messages by index
     let mut msg_idx = 0usize;
-    for event in top_events.iter_mut() {
+    for event in &mut top_events {
         if let Event::Message { edge_style, .. } = event {
             if let Some((_, style)) = link_styles.iter().find(|(i, _)| *i == msg_idx) {
                 *edge_style = Some(style.clone());
@@ -311,12 +314,12 @@ fn parse_fragment_label(line: &str) -> String {
 }
 
 /// Parse arrow variants — match longest prefix first:
-/// -->> DashedArrow
-/// ->>  SolidArrow
-/// -->  DashedOpen
-/// --x  DashedCross
-/// ->   SolidOpen
-/// -x   SolidCross
+/// -->> `DashedArrow`
+/// ->>  `SolidArrow`
+/// -->  `DashedOpen`
+/// --x  `DashedCross`
+/// ->   `SolidOpen`
+/// -x   `SolidCross`
 fn parse_message(line: &str, participants: &mut Vec<Participant>) -> Option<Event> {
     // Try each arrow variant in longest-first order
     let arrows: &[(&str, ArrowStyle)] = &[
@@ -346,8 +349,8 @@ fn parse_message(line: &str, participants: &mut Vec<Participant>) -> Option<Even
                 for id in &[&from, &to] {
                     if !participants.iter().any(|p| &p.id == *id) {
                         participants.push(Participant {
-                            id: id.to_string(),
-                            label: id.to_string(),
+                            id: (*id).clone(),
+                            label: (*id).clone(),
                             style: None,
                         });
                     }

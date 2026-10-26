@@ -1,6 +1,26 @@
 use super::{Direction, FlowChart, NodeShape, display_width};
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 
+// Routing temporarily uses negative coordinates before shifting into the canvas.
+fn signed_cell(value: usize) -> isize {
+    isize::try_from(value).expect("diagram coordinates fit in isize")
+}
+
+fn unsigned_cell(value: isize) -> usize {
+    usize::try_from(value).expect("shifted diagram coordinates and extents are nonnegative")
+}
+
+#[expect(
+    clippy::as_conversions,
+    clippy::cast_precision_loss,
+    reason = "barycenters are approximate ordering keys; retain floating-point tie behavior"
+)]
+fn rank_as_float(value: usize) -> f64 {
+    value as f64
+}
+
+const H_PAD: isize = 3;
+const V_PAD: isize = 2;
 const H_SPACING: usize = 6;
 const V_SPACING: usize = 4;
 /// Secondary-axis gap kept on either side of a virtual (edge-routing) node.
@@ -24,64 +44,81 @@ const VIRTUAL_GAP: usize = 2;
 // gap grows to fit the widest label written across it.
 
 #[derive(Debug, Clone)]
-pub struct PositionedNode {
-    #[allow(dead_code)]
-    pub id: String,
-    pub label: String,
-    pub shape: super::NodeShape,
-    pub x: usize,
-    pub y: usize,
-    pub width: usize,
-    pub height: usize,
+pub(crate) struct PositionedNode {
+    pub(crate) id: String,
+    pub(crate) label: String,
+    pub(crate) shape: super::NodeShape,
+    pub(crate) x: usize,
+    pub(crate) y: usize,
+    pub(crate) width: usize,
+    pub(crate) height: usize,
     /// Use compact rendering (3-row hexagon) for diamonds in LR/RL direction
-    pub compact: bool,
-    pub node_style: Option<super::NodeStyle>,
+    pub(crate) compact: bool,
+    pub(crate) node_style: Option<super::NodeStyle>,
     /// Set only for ER entity boxes; carries pre-rendered attribute rows.
-    pub entity: Option<super::er::Entity>,
+    pub(crate) entity: Option<super::er::Entity>,
 }
 
 #[derive(Debug, Clone)]
-pub struct PositionedEdge {
-    #[allow(dead_code)]
-    pub from: String,
-    #[allow(dead_code)]
-    pub to: String,
-    pub label: Option<String>,
-    pub style: super::EdgeStyle,
-    pub points: Vec<(usize, usize)>,
+pub(crate) struct PositionedEdge {
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "edge endpoints are retained for layout assertions"
+        )
+    )]
+    pub(crate) from: String,
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "edge endpoints are retained for layout assertions"
+        )
+    )]
+    pub(crate) to: String,
+    pub(crate) label: Option<String>,
+    pub(crate) style: super::EdgeStyle,
+    pub(crate) points: Vec<(usize, usize)>,
     /// Top-left cell where the label is written, chosen by the layout so it
     /// sits in free gap space. `None` lets the painter pick a spot from the
     /// points alone.
-    pub label_pos: Option<(usize, usize)>,
-    pub edge_style: Option<super::MermaidEdgeStyle>,
+    pub(crate) label_pos: Option<(usize, usize)>,
+    pub(crate) edge_style: Option<super::MermaidEdgeStyle>,
     /// Set only for ER relationship edges; carries cardinality + identifying flag.
-    pub er_meta: Option<super::er::ErEdgeMeta>,
+    pub(crate) er_meta: Option<super::er::ErEdgeMeta>,
 }
 
 #[derive(Debug, Clone)]
-pub struct SubgraphBox {
-    pub label: String,
-    pub x: usize,
-    pub y: usize,
-    pub width: usize,
-    pub height: usize,
-    /// Resolved border color; set by the caller (render_mermaid) after layout.
-    pub border_color: Option<crate::render::Color>,
+pub(crate) struct SubgraphBox {
+    pub(crate) label: String,
+    pub(crate) x: usize,
+    pub(crate) y: usize,
+    pub(crate) width: usize,
+    pub(crate) height: usize,
+    /// Resolved border color; set by the caller (`render_mermaid`) after layout.
+    pub(crate) border_color: Option<crate::render::Color>,
 }
 
 #[derive(Debug)]
-pub struct LayoutResult {
-    pub nodes: Vec<PositionedNode>,
-    pub edges: Vec<PositionedEdge>,
-    pub subgraph_boxes: Vec<SubgraphBox>,
-    pub width: usize,
-    pub height: usize,
+pub(crate) struct LayoutResult {
+    pub(crate) nodes: Vec<PositionedNode>,
+    pub(crate) edges: Vec<PositionedEdge>,
+    pub(crate) subgraph_boxes: Vec<SubgraphBox>,
+    pub(crate) width: usize,
+    pub(crate) height: usize,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DiamondLayout {
+    Compact,
+    Full,
 }
 
 fn node_dimensions(
     label: &str,
     shape: &NodeShape,
-    compact_diamond: bool,
+    diamond_layout: DiamondLayout,
     entity: Option<&super::er::Entity>,
 ) -> (usize, usize) {
     let label_w = display_width(label);
@@ -95,7 +132,7 @@ fn node_dimensions(
         }
         NodeShape::Rect | NodeShape::Rounded | NodeShape::Circle => (label_w + 4, 3),
         NodeShape::Diamond => {
-            if compact_diamond {
+            if diamond_layout == DiamondLayout::Compact {
                 // Compact 3-row hexagon for LR/RL
                 (label_w + 4, 3)
             } else {
@@ -431,7 +468,11 @@ enum EdgeRoute {
 // Layout
 // ---------------------------------------------------------------------------
 
-pub fn layout(chart: &FlowChart) -> LayoutResult {
+#[expect(
+    clippy::too_many_lines,
+    reason = "ranking, placement, and routing share the same indexed graph state"
+)]
+pub(crate) fn layout(chart: &FlowChart) -> LayoutResult {
     if chart.nodes.is_empty() {
         return LayoutResult {
             nodes: vec![],
@@ -509,7 +550,7 @@ pub fn layout(chart: &FlowChart) -> LayoutResult {
 
         // Longest path over intra-cluster edges, like free nodes: every
         // member starts at rank 0 and forward edges push their targets down.
-        for &gi in members.iter() {
+        for &gi in members {
             internal_ranks[gi] = 0;
         }
 
@@ -616,31 +657,31 @@ pub fn layout(chart: &FlowChart) -> LayoutResult {
             EdgeRoute::SelfLoop
         } else {
             let (rf, rt) = (ranks[fi], ranks[ti]);
-            if rt > rf {
-                let same_cluster = node_to_cluster[chart.nodes[fi].id.as_str()]
-                    == node_to_cluster[chart.nodes[ti].id.as_str()];
-                let band = if chart.subgraphs.is_empty() || same_cluster {
-                    item_band[fi]
-                } else {
-                    routing_band
-                };
-                let mut prev = fi;
-                let mut virtuals = Vec::with_capacity(rt - rf - 1);
-                for r in rf + 1..rt {
-                    let v = item_rank.len();
-                    item_rank.push(r);
-                    item_band.push(band);
-                    item_preds.push(vec![prev]);
-                    virtuals.push(v);
-                    prev = v;
-                    routing_band_used |= band == routing_band;
+            match rt.cmp(&rf) {
+                std::cmp::Ordering::Greater => {
+                    let same_cluster = node_to_cluster[chart.nodes[fi].id.as_str()]
+                        == node_to_cluster[chart.nodes[ti].id.as_str()];
+                    let band = if chart.subgraphs.is_empty() || same_cluster {
+                        item_band[fi]
+                    } else {
+                        routing_band
+                    };
+                    let mut prev = fi;
+                    let mut virtuals = Vec::with_capacity(rt - rf - 1);
+                    for r in rf + 1..rt {
+                        let v = item_rank.len();
+                        item_rank.push(r);
+                        item_band.push(band);
+                        item_preds.push(vec![prev]);
+                        virtuals.push(v);
+                        prev = v;
+                        routing_band_used |= band == routing_band;
+                    }
+                    item_preds[ti].push(prev);
+                    EdgeRoute::Forward { virtuals }
                 }
-                item_preds[ti].push(prev);
-                EdgeRoute::Forward { virtuals }
-            } else if rt == rf {
-                EdgeRoute::SameRank
-            } else {
-                EdgeRoute::Back
+                std::cmp::Ordering::Equal => EdgeRoute::SameRank,
+                std::cmp::Ordering::Less => EdgeRoute::Back,
             }
         };
         routes.push(Some((fi, ti, route)));
@@ -671,7 +712,10 @@ pub fn layout(chart: &FlowChart) -> LayoutResult {
         pos_in_rank[idx] = pos;
     }
 
-    #[allow(clippy::needless_range_loop)]
+    #[expect(
+        clippy::needless_range_loop,
+        reason = "each rank updates predecessor positions used by subsequent ranks"
+    )]
     for r in 1..=max_rank {
         let group = &rank_groups[r];
         // Compute barycenter for each item: average position of predecessors in rank r-1
@@ -685,9 +729,10 @@ pub fn layout(chart: &FlowChart) -> LayoutResult {
                     .collect();
                 let bc = if preds_in_prev.is_empty() {
                     // No predecessors in previous rank: use current index as tie-breaker
-                    idx as f64
+                    rank_as_float(idx)
                 } else {
-                    preds_in_prev.iter().sum::<usize>() as f64 / preds_in_prev.len() as f64
+                    rank_as_float(preds_in_prev.iter().sum::<usize>())
+                        / rank_as_float(preds_in_prev.len())
                 };
                 (idx, bc)
             })
@@ -698,7 +743,7 @@ pub fn layout(chart: &FlowChart) -> LayoutResult {
         barycenters.sort_by(|a, b| {
             item_band[a.0]
                 .cmp(&item_band[b.0])
-                .then(a.1.partial_cmp(&b.1).unwrap())
+                .then(a.1.total_cmp(&b.1))
                 .then(a.0.cmp(&b.0))
         });
 
@@ -718,7 +763,18 @@ pub fn layout(chart: &FlowChart) -> LayoutResult {
     let dims: Vec<(usize, usize)> = chart
         .nodes
         .iter()
-        .map(|n| node_dimensions(&n.label, &n.shape, is_lr, n.entity.as_ref()))
+        .map(|n| {
+            node_dimensions(
+                &n.label,
+                &n.shape,
+                if is_lr {
+                    DiamondLayout::Compact
+                } else {
+                    DiamondLayout::Full
+                },
+                n.entity.as_ref(),
+            )
+        })
         .collect();
 
     // For LR/RL: ranks go left→right (x-axis), within-rank nodes go top→bottom (y-axis).
@@ -817,7 +873,7 @@ pub fn layout(chart: &FlowChart) -> LayoutResult {
     }
     // Cells reserved for subgraph box borders on each side of a gap.
     let has_sg = usize::from(!chart.subgraphs.is_empty());
-    let gap_size: Vec<usize> = (0..=gap_count)
+    let gap_extent: Vec<usize> = (0..=gap_count)
         .map(|r| {
             if is_lr {
                 (primary_spacing + 2 * has_sg).max(gap_label_w[r])
@@ -831,7 +887,7 @@ pub fn layout(chart: &FlowChart) -> LayoutResult {
     let mut current_primary = 0;
     for r in 0..=max_rank {
         rank_primary_offsets[r] = current_primary;
-        current_primary += rank_max_primary[r] + gap_size[r];
+        current_primary += rank_max_primary[r] + gap_extent[r];
     }
 
     // When multiple named subgraphs share the same cluster rank (SCC cycle case),
@@ -950,8 +1006,6 @@ pub fn layout(chart: &FlowChart) -> LayoutResult {
     // Compute bounding boxes for subgraphs. Coordinates may go negative here
     // (a box around rank-0 nodes needs rows above them); everything is shifted
     // into place after edge routing.
-    const H_PAD: isize = 3;
-    const V_PAD: isize = 2;
 
     // Build a lookup from node id to PositionedNode for fast access
     let node_pos_map: HashMap<&str, &PositionedNode> = positioned_nodes
@@ -975,17 +1029,41 @@ pub fn layout(chart: &FlowChart) -> LayoutResult {
                 return None;
             }
 
-            let min_x = members.iter().map(|n| n.x).min().unwrap() as isize;
-            let min_y = members.iter().map(|n| n.y).min().unwrap() as isize;
-            let max_x_right = members.iter().map(|n| n.x + n.width).max().unwrap() as isize;
-            let max_y_bottom = members.iter().map(|n| n.y + n.height).max().unwrap() as isize;
+            let min_x = signed_cell(
+                members
+                    .iter()
+                    .map(|n| n.x)
+                    .min()
+                    .expect("members were checked to be nonempty"),
+            );
+            let min_y = signed_cell(
+                members
+                    .iter()
+                    .map(|n| n.y)
+                    .min()
+                    .expect("members were checked to be nonempty"),
+            );
+            let max_x_right = signed_cell(
+                members
+                    .iter()
+                    .map(|n| n.x + n.width)
+                    .max()
+                    .expect("members were checked to be nonempty"),
+            );
+            let max_y_bottom = signed_cell(
+                members
+                    .iter()
+                    .map(|n| n.y + n.height)
+                    .max()
+                    .expect("members were checked to be nonempty"),
+            );
 
             let box_x = min_x - H_PAD;
             let box_y = min_y - V_PAD;
             // Minimum width so the label always fits in the top border: "┌ label ┐"
             let min_w = display_width(&sg.label) + 4;
-            let box_w = ((max_x_right + H_PAD - box_x) as usize).max(min_w);
-            let box_h = (max_y_bottom + V_PAD - box_y) as usize;
+            let box_w = unsigned_cell(max_x_right + H_PAD - box_x).max(min_w);
+            let box_h = unsigned_cell(max_y_bottom + V_PAD - box_y);
 
             Some((sg.label.clone(), box_x, box_y, box_w, box_h))
         })
@@ -1011,32 +1089,32 @@ pub fn layout(chart: &FlowChart) -> LayoutResult {
     // screen coordinates. Past the last rank the gap is open-ended.
     let gap_cell_after = |r: usize, k: usize| -> isize {
         if r < gap_count {
-            let lo = rank_hi[r].min(rank_hi[r + 1]) as isize;
+            let lo = signed_cell(rank_hi[r].min(rank_hi[r + 1]));
             if reversed {
-                lo + gap_size[r] as isize - 1 - k as isize
+                lo + signed_cell(gap_extent[r]) - 1 - signed_cell(k)
             } else {
-                lo + k as isize
+                lo + signed_cell(k)
             }
         } else if reversed {
-            rank_lo[r] as isize - 1 - k as isize
+            signed_cell(rank_lo[r]) - 1 - signed_cell(k)
         } else {
-            (rank_hi[r] + k) as isize
+            signed_cell(rank_hi[r] + k)
         }
     };
     // Cell `k` counted from the target side of the gap before rank `r`.
     let gap_cell_before = |r: usize, k: usize| -> isize {
         if r > 0 {
-            gap_cell_after(r - 1, gap_size[r - 1] - 1 - k)
+            gap_cell_after(r - 1, gap_extent[r - 1] - 1 - k)
         } else if reversed {
-            (rank_hi[0] + k) as isize
+            signed_cell(rank_hi[0] + k)
         } else {
-            rank_lo[0] as isize - 1 - k as isize
+            signed_cell(rank_lo[0]) - 1 - signed_cell(k)
         }
     };
     // Lane where forward edges bend, in the gap after rank r.
     let forward_lane = |r: usize| -> isize {
         let k = if is_lr {
-            gap_size[r] / 2
+            gap_extent[r] / 2
         } else {
             2 + has_sg + usize::from(gap_side[r])
         };
@@ -1051,30 +1129,30 @@ pub fn layout(chart: &FlowChart) -> LayoutResult {
     // (and the box border, in TD/BT).
     let in_lane = |r: usize| -> isize { gap_cell_before(r, if is_lr { 1 } else { 1 + has_sg }) };
     let sec_center =
-        |i: usize| -> isize { (item_secondary[i] + item_secondary_size[i] / 2) as isize };
-    let sec_hi = |i: usize| -> isize { (item_secondary[i] + item_secondary_size[i]) as isize };
+        |i: usize| -> isize { signed_cell(item_secondary[i] + item_secondary_size[i] / 2) };
+    let sec_hi = |i: usize| -> isize { signed_cell(item_secondary[i] + item_secondary_size[i]) };
     // First cell outside the node on the out side (bottom in TD).
     let out_port = |i: usize| -> isize {
         if reversed {
-            screen_primary[i] as isize - 1
+            signed_cell(screen_primary[i]) - 1
         } else {
-            (screen_primary[i] + item_primary_size[i]) as isize
+            signed_cell(screen_primary[i] + item_primary_size[i])
         }
     };
     // Border cell on the in side (top in TD).
     let in_port = |i: usize| -> isize {
         if reversed {
-            (screen_primary[i] + item_primary_size[i] - 1) as isize
+            signed_cell(screen_primary[i] + item_primary_size[i] - 1)
         } else {
-            screen_primary[i] as isize
+            signed_cell(screen_primary[i])
         }
     };
     // Border cell on the out side (bottom border in TD).
     let out_border = |i: usize| -> isize {
         if reversed {
-            screen_primary[i] as isize
+            signed_cell(screen_primary[i])
         } else {
-            (screen_primary[i] + item_primary_size[i] - 1) as isize
+            signed_cell(screen_primary[i] + item_primary_size[i] - 1)
         }
     };
     let to_xy = |(s, p): (isize, isize)| -> (isize, isize) { if is_lr { (p, s) } else { (s, p) } };
@@ -1083,16 +1161,16 @@ pub fn layout(chart: &FlowChart) -> LayoutResult {
     // and subgraph box.
     let mut obstacles: Vec<((isize, isize), (isize, isize))> = (0..total_items)
         .map(|i| {
-            let s0 = item_secondary[i] as isize;
-            let p0 = screen_primary[i] as isize;
+            let s0 = signed_cell(item_secondary[i]);
+            let p0 = signed_cell(screen_primary[i]);
             (
-                (s0, s0 + item_secondary_size[i] as isize),
-                (p0, p0 + item_primary_size[i] as isize),
+                (s0, s0 + signed_cell(item_secondary_size[i])),
+                (p0, p0 + signed_cell(item_primary_size[i])),
             )
         })
         .collect();
     for &(_, bx, by, bw, bh) in &raw_boxes {
-        let (bw, bh) = (bw as isize, bh as isize);
+        let (bw, bh) = (signed_cell(bw), signed_cell(bh));
         let (s0, s1, p0, p1) = if is_lr {
             (by, by + bh, bx, bx + bw)
         } else {
@@ -1102,16 +1180,17 @@ pub fn layout(chart: &FlowChart) -> LayoutResult {
     }
 
     let label_width = |ei: usize| -> isize {
-        chart.edges[ei]
-            .label
-            .as_deref()
-            .filter(|l| !l.is_empty())
-            .map(display_width)
-            .unwrap_or(0) as isize
+        signed_cell(
+            chart.edges[ei]
+                .label
+                .as_deref()
+                .filter(|l| !l.is_empty())
+                .map_or(0, display_width),
+        )
     };
 
     // Routed paths and label anchors, both in (secondary, primary) space.
-    let mut routed: Vec<Option<RoutedEdge>> = vec![None; routes.len()];
+    let mut routed_edges: Vec<Option<RoutedEdge>> = vec![None; routes.len()];
 
     // Self-loops hug the side of their node, so they go first and become
     // obstacles for back edges, which run further out.
@@ -1122,13 +1201,13 @@ pub fn layout(chart: &FlowChart) -> LayoutResult {
         let fi = *fi;
         let g = out_lane(ranks[fi]);
         let side = sec_hi(fi) + 2;
-        let mid = (screen_primary[fi] + item_primary_size[fi] / 2) as isize;
+        let mid = signed_cell(screen_primary[fi] + item_primary_size[fi] / 2);
         let lw = label_width(ei);
         // Reserve the loop and its label (written just outside the loop).
         let reserve_hi = side + 1 + if lw > 0 { lw + 1 } else { 0 };
         obstacles.push(((side, reserve_hi), (g.min(mid), g.max(mid) + 1)));
         let label = (lw > 0).then_some((side + 2, mid));
-        routed[ei] = Some((
+        routed_edges[ei] = Some((
             vec![
                 (sec_center(fi), out_port(fi)),
                 (sec_center(fi), g),
@@ -1165,7 +1244,7 @@ pub fn layout(chart: &FlowChart) -> LayoutResult {
                 // offset still lands on the wide top border, while in LR/RL a
                 // one-row offset would put the arrowhead on a box corner
                 // instead of the middle row.
-                let snap: isize = if is_lr { 0 } else { 1 };
+                let snap: isize = isize::from(!is_lr);
                 for k in (1..cols.len()).rev() {
                     if (cols[k] - cols[k - 1]).abs() <= snap {
                         cols[k - 1] = cols[k];
@@ -1184,13 +1263,13 @@ pub fn layout(chart: &FlowChart) -> LayoutResult {
                         // Written across the first gap, centred; on a straight
                         // edge that is on the wire, on a jogged edge it sits at
                         // the jog's midpoint row.
-                        let gap_lo = rank_hi[rf].min(rank_hi[rf + 1]) as isize;
+                        let gap_lo = signed_cell(rank_hi[rf].min(rank_hi[rf + 1]));
                         let sec = if straight {
                             cols[0]
                         } else {
-                            (cols[0] + cols[1]) / 2
+                            isize::midpoint(cols[0], cols[1])
                         };
-                        label = Some((sec, gap_lo + (gap_size[rf] as isize - lw) / 2));
+                        label = Some((sec, gap_lo + (signed_cell(gap_extent[rf]) - lw) / 2));
                     } else if straight {
                         // Beside the vertical line, on the label row.
                         label = Some((cols[0] + 1, label_lane(rf)));
@@ -1217,11 +1296,7 @@ pub fn layout(chart: &FlowChart) -> LayoutResult {
                 let side = side_base + 2 + side_cursor;
                 // TD/BT labels sit beside the side column and need width;
                 // LR/RL labels sit above the side row.
-                side_cursor += 2 + if is_lr {
-                    0
-                } else {
-                    lw + if lw > 0 { 1 } else { 0 }
-                };
+                side_cursor += 2 + if is_lr { 0 } else { lw + isize::from(lw > 0) };
                 pts.push((sec_center(fi), out_port(fi)));
                 pts.push((sec_center(fi), g_out));
                 pts.push((side, g_out));
@@ -1232,7 +1307,7 @@ pub fn layout(chart: &FlowChart) -> LayoutResult {
                     label = Some(if is_lr {
                         (side - 1, (span_lo + span_hi - lw) / 2)
                     } else {
-                        (side + 2, (span_lo + span_hi) / 2)
+                        (side + 2, isize::midpoint(span_lo, span_hi))
                     });
                 }
             }
@@ -1250,7 +1325,7 @@ pub fn layout(chart: &FlowChart) -> LayoutResult {
                     // TD/BT: on the wire, centred between the two ports.
                     // LR/RL: beside the vertical run, at its midpoint.
                     label = Some(if is_lr {
-                        ((a + b) / 2, g + 1)
+                        (isize::midpoint(a, b), g + 1)
                     } else {
                         ((a + b - lw) / 2, g)
                     });
@@ -1258,9 +1333,9 @@ pub fn layout(chart: &FlowChart) -> LayoutResult {
             }
             EdgeRoute::SelfLoop => continue,
         }
-        routed[ei] = Some((pts, label));
+        routed_edges[ei] = Some((pts, label));
     }
-    let raw_edges: Vec<(usize, Vec<Pt>, Option<Pt>)> = routed
+    let raw_edges: Vec<(usize, Vec<Pt>, Option<Pt>)> = routed_edges
         .into_iter()
         .enumerate()
         .filter_map(|(ei, r)| {
@@ -1286,8 +1361,8 @@ pub fn layout(chart: &FlowChart) -> LayoutResult {
         .min()
         .unwrap_or(0)
         .min(0);
-    let shift_x = (-min_x) as usize;
-    let shift_y = (-min_y) as usize;
+    let shift_x = unsigned_cell(-min_x);
+    let shift_y = unsigned_cell(-min_y);
 
     let mut positioned_nodes = positioned_nodes;
     if shift_x > 0 || shift_y > 0 {
@@ -1300,8 +1375,8 @@ pub fn layout(chart: &FlowChart) -> LayoutResult {
         .into_iter()
         .map(|(label, x, y, width, height)| SubgraphBox {
             label,
-            x: (x + shift_x as isize) as usize,
-            y: (y + shift_y as isize) as usize,
+            x: unsigned_cell(x + signed_cell(shift_x)),
+            y: unsigned_cell(y + signed_cell(shift_y)),
             width,
             height,
             border_color: None,
@@ -1310,8 +1385,8 @@ pub fn layout(chart: &FlowChart) -> LayoutResult {
 
     let shift = |(x, y): (isize, isize)| -> (usize, usize) {
         (
-            (x + shift_x as isize) as usize,
-            (y + shift_y as isize) as usize,
+            unsigned_cell(x + signed_cell(shift_x)),
+            unsigned_cell(y + signed_cell(shift_y)),
         )
     };
     let mut positioned_edges: Vec<PositionedEdge> = raw_edges
@@ -1516,7 +1591,7 @@ mod tests {
         );
     }
 
-    /// Diamond node: width >= label_len + 4, height >= 4
+    /// Diamond node: width >= `label_len` + 4, height >= 4
     #[test]
     fn test_diamond_dimensions() {
         let label = "Yes";
@@ -1775,6 +1850,10 @@ mod tests {
     /// The layout should arrange nodes such that all nodes from one subgraph occupy a contiguous
     /// x-range that does not overlap with the other subgraph's x-range.
     #[test]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "explicit graph fixture keeps subgraph membership and expected placement together"
+    )]
     fn test_subgraph_members_contiguous_ranks() {
         use crate::mermaid::Subgraph;
 
@@ -1889,15 +1968,25 @@ mod tests {
         let find_x = |id: &str| result.nodes.iter().find(|n| n.id == id).unwrap().x;
         let pkg_xs: Vec<usize> = pkg_ids.iter().map(|id| find_x(id)).collect();
         let mq_xs: Vec<usize> = mq_ids.iter().map(|id| find_x(id)).collect();
-        let pkg_max = pkg_xs.iter().max().unwrap();
-        let mq_min = mq_xs.iter().min().unwrap();
-        let pkg_min = pkg_xs.iter().min().unwrap();
-        let mq_max = mq_xs.iter().max().unwrap();
+        let pkg_max = pkg_xs
+            .iter()
+            .max()
+            .expect("members were checked to be nonempty");
+        let mq_min = mq_xs
+            .iter()
+            .min()
+            .expect("members were checked to be nonempty");
+        let pkg_min = pkg_xs
+            .iter()
+            .min()
+            .expect("members were checked to be nonempty");
+        let mq_max = mq_xs
+            .iter()
+            .max()
+            .expect("members were checked to be nonempty");
         assert!(
             pkg_max < mq_min || mq_max < pkg_min,
-            "Pkg and MQ x-ranges must not overlap. Pkg xs: {:?}, MQ xs: {:?}",
-            pkg_xs,
-            mq_xs
+            "Pkg and MQ x-ranges must not overlap. Pkg xs: {pkg_xs:?}, MQ xs: {mq_xs:?}"
         );
     }
 
@@ -1979,11 +2068,7 @@ mod tests {
         let b_max_x = b1.x.max(b2.x);
         assert!(
             a_max_x < b_min_x || b_max_x < a_min_x,
-            "SGA and SGB x-ranges must not overlap. SGA xs: [{},{}], SGB xs: [{},{}]",
-            a_min_x,
-            a_max_x,
-            b_min_x,
-            b_max_x
+            "SGA and SGB x-ranges must not overlap. SGA xs: [{a_min_x},{a_max_x}], SGB xs: [{b_min_x},{b_max_x}]"
         );
         // SGA (rank 0) must come before SGB (rank 1) in LR mode
         assert!(
@@ -2178,17 +2263,13 @@ mod tests {
         let b_x = find_x("B");
         let c_x = find_x("C");
         let d_x = find_x("D");
-        let sga_max = a_x.max(b_x);
-        let sgb_min = c_x.min(d_x);
-        let sga_min = a_x.min(b_x);
-        let sgb_max = c_x.max(d_x);
+        let first_right = a_x.max(b_x);
+        let second_left = c_x.min(d_x);
+        let first_left = a_x.min(b_x);
+        let second_right = c_x.max(d_x);
         assert!(
-            sga_max < sgb_min || sgb_max < sga_min,
-            "SGA and SGB x-ranges must not overlap. SGA: [{},{}], SGB: [{},{}]",
-            sga_min,
-            sga_max,
-            sgb_min,
-            sgb_max
+            first_right < second_left || second_right < first_left,
+            "SGA and SGB x-ranges must not overlap. SGA: [{first_left},{first_right}], SGB: [{second_left},{second_right}]"
         );
         assert_eq!(result.nodes.len(), 5);
     }

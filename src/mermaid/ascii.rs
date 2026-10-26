@@ -53,7 +53,7 @@ pub(crate) struct Canvas {
 }
 
 impl Canvas {
-    pub fn new(width: usize, height: usize) -> Self {
+    pub(crate) fn new(width: usize, height: usize) -> Self {
         Canvas {
             grid: vec![vec![Cell::default(); width]; height],
             width,
@@ -61,11 +61,11 @@ impl Canvas {
         }
     }
 
-    pub fn set(&mut self, x: usize, y: usize, ch: char) {
+    pub(crate) fn set(&mut self, x: usize, y: usize, ch: char) {
         self.put(x, y, ch, None);
     }
 
-    pub fn set_styled(&mut self, x: usize, y: usize, ch: char, style: &SpanStyle) {
+    pub(crate) fn set_styled(&mut self, x: usize, y: usize, ch: char, style: &SpanStyle) {
         self.put(x, y, ch, Some(style));
     }
 
@@ -109,18 +109,24 @@ impl Canvas {
         }
     }
 
-    pub fn draw_text(&mut self, x: usize, y: usize, text: &str) {
+    pub(crate) fn draw_text(&mut self, x: usize, y: usize, text: &str) {
         self.draw_text_impl(x, y, text, None, usize::MAX);
     }
 
-    pub fn draw_text_styled(&mut self, x: usize, y: usize, text: &str, style: &SpanStyle) {
+    pub(crate) fn draw_text_styled(&mut self, x: usize, y: usize, text: &str, style: &SpanStyle) {
         self.draw_text_impl(x, y, text, Some(style), usize::MAX);
     }
 
     /// Draws `text` starting at column `x`, stopping before a character that
     /// would extend past `max_cols` columns. Returns the number of columns
     /// written.
-    pub fn draw_text_clipped(&mut self, x: usize, y: usize, text: &str, max_cols: usize) -> usize {
+    pub(crate) fn draw_text_clipped(
+        &mut self,
+        x: usize,
+        y: usize,
+        text: &str,
+        max_cols: usize,
+    ) -> usize {
         self.draw_text_impl(x, y, text, None, max_cols)
     }
 
@@ -149,7 +155,7 @@ impl Canvas {
         used
     }
 
-    pub fn get(&self, x: usize, y: usize) -> char {
+    pub(crate) fn get(&self, x: usize, y: usize) -> char {
         if x < self.width && y < self.height {
             self.grid[y][x].ch
         } else {
@@ -157,8 +163,8 @@ impl Canvas {
         }
     }
 
-    #[allow(dead_code)]
-    pub fn to_lines(&self) -> Vec<String> {
+    #[cfg(test)]
+    pub(crate) fn to_lines(&self) -> Vec<String> {
         self.grid
             .iter()
             .map(|row| {
@@ -172,15 +178,14 @@ impl Canvas {
             .collect()
     }
 
-    pub fn to_styled_lines(&self) -> Vec<StyledLine> {
+    pub(crate) fn to_styled_lines(&self) -> Vec<StyledLine> {
         self.grid
             .iter()
             .map(|row| {
                 let last_non_space = row
                     .iter()
                     .rposition(|c| c.ch != ' ' || c.style != SpanStyle::default())
-                    .map(|i| i + 1)
-                    .unwrap_or(0);
+                    .map_or(0, |i| i + 1);
                 let row = &row[..last_non_space];
                 if row.is_empty() {
                     return StyledLine::empty();
@@ -221,7 +226,7 @@ impl Canvas {
 // Style helpers
 // ---------------------------------------------------------------------------
 
-fn stroke_style(node_style: &Option<NodeStyle>) -> SpanStyle {
+fn stroke_style(node_style: Option<&NodeStyle>) -> SpanStyle {
     match node_style {
         Some(ns) => {
             let fg = ns.stroke.clone().or_else(|| ns.fill.clone());
@@ -234,7 +239,7 @@ fn stroke_style(node_style: &Option<NodeStyle>) -> SpanStyle {
     }
 }
 
-fn label_style(node_style: &Option<NodeStyle>) -> SpanStyle {
+fn label_style(node_style: Option<&NodeStyle>) -> SpanStyle {
     match node_style {
         Some(ns) if ns.color.is_some() => SpanStyle {
             fg: ns.color.clone(),
@@ -244,7 +249,7 @@ fn label_style(node_style: &Option<NodeStyle>) -> SpanStyle {
     }
 }
 
-fn edge_line_style(edge_style: &Option<MermaidEdgeStyle>) -> SpanStyle {
+fn edge_line_style(edge_style: Option<&MermaidEdgeStyle>) -> SpanStyle {
     match edge_style {
         Some(es) if es.stroke.is_some() => SpanStyle {
             fg: es.stroke.clone(),
@@ -254,7 +259,7 @@ fn edge_line_style(edge_style: &Option<MermaidEdgeStyle>) -> SpanStyle {
     }
 }
 
-fn edge_label_style(edge_style: &Option<MermaidEdgeStyle>) -> SpanStyle {
+fn edge_label_style(edge_style: Option<&MermaidEdgeStyle>) -> SpanStyle {
     match edge_style {
         Some(es) => {
             let fg = es.label_color.clone().or_else(|| es.stroke.clone());
@@ -280,8 +285,8 @@ fn clear_node_area(canvas: &mut Canvas, node: &PositionedNode) {
 }
 
 fn draw_rect(canvas: &mut Canvas, node: &PositionedNode) {
-    let ss = stroke_style(&node.node_style);
-    let ls = label_style(&node.node_style);
+    let ss = stroke_style(node.node_style.as_ref());
+    let ls = label_style(node.node_style.as_ref());
     let x = node.x;
     let y = node.y;
     let w = node.width;
@@ -315,8 +320,8 @@ fn draw_rect(canvas: &mut Canvas, node: &PositionedNode) {
 }
 
 fn draw_rounded(canvas: &mut Canvas, node: &PositionedNode) {
-    let ss = stroke_style(&node.node_style);
-    let ls = label_style(&node.node_style);
+    let ss = stroke_style(node.node_style.as_ref());
+    let ls = label_style(node.node_style.as_ref());
     let x = node.x;
     let y = node.y;
     let w = node.width;
@@ -346,8 +351,8 @@ fn draw_rounded(canvas: &mut Canvas, node: &PositionedNode) {
 }
 
 fn draw_diamond(canvas: &mut Canvas, node: &PositionedNode) {
-    let ss = stroke_style(&node.node_style);
-    let ls = label_style(&node.node_style);
+    let ss = stroke_style(node.node_style.as_ref());
+    let ls = label_style(node.node_style.as_ref());
     clear_node_area(canvas, node);
     let cx = node.x + node.width / 2;
     let cy = node.y + node.height / 2;
@@ -393,8 +398,8 @@ fn draw_diamond(canvas: &mut Canvas, node: &PositionedNode) {
 }
 
 fn draw_compact_diamond(canvas: &mut Canvas, node: &PositionedNode) {
-    let ss = stroke_style(&node.node_style);
-    let ls = label_style(&node.node_style);
+    let ss = stroke_style(node.node_style.as_ref());
+    let ls = label_style(node.node_style.as_ref());
     let x = node.x;
     let y = node.y;
     let w = node.width;
@@ -544,7 +549,6 @@ fn connectivity_to_char(bits: u8) -> char {
     match bits {
         0 => ' ',
         // Single or straight
-        0b0001..=0b0011 => '│',
         0b0100 | 0b1000 | 0b1100 => '─',
         // Corners
         0b1001 => '└',
@@ -562,7 +566,10 @@ fn connectivity_to_char(bits: u8) -> char {
     }
 }
 
-#[allow(clippy::needless_range_loop)]
+#[expect(
+    clippy::needless_range_loop,
+    reason = "connectivity grid traversal needs neighboring coordinates"
+)]
 fn mark_segment(conn: &mut [Vec<u8>], p0: (usize, usize), p1: (usize, usize), w: usize, h: usize) {
     if p0.0 == p1.0 {
         let x = p0.0;
@@ -651,7 +658,7 @@ fn apply_edge_style(canvas: &mut Canvas, conn: &[Vec<u8>], edge: &PositionedEdge
 }
 
 fn color_edge_segments(canvas: &mut Canvas, edge: &PositionedEdge) {
-    let style = edge_line_style(&edge.edge_style);
+    let style = edge_line_style(edge.edge_style.as_ref());
     if style.fg.is_none() {
         return;
     }
@@ -695,7 +702,7 @@ fn draw_arrowhead(canvas: &mut Canvas, edge: &PositionedEdge) {
         return;
     }
 
-    let arrow_style = edge_line_style(&edge.edge_style);
+    let arrow_style = edge_line_style(edge.edge_style.as_ref());
     let last = edge.points[edge.points.len() - 1];
     let prev = edge.points[edge.points.len() - 2];
 
@@ -725,7 +732,7 @@ fn draw_edge_label(canvas: &mut Canvas, edge: &PositionedEdge) {
         Some(l) if !l.is_empty() => l,
         _ => return,
     };
-    let ls = edge_label_style(&edge.edge_style);
+    let ls = edge_label_style(edge.edge_style.as_ref());
     if let Some((x, y)) = edge.label_pos {
         canvas.draw_text_styled(x, y, label, &ls);
         return;
@@ -751,7 +758,7 @@ fn draw_edge_label(canvas: &mut Canvas, edge: &PositionedEdge) {
             canvas.draw_text_styled(label_x, y1.saturating_sub(1), label, &ls);
         } else {
             // Vertical middle segment — label to the right at midpoint
-            let y_mid = (y1.min(y2) + y1.max(y2)) / 2;
+            let y_mid = usize::midpoint(y1.min(y2), y1.max(y2));
             canvas.draw_text_styled(x1 + 1, y_mid, label, &ls);
         }
     } else if points.len() >= 2 {
@@ -760,7 +767,7 @@ fn draw_edge_label(canvas: &mut Canvas, edge: &PositionedEdge) {
         let (x1, y1) = points[1];
 
         if x0 == x1 {
-            let y_mid = (y0.min(y1) + y0.max(y1)) / 2;
+            let y_mid = usize::midpoint(y0.min(y1), y0.max(y1));
             canvas.draw_text_styled(x0 + 1, y_mid, label, &ls);
         } else {
             // Straight horizontal edge: place label on the wire itself.
@@ -770,8 +777,8 @@ fn draw_edge_label(canvas: &mut Canvas, edge: &PositionedEdge) {
             let x_max = x0.max(x1);
             let seg_len = x_max.saturating_sub(x_min);
             if label_w < seg_len {
-                let x_mid = (x_min + x_max) / 2;
-                let label_x = x_mid.saturating_sub(label_w / 2);
+                let center_x = usize::midpoint(x_min, x_max);
+                let label_x = center_x.saturating_sub(label_w / 2);
                 let label_x = label_x.max(x_min).min(x_max.saturating_sub(label_w));
                 canvas.draw_text_styled(label_x, y0, label, &ls);
             }
@@ -783,8 +790,8 @@ fn draw_edge_label(canvas: &mut Canvas, edge: &PositionedEdge) {
 // render
 // ---------------------------------------------------------------------------
 
-#[allow(dead_code)]
-pub fn render(layout: &LayoutResult) -> Vec<String> {
+#[cfg(test)]
+pub(crate) fn render(layout: &LayoutResult) -> Vec<String> {
     let extra_width = 10;
     let extra_height = 2;
 
@@ -855,7 +862,7 @@ pub fn render(layout: &LayoutResult) -> Vec<String> {
         .map(|l| strip_fillers(l.trim_end()))
         .collect();
 
-    while lines.last().map(|l: &String| l.is_empty()).unwrap_or(false) {
+    while lines.last().is_some_and(|l: &String| l.is_empty()) {
         lines.pop();
     }
     lines
@@ -869,7 +876,11 @@ fn canvas_to_padded_lines(canvas: &Canvas) -> Vec<String> {
         .collect()
 }
 
-pub fn render_styled(layout: &LayoutResult) -> Vec<StyledLine> {
+#[expect(
+    clippy::too_many_lines,
+    reason = "painting phases share the canvas and connectivity grid"
+)]
+pub(crate) fn render_styled(layout: &LayoutResult) -> Vec<StyledLine> {
     let extra_width = 10;
     let extra_height = 2;
     let canvas_width = layout.width + extra_width;
@@ -959,7 +970,7 @@ pub fn render_styled(layout: &LayoutResult) -> Vec<StyledLine> {
                 continue;
             }
             let start = edge.points[0];
-            let end = *edge.points.last().unwrap();
+            let end = *edge.points.last().expect("edge has at least two points");
             // Glyph spans up to one cell along the segment direction. Conservatively
             // mark the endpoint row plus the row above and below.
             for &(_, y) in &[start, end] {
@@ -1007,7 +1018,7 @@ pub fn render_styled(layout: &LayoutResult) -> Vec<StyledLine> {
             line.spans.retain(|s| !s.text.is_empty());
         }
     }
-    while lines.last().map(|l| l.spans.is_empty()).unwrap_or(false) {
+    while lines.last().is_some_and(|l| l.spans.is_empty()) {
         lines.pop();
     }
     lines
@@ -1318,8 +1329,7 @@ mod tests {
             // Label must NOT be on node A's rows (0..=2) or node B's rows (10..=12)
             assert!(
                 row > 2 && row < 10,
-                "Label 'yes' at row {} should be between node borders (rows 3..9)",
-                row
+                "Label 'yes' at row {row} should be between node borders (rows 3..9)"
             );
         }
     }

@@ -8,7 +8,7 @@ fn run_mdx(file: &str, width: u16) -> String {
         .arg("--width")
         .arg(width.to_string())
         .output()
-        .unwrap_or_else(|e| panic!("failed to run mdx on {}: {}", file, e));
+        .unwrap_or_else(|e| panic!("failed to run mdx on {file}: {e}"));
     assert!(
         output.status.success(),
         "mdx failed on {}: {}",

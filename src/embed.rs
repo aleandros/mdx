@@ -1,13 +1,14 @@
 use crate::render::{RenderedBlock, StyledLine, StyledSpan};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-pub struct EmbedOptions {
-    pub width: u16,
-    pub height: Option<usize>,
-    pub no_color: bool,
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct EmbedOptions {
+    pub(crate) width: u16,
+    pub(crate) height: Option<usize>,
+    pub(crate) color_mode: crate::render::ColorMode,
 }
 
-pub fn run<W: std::io::Write>(
+pub(crate) fn run<W: std::io::Write>(
     input: &str,
     opts: EmbedOptions,
     highlighter: &crate::highlight::Highlighter,
@@ -23,19 +24,19 @@ pub fn run<W: std::io::Write>(
         Some(h) => Box::new(lines.into_iter().take(h)),
         None => Box::new(lines.into_iter()),
     };
-    let max_cols = opts.width as usize;
+    let max_cols = usize::from(opts.width);
     for line in capped {
         let cut = truncate_line_width(&line, max_cols);
         writeln!(
             writer,
             "{}",
-            crate::render::styled_line_to_ansi(&cut, opts.no_color)
+            crate::render::styled_line_to_ansi(&cut, opts.color_mode)
         )?;
     }
     Ok(())
 }
 
-pub fn flatten_blocks(blocks: &[RenderedBlock]) -> Vec<StyledLine> {
+pub(crate) fn flatten_blocks(blocks: &[RenderedBlock]) -> Vec<StyledLine> {
     let mut out = Vec::new();
     for block in blocks {
         match block {
@@ -52,9 +53,9 @@ pub fn flatten_blocks(blocks: &[RenderedBlock]) -> Vec<StyledLine> {
             }
             RenderedBlock::Image { alt, url } => {
                 let text = if alt.is_empty() {
-                    format!("[Image]({})", url)
+                    format!("[Image]({url})")
                 } else {
-                    format!("[Image: {}]({})", alt, url)
+                    format!("[Image: {alt}]({url})")
                 };
                 out.push(StyledLine {
                     spans: vec![StyledSpan::plain(text)],
@@ -65,7 +66,7 @@ pub fn flatten_blocks(blocks: &[RenderedBlock]) -> Vec<StyledLine> {
     out
 }
 
-pub fn truncate_line_width(line: &StyledLine, max_cols: usize) -> StyledLine {
+pub(crate) fn truncate_line_width(line: &StyledLine, max_cols: usize) -> StyledLine {
     if max_cols == 0 {
         return StyledLine::empty();
     }
@@ -276,7 +277,7 @@ mod tests {
         let opts = EmbedOptions {
             width: 80,
             height: Some(2),
-            no_color: true,
+            color_mode: crate::render::ColorMode::Plain,
         };
         let mut buf: Vec<u8> = Vec::new();
         run(
@@ -290,7 +291,7 @@ mod tests {
         .unwrap();
         let s = String::from_utf8(buf).unwrap();
         let line_count = s.matches('\n').count();
-        assert_eq!(line_count, 2, "exactly 2 newlines emitted, got: {:?}", s);
+        assert_eq!(line_count, 2, "exactly 2 newlines emitted, got: {s:?}");
     }
 
     #[test]
@@ -301,7 +302,7 @@ mod tests {
         let opts = EmbedOptions {
             width: 10,
             height: None,
-            no_color: true,
+            color_mode: crate::render::ColorMode::Plain,
         };
         let mut buf: Vec<u8> = Vec::new();
         run(
@@ -317,8 +318,7 @@ mod tests {
         for line in s.lines() {
             assert!(
                 UnicodeWidthStr::width(line) <= 10,
-                "line exceeded width 10: {:?}",
-                line
+                "line exceeded width 10: {line:?}"
             );
         }
     }
@@ -331,7 +331,7 @@ mod tests {
         let opts = EmbedOptions {
             width: 80,
             height: None,
-            no_color: true,
+            color_mode: crate::render::ColorMode::Plain,
         };
         let mut buf: Vec<u8> = Vec::new();
         run(
@@ -357,10 +357,10 @@ mod properties {
         #![proptest_config(strategies::model_config(64))]
         #[test]
         fn property_clip_is_bounded_styled_prefix(line in strategies::styled_line(), width in strategies::width()) {
-            let cut = truncate_line_width(&line, width as usize);
-            prop_assert!(UnicodeWidthStr::width(line_text(&cut).as_str()) <= width as usize);
+            let cut = truncate_line_width(&line, usize::from(width));
+            prop_assert!(UnicodeWidthStr::width(line_text(&cut).as_str()) <= usize::from(width));
             prop_assert!(styled_chars(&line).starts_with(&styled_chars(&cut)));
-            prop_assert_eq!(&cut, &truncate_line_width(&cut, width as usize));
+            prop_assert_eq!(&cut, &truncate_line_width(&cut, usize::from(width)));
         }
     }
 }

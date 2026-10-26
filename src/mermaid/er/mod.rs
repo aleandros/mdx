@@ -1,39 +1,39 @@
-pub mod ascii;
-pub mod layout;
-pub mod parse;
+pub(crate) mod ascii;
+pub(crate) mod layout;
+pub(crate) mod parse;
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct ErDiagram {
-    pub direction: super::Direction,
+pub(crate) struct ErDiagram {
+    pub(crate) direction: super::Direction,
     /// True when the source contained an explicit `direction ...` line.
     /// When false, `render_mermaid` chooses adaptively (LR with TD fallback).
-    pub direction_explicit: bool,
-    pub entities: Vec<Entity>,
-    pub relationships: Vec<Relationship>,
+    pub(crate) direction_explicit: bool,
+    pub(crate) entities: Vec<Entity>,
+    pub(crate) relationships: Vec<Relationship>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct Entity {
-    pub name: String,
-    pub attributes: Vec<Attribute>,
+pub(crate) struct Entity {
+    pub(crate) name: String,
+    pub(crate) attributes: Vec<Attribute>,
     /// Populated by the layout adapter.
-    pub rendered_lines: Vec<EntityLine>,
-    pub width: usize,
-    pub height: usize,
+    pub(crate) rendered_lines: Vec<EntityLine>,
+    pub(crate) width: usize,
+    pub(crate) height: usize,
     /// User-supplied or class-derived style. None means "use theme defaults".
-    pub node_style: Option<crate::mermaid::NodeStyle>,
+    pub(crate) node_style: Option<crate::mermaid::NodeStyle>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct Attribute {
-    pub ty: String,
-    pub name: String,
-    pub key: KeyKind,
-    pub comment: Option<String>,
+pub(crate) struct Attribute {
+    pub(crate) ty: String,
+    pub(crate) name: String,
+    pub(crate) key: KeyKind,
+    pub(crate) comment: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum KeyKind {
+pub(crate) enum KeyKind {
     None,
     Pk,
     Fk,
@@ -41,17 +41,17 @@ pub enum KeyKind {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct Relationship {
-    pub left: String,
-    pub right: String,
-    pub left_card: Cardinality,
-    pub right_card: Cardinality,
-    pub identifying: bool,
-    pub label: Option<String>,
+pub(crate) struct Relationship {
+    pub(crate) left: String,
+    pub(crate) right: String,
+    pub(crate) left_card: Cardinality,
+    pub(crate) right_card: Cardinality,
+    pub(crate) identifying: bool,
+    pub(crate) label: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Cardinality {
+pub(crate) enum Cardinality {
     ZeroOrOne,
     ExactlyOne,
     ZeroOrMany,
@@ -59,13 +59,13 @@ pub enum Cardinality {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct EntityLine {
-    pub kind: EntityLineKind,
-    pub text: String,
+pub(crate) struct EntityLine {
+    pub(crate) kind: EntityLineKind,
+    pub(crate) text: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum EntityLineKind {
+pub(crate) enum EntityLineKind {
     Header,
     Separator,
     AttrRow,
@@ -74,8 +74,8 @@ pub enum EntityLineKind {
 
 /// Carried on `Edge` for ER edges so the painter can draw cardinality glyphs.
 #[derive(Debug, Clone, PartialEq)]
-pub struct ErEdgeMeta {
-    pub left_card: Cardinality,
-    pub right_card: Cardinality,
-    pub identifying: bool,
+pub(crate) struct ErEdgeMeta {
+    pub(crate) left_card: Cardinality,
+    pub(crate) right_card: Cardinality,
+    pub(crate) identifying: bool,
 }

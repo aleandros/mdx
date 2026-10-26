@@ -11,7 +11,11 @@ use super::{
 // Public entry point
 // ---------------------------------------------------------------------------
 
-pub fn parse_flowchart(input: &str) -> anyhow::Result<FlowChart> {
+#[expect(
+    clippy::too_many_lines,
+    reason = "one pass resolves declarations, subgraphs, and deferred styles"
+)]
+pub(crate) fn parse_flowchart(input: &str) -> anyhow::Result<FlowChart> {
     let mut lines = input.lines().peekable();
 
     // -----------------------------------------------------------------------
@@ -116,16 +120,14 @@ pub fn parse_flowchart(input: &str) -> anyhow::Result<FlowChart> {
         // Track node_order length before parsing to detect newly added nodes
         let before_len = node_order.len();
         parse_statement(trimmed, &mut node_order, &mut node_map, &mut edges)
-            .with_context(|| format!("Failed to parse line: {:?}", trimmed))?;
+            .with_context(|| format!("Failed to parse line: {trimmed:?}"))?;
 
         // Any newly added nodes belong to the current subgraph (if any).
         // Also handle already-existing nodes listed inside a subgraph block.
         if !subgraph_stack.is_empty() {
             let new_ids: Vec<String> = node_order[before_len..].to_vec();
             if let Some(top) = subgraph_stack.last_mut() {
-                if !new_ids.is_empty() {
-                    top.2.extend(new_ids);
-                } else {
+                if new_ids.is_empty() {
                     // Node already existed — extract its ID from the line and add to membership.
                     // This handles the pattern where edges appear before subgraph blocks,
                     // so nodes are pre-created but still need to be assigned to the subgraph.
@@ -139,6 +141,8 @@ pub fn parse_flowchart(input: &str) -> anyhow::Result<FlowChart> {
                     {
                         top.2.push(first_id);
                     }
+                } else {
+                    top.2.extend(new_ids);
                 }
             }
         }
@@ -160,13 +164,13 @@ pub fn parse_flowchart(input: &str) -> anyhow::Result<FlowChart> {
         if let Some(node) = node_map.get_mut(id) {
             let existing = node.node_style.get_or_insert_with(NodeStyle::default);
             if style.fill.is_some() {
-                existing.fill = style.fill.clone();
+                existing.fill.clone_from(&style.fill);
             }
             if style.stroke.is_some() {
-                existing.stroke = style.stroke.clone();
+                existing.stroke.clone_from(&style.stroke);
             }
             if style.color.is_some() {
-                existing.color = style.color.clone();
+                existing.color.clone_from(&style.color);
             }
         }
     }
@@ -197,7 +201,7 @@ fn parse_direction_line(line: &str) -> anyhow::Result<Direction> {
     let mut parts = line.split_whitespace();
     let keyword = parts.next().unwrap_or("");
     if keyword != "graph" && keyword != "flowchart" {
-        bail!("Expected 'graph' or 'flowchart', got {:?}", keyword);
+        bail!("Expected 'graph' or 'flowchart', got {keyword:?}");
     }
     let dir = parts.next().unwrap_or("");
     match dir {
@@ -205,7 +209,7 @@ fn parse_direction_line(line: &str) -> anyhow::Result<Direction> {
         "BT" => Ok(Direction::BottomTop),
         "LR" => Ok(Direction::LeftRight),
         "RL" => Ok(Direction::RightLeft),
-        other => bail!("Unknown direction {:?}", other),
+        other => bail!("Unknown direction {other:?}"),
     }
 }
 
@@ -239,9 +243,8 @@ fn parse_statement(
         }
 
         // Try to parse an edge; if we can't, stop
-        let (style, label) = match parse_edge(&chars, &mut pos) {
-            Ok(e) => e,
-            Err(_) => break,
+        let Ok((style, label)) = parse_edge(&chars, &mut pos) else {
+            break;
         };
 
         skip_whitespace(&chars, &mut pos);
@@ -273,7 +276,7 @@ fn register_node(node: &Node, node_order: &mut Vec<String>, node_map: &mut HashM
     if let Some(existing) = node_map.get_mut(&node.id) {
         // Only update if new definition carries an explicit label/shape
         if has_explicit_label {
-            existing.label = node.label.clone();
+            existing.label.clone_from(&node.label);
             existing.shape = node.shape.clone();
         }
     } else {
@@ -305,7 +308,7 @@ fn parse_node_term(chars: &[char], pos: &mut usize) -> anyhow::Result<Node> {
     match chars[*pos] {
         '[' => {
             *pos += 1;
-            let raw = collect_until(chars, pos, ']')?;
+            let raw = collect_until(chars, pos, ']');
             Ok(Node {
                 id,
                 label: clean_label(&raw),
@@ -320,7 +323,7 @@ fn parse_node_term(chars: &[char], pos: &mut usize) -> anyhow::Result<Node> {
             if *pos < chars.len() && chars[*pos] == '(' {
                 // Circle: ((label))
                 *pos += 1;
-                let raw = collect_until(chars, pos, ')')?;
+                let raw = collect_until(chars, pos, ')');
                 // consume second ')'
                 if *pos < chars.len() && chars[*pos] == ')' {
                     *pos += 1;
@@ -334,7 +337,7 @@ fn parse_node_term(chars: &[char], pos: &mut usize) -> anyhow::Result<Node> {
                 })
             } else {
                 // Rounded: (label)
-                let raw = collect_until(chars, pos, ')')?;
+                let raw = collect_until(chars, pos, ')');
                 Ok(Node {
                     id,
                     label: clean_label(&raw),
@@ -346,7 +349,7 @@ fn parse_node_term(chars: &[char], pos: &mut usize) -> anyhow::Result<Node> {
         }
         '{' => {
             *pos += 1;
-            let raw = collect_until(chars, pos, '}')?;
+            let raw = collect_until(chars, pos, '}');
             Ok(Node {
                 id,
                 label: clean_label(&raw),
@@ -441,7 +444,7 @@ fn parse_edge(chars: &[char], pos: &mut usize) -> anyhow::Result<(EdgeStyle, Opt
         // Plain line
         (EdgeStyle::Line, 3)
     } else {
-        bail!("No edge found at position {}", pos);
+        bail!("No edge found at position {pos}");
     };
 
     *pos += consumed;
@@ -450,7 +453,7 @@ fn parse_edge(chars: &[char], pos: &mut usize) -> anyhow::Result<(EdgeStyle, Opt
     skip_whitespace(chars, pos);
     let label = if *pos < chars.len() && chars[*pos] == '|' {
         *pos += 1;
-        let raw = collect_until(chars, pos, '|')?;
+        let raw = collect_until(chars, pos, '|');
         let cleaned = raw
             .trim()
             .strip_prefix('"')
@@ -545,12 +548,12 @@ fn parse_identifier(chars: &[char], pos: &mut usize) -> anyhow::Result<String> {
         }
     }
     if *pos == start {
-        bail!("Expected identifier at position {}", start);
+        bail!("Expected identifier at position {start}");
     }
     Ok(chars[start..*pos].iter().collect())
 }
 
-fn collect_until(chars: &[char], pos: &mut usize, end: char) -> anyhow::Result<String> {
+fn collect_until(chars: &[char], pos: &mut usize, end: char) -> String {
     let start = *pos;
     while *pos < chars.len() && chars[*pos] != end {
         *pos += 1;
@@ -559,7 +562,7 @@ fn collect_until(chars: &[char], pos: &mut usize, end: char) -> anyhow::Result<S
     if *pos < chars.len() {
         *pos += 1; // consume the end character
     }
-    Ok(text)
+    text
 }
 
 fn skip_whitespace(chars: &[char], pos: &mut usize) {

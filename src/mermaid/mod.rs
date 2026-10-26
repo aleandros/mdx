@@ -1,19 +1,19 @@
-pub mod ascii;
-pub mod color;
-pub mod er;
-pub mod layout;
-pub mod parse;
-pub mod sequence;
+pub(crate) mod ascii;
+pub(crate) mod color;
+pub(crate) mod er;
+pub(crate) mod layout;
+pub(crate) mod parse;
+pub(crate) mod sequence;
 
 /// Number of terminal columns `s` occupies. Every geometry computation in
 /// the diagram code must use this instead of `str::len`, which counts bytes
 /// and oversizes boxes around non-ASCII labels.
-pub fn display_width(s: &str) -> usize {
+pub(crate) fn display_width(s: &str) -> usize {
     unicode_width::UnicodeWidthStr::width(s)
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum Direction {
+pub(crate) enum Direction {
     TopDown,
     BottomTop,
     LeftRight,
@@ -21,7 +21,7 @@ pub enum Direction {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum NodeShape {
+pub(crate) enum NodeShape {
     Rect,
     Rounded,
     Diamond,
@@ -31,7 +31,7 @@ pub enum NodeShape {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum EdgeStyle {
+pub(crate) enum EdgeStyle {
     Arrow,
     Line,
     Dotted,
@@ -39,63 +39,75 @@ pub enum EdgeStyle {
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
-pub struct NodeStyle {
-    pub fill: Option<crate::render::Color>,
-    pub stroke: Option<crate::render::Color>,
-    pub color: Option<crate::render::Color>,
+pub(crate) struct NodeStyle {
+    pub(crate) fill: Option<crate::render::Color>,
+    pub(crate) stroke: Option<crate::render::Color>,
+    pub(crate) color: Option<crate::render::Color>,
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
-pub struct MermaidEdgeStyle {
-    pub stroke: Option<crate::render::Color>,
-    pub label_color: Option<crate::render::Color>,
+pub(crate) struct MermaidEdgeStyle {
+    pub(crate) stroke: Option<crate::render::Color>,
+    pub(crate) label_color: Option<crate::render::Color>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct Node {
-    pub id: String,
-    pub label: String,
-    pub shape: NodeShape,
-    pub node_style: Option<NodeStyle>,
+pub(crate) struct Node {
+    pub(crate) id: String,
+    pub(crate) label: String,
+    pub(crate) shape: NodeShape,
+    #[expect(
+        clippy::struct_field_names,
+        reason = "matches positioned nodes and distinguishes color style from node shape"
+    )]
+    pub(crate) node_style: Option<NodeStyle>,
     /// Set only for ER entity boxes; None for flowchart nodes.
-    pub entity: Option<er::Entity>,
+    pub(crate) entity: Option<er::Entity>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct Edge {
-    pub from: String,
-    pub to: String,
-    pub label: Option<String>,
-    pub style: EdgeStyle,
-    pub edge_style: Option<MermaidEdgeStyle>,
+pub(crate) struct Edge {
+    pub(crate) from: String,
+    pub(crate) to: String,
+    pub(crate) label: Option<String>,
+    pub(crate) style: EdgeStyle,
+    #[expect(
+        clippy::struct_field_names,
+        reason = "distinguishes color style from the edge line pattern in style"
+    )]
+    pub(crate) edge_style: Option<MermaidEdgeStyle>,
     /// Set only for ER edges; None for flowchart edges.
-    pub er_meta: Option<er::ErEdgeMeta>,
+    pub(crate) er_meta: Option<er::ErEdgeMeta>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct Subgraph {
-    pub id: String,
-    pub label: String,
-    pub node_ids: Vec<String>,
+pub(crate) struct Subgraph {
+    pub(crate) id: String,
+    pub(crate) label: String,
+    pub(crate) node_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct FlowChart {
-    pub direction: Direction,
-    pub nodes: Vec<Node>,
-    pub edges: Vec<Edge>,
-    pub subgraphs: Vec<Subgraph>,
+pub(crate) struct FlowChart {
+    pub(crate) direction: Direction,
+    pub(crate) nodes: Vec<Node>,
+    pub(crate) edges: Vec<Edge>,
+    pub(crate) subgraphs: Vec<Subgraph>,
 }
 
-/// Returns (styled_lines, node_count, edge_count)
-pub fn render_mermaid(
+/// Returns (`styled_lines`, `node_count`, `edge_count`)
+#[expect(
+    clippy::too_many_lines,
+    reason = "dispatch keeps each diagram kind and its theme resolution together"
+)]
+pub(crate) fn render_mermaid(
     content: &str,
     theme: &crate::theme::Theme,
     terminal_width: usize,
 ) -> anyhow::Result<(Vec<crate::render::StyledLine>, usize, usize)> {
     let first_line = content
         .lines()
-        .map(|l| l.trim())
+        .map(str::trim)
         .find(|l| !l.is_empty() && !l.starts_with("%%"))
         .unwrap_or("");
 
@@ -365,8 +377,8 @@ mod tests {
             .iter()
             .flat_map(|l| l.spans.iter().map(|s| s.text.as_str()))
             .collect();
-        assert!(body.contains("A"));
-        assert!(body.contains("B"));
+        assert!(body.contains('A'));
+        assert!(body.contains('B'));
         assert!(body.contains("PK"));
         assert!(body.contains("||") || body.contains("o{"));
     }

@@ -9,6 +9,8 @@ mod render;
 mod self_update;
 #[cfg(test)]
 mod strategies;
+#[cfg(test)]
+mod test_env;
 mod theme;
 mod watch;
 
@@ -60,6 +62,10 @@ enum Commands {
 }
 
 #[derive(clap::Args)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "clap models independent command-line switches as bool fields"
+)]
 struct Args {
     /// Markdown file to render
     file: Option<PathBuf>,
@@ -85,6 +91,10 @@ struct Args {
     #[arg(long, value_name = "N")]
     max_width: Option<u16>,
 
+    #[expect(
+        clippy::doc_markdown,
+        reason = "clap displays this documentation verbatim in CLI help"
+    )]
     /// Syntax highlighting theme [default: base16-ocean.dark]
     /// Examples: base16-eighties.dark, base16-mocha.dark, InspiredGitHub.
     /// Use --theme=list to see all available themes
@@ -143,6 +153,10 @@ struct EmbedArgs {
     split_mermaid_rendering: bool,
 }
 
+#[expect(
+    clippy::fn_params_excessive_bools,
+    reason = "private input helper directly consumes IsTerminal::is_terminal"
+)]
 fn read_input_from(file: Option<&std::path::Path>, stdin_is_terminal: bool) -> Result<String> {
     match file {
         Some(path) => Ok(std::fs::read_to_string(path)?),
@@ -159,9 +173,13 @@ fn resolve_width(override_width: Option<u16>) -> u16 {
     if let Some(w) = override_width {
         return w;
     }
-    crossterm::terminal::size().map(|(w, _)| w).unwrap_or(80)
+    crossterm::terminal::size().map_or(80, |(w, _)| w)
 }
 
+#[expect(
+    clippy::fn_params_excessive_bools,
+    reason = "converts two independent CLI/config flags to one named MermaidMode"
+)]
 fn resolve_mermaid_mode(no_mermaid: bool, split_mermaid: bool) -> render::MermaidMode {
     if no_mermaid {
         render::MermaidMode::Raw
@@ -179,26 +197,29 @@ fn resolve_ui_theme(name: Option<&str>) -> Result<&'static theme::Theme> {
     }
 }
 
-pub(crate) fn pipe_output(blocks: &[render::RenderedBlock], no_color: bool) -> Result<()> {
+pub(crate) fn pipe_output(
+    blocks: &[render::RenderedBlock],
+    color_mode: render::ColorMode,
+) -> Result<()> {
     let mut stdout = std::io::stdout().lock();
     for block in blocks {
         match block {
             render::RenderedBlock::Lines(lines) => {
                 for line in lines {
-                    writeln!(stdout, "{}", render::styled_line_to_ansi(line, no_color))?;
+                    writeln!(stdout, "{}", render::styled_line_to_ansi(line, color_mode))?;
                 }
             }
             render::RenderedBlock::Diagram { lines, .. } => {
                 for line in lines {
-                    writeln!(stdout, "{}", render::styled_line_to_ansi(line, no_color))?;
+                    writeln!(stdout, "{}", render::styled_line_to_ansi(line, color_mode))?;
                 }
                 writeln!(stdout)?;
             }
             render::RenderedBlock::Image { alt, url } => {
                 if alt.is_empty() {
-                    writeln!(stdout, "[Image]({})", url)?;
+                    writeln!(stdout, "[Image]({url})")?;
                 } else {
-                    writeln!(stdout, "[Image: {}]({})", alt, url)?;
+                    writeln!(stdout, "[Image: {alt}]({url})")?;
                 }
             }
         }
@@ -266,7 +287,7 @@ fn main() -> Result<()> {
     if args.theme.as_deref() == Some("list") {
         let h = highlight::Highlighter::new(None).map_err(|e| anyhow::anyhow!(e))?;
         for name in h.available_themes() {
-            println!("{}", name);
+            println!("{name}");
         }
         return Ok(());
     }
@@ -274,7 +295,7 @@ fn main() -> Result<()> {
     // Handle --ui-theme=list before reading input
     if args.ui_theme.as_deref() == Some("list") {
         for name in theme::Theme::available_names() {
-            println!("{}", name);
+            println!("{name}");
         }
         return Ok(());
     }
@@ -283,7 +304,11 @@ fn main() -> Result<()> {
     validate_watch_args(&args)?;
 
     let width = resolve_width(args.width.or(config.width));
-    let no_color = std::env::var("NO_COLOR").is_ok();
+    let color_mode = if std::env::var("NO_COLOR").is_ok() {
+        render::ColorMode::Plain
+    } else {
+        render::ColorMode::Ansi
+    };
     let theme_name = args.theme.or(config.theme);
     let highlighter = highlight::Highlighter::new(theme_name).map_err(|e| anyhow::anyhow!(e))?;
     let ui_theme_name = args.ui_theme.or(config.ui_theme);
@@ -315,7 +340,7 @@ fn main() -> Result<()> {
 
     // Watch mode — dispatch before reading input
     if args.watch {
-        let path = args.file.as_ref().unwrap();
+        let path = args.file.as_ref().expect("watch mode requires a file");
         setup_panic_hook();
         return watch::run_watch(
             path,
@@ -335,7 +360,7 @@ fn main() -> Result<()> {
         setup_panic_hook();
         pager::run_pager(rendered, max_content_width, ui_theme)?;
     } else {
-        pipe_output(&rendered, no_color)?;
+        pipe_output(&rendered, color_mode)?;
     }
     Ok(())
 }
@@ -348,19 +373,23 @@ fn run_embed(eargs: EmbedArgs) -> Result<()> {
     if eargs.theme.as_deref() == Some("list") {
         let h = highlight::Highlighter::new(None).map_err(|e| anyhow::anyhow!(e))?;
         for name in h.available_themes() {
-            println!("{}", name);
+            println!("{name}");
         }
         return Ok(());
     }
     if eargs.ui_theme.as_deref() == Some("list") {
         for name in theme::Theme::available_names() {
-            println!("{}", name);
+            println!("{name}");
         }
         return Ok(());
     }
 
     let width = resolve_width(eargs.width.or(config.width));
-    let no_color = std::env::var("NO_COLOR").is_ok();
+    let color_mode = if std::env::var("NO_COLOR").is_ok() {
+        render::ColorMode::Plain
+    } else {
+        render::ColorMode::Ansi
+    };
     let theme_name = eargs.theme.or(config.theme);
     let highlighter = highlight::Highlighter::new(theme_name).map_err(|e| anyhow::anyhow!(e))?;
     let ui_theme_name = eargs.ui_theme.or(config.ui_theme);
@@ -374,7 +403,7 @@ fn run_embed(eargs: EmbedArgs) -> Result<()> {
     let opts = embed::EmbedOptions {
         width,
         height: eargs.height,
-        no_color,
+        color_mode,
     };
     let mut stdout = std::io::stdout().lock();
     embed::run(

@@ -71,27 +71,26 @@ impl UserTheme {
 }
 
 #[derive(Debug)]
-#[allow(dead_code)]
-pub struct Theme {
-    pub name: &'static str,
-    pub heading: [Color; 6],
-    pub body: Color,
-    pub bold: Color,
-    pub italic: Color,
-    pub link: Color,
-    pub inline_code: Color,
-    pub horizontal_rule: Color,
-    pub diagram_border: Color,
-    pub diagram_collapsed: Color,
-    pub diagram_node_fill: Color,
-    pub diagram_node_border: Color,
-    pub diagram_node_text: Color,
-    pub diagram_edge_stroke: Color,
-    pub diagram_edge_label: Color,
+pub(crate) struct Theme {
+    pub(crate) name: &'static str,
+    pub(crate) heading: [Color; 6],
+    pub(crate) body: Color,
+    pub(crate) bold: Color,
+    pub(crate) italic: Color,
+    pub(crate) link: Color,
+    pub(crate) inline_code: Color,
+    pub(crate) horizontal_rule: Color,
+    pub(crate) diagram_border: Color,
+    pub(crate) diagram_collapsed: Color,
+    pub(crate) diagram_node_fill: Color,
+    pub(crate) diagram_node_border: Color,
+    pub(crate) diagram_node_text: Color,
+    pub(crate) diagram_edge_stroke: Color,
+    pub(crate) diagram_edge_label: Color,
 }
 
 impl Theme {
-    pub fn by_name(name: &str) -> Option<&'static Theme> {
+    pub(crate) fn by_name(name: &str) -> Option<&'static Theme> {
         match name {
             "clay" => Some(&CLAY),
             "hearth" => Some(&HEARTH),
@@ -108,12 +107,12 @@ impl Theme {
         }
     }
 
-    pub fn default_theme() -> &'static Theme {
+    pub(crate) fn default_theme() -> &'static Theme {
         &CLAY
     }
 
     /// Built-in theme names compiled into the binary.
-    pub fn builtin_names() -> &'static [&'static str] {
+    pub(crate) fn builtin_names() -> &'static [&'static str] {
         &[
             "clay",
             "hearth",
@@ -132,7 +131,7 @@ impl Theme {
     /// Directory scanned for user-defined UI themes:
     /// `$XDG_CONFIG_HOME/mdx/themes/<name>.toml`, falling back to
     /// `~/.config/mdx/themes/<name>.toml`.
-    pub fn user_themes_dir() -> Option<PathBuf> {
+    pub(crate) fn user_themes_dir() -> Option<PathBuf> {
         let config_dir = std::env::var("XDG_CONFIG_HOME")
             .ok()
             .map(PathBuf::from)
@@ -146,7 +145,7 @@ impl Theme {
 
     /// Names of user-defined themes found as `*.toml` files in
     /// `user_themes_dir()`. Does not validate their contents.
-    pub fn custom_names() -> Vec<String> {
+    pub(crate) fn custom_names() -> Vec<String> {
         let Some(dir) = Self::user_themes_dir() else {
             return Vec::new();
         };
@@ -154,7 +153,7 @@ impl Theme {
             return Vec::new();
         };
         let mut names: Vec<String> = entries
-            .filter_map(|e| e.ok())
+            .filter_map(std::result::Result::ok)
             .filter(|e| e.path().extension().and_then(|s| s.to_str()) == Some("toml"))
             .filter_map(|e| {
                 e.path()
@@ -167,10 +166,10 @@ impl Theme {
     }
 
     /// All theme names: built-ins followed by discovered custom themes.
-    pub fn available_names() -> Vec<String> {
+    pub(crate) fn available_names() -> Vec<String> {
         let mut names: Vec<String> = Self::builtin_names()
             .iter()
-            .map(|s| s.to_string())
+            .map(std::string::ToString::to_string)
             .collect();
         names.extend(Self::custom_names());
         names
@@ -200,7 +199,7 @@ impl Theme {
     /// `<user_themes_dir>/<name>.toml`. Returns a descriptive error
     /// (including available names) when nothing matches, or when a
     /// matching custom theme file fails to parse.
-    pub fn resolve(name: &str) -> Result<&'static Theme, String> {
+    pub(crate) fn resolve(name: &str) -> Result<&'static Theme, String> {
         if let Some(theme) = Self::by_name(name) {
             return Ok(theme);
         }
@@ -213,8 +212,7 @@ impl Theme {
         ))
     }
 
-    #[allow(dead_code)]
-    pub fn all() -> &'static [&'static Theme] {
+    pub(crate) fn all() -> &'static [&'static Theme] {
         static ALL: &[&Theme] = &[
             &CLAY,
             &HEARTH,
@@ -231,7 +229,7 @@ impl Theme {
         ALL
     }
 
-    pub fn all_colors(&self) -> Vec<&Color> {
+    pub(crate) fn all_colors(&self) -> Vec<&Color> {
         let mut colors: Vec<&Color> = Vec::new();
         for c in &self.heading {
             colors.push(c);
@@ -654,6 +652,10 @@ mod tests {
     #[test]
     fn test_resolve_custom_theme_from_disk() {
         let dir = std::env::temp_dir().join(format!("mdx_theme_test_{}", std::process::id()));
+        if !crate::test_env::in_child("theme::tests::test_resolve_custom_theme_from_disk", &dir) {
+            return;
+        }
+        let dir = std::path::PathBuf::from(std::env::var("XDG_CONFIG_HOME").unwrap());
         let themes_dir = dir.join("mdx").join("themes");
         std::fs::create_dir_all(&themes_dir).unwrap();
         std::fs::write(
@@ -677,15 +679,7 @@ diagram_edge_label = "#ffb86c"
         )
         .unwrap();
 
-        // SAFETY: single-threaded within this test; set for the duration of
-        // the lookup so `user_themes_dir()` resolves to our temp fixture.
-        unsafe {
-            std::env::set_var("XDG_CONFIG_HOME", &dir);
-        }
         let result = Theme::resolve("my-custom");
-        unsafe {
-            std::env::remove_var("XDG_CONFIG_HOME");
-        }
 
         let theme = result.expect("custom theme should load");
         assert_eq!(theme.name, "my-custom");
@@ -698,6 +692,13 @@ diagram_edge_label = "#ffb86c"
     #[test]
     fn test_resolve_custom_theme_bad_hex_errors() {
         let dir = std::env::temp_dir().join(format!("mdx_theme_test_bad_{}", std::process::id()));
+        if !crate::test_env::in_child(
+            "theme::tests::test_resolve_custom_theme_bad_hex_errors",
+            &dir,
+        ) {
+            return;
+        }
+        let dir = std::path::PathBuf::from(std::env::var("XDG_CONFIG_HOME").unwrap());
         let themes_dir = dir.join("mdx").join("themes");
         std::fs::create_dir_all(&themes_dir).unwrap();
         std::fs::write(
@@ -721,14 +722,7 @@ diagram_edge_label = "#ffb86c"
         )
         .unwrap();
 
-        // SAFETY: same as above.
-        unsafe {
-            std::env::set_var("XDG_CONFIG_HOME", &dir);
-        }
         let result = Theme::resolve("broken");
-        unsafe {
-            std::env::remove_var("XDG_CONFIG_HOME");
-        }
 
         let err = result.expect_err("bad hex color should fail to parse");
         assert!(err.contains("heading[0]"), "err: {err}");
