@@ -156,3 +156,6 @@ snapshot_test!(
     "docs/examples/test-seq-unicode.md",
     120
 );
+
+// Math source fallback (issue #13)
+snapshot_test!(snapshot_math_w80, "docs/examples/math.md", 80);

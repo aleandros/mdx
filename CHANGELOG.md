@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.13] - 2026-10-26
+
+### Fixed
+- Preserve inline and display math as raw source with dollar delimiters in the
+  pager, stdout and `mdx embed`. Inline math uses inline-code styling; display
+  math occupies a separate block without syntax highlighting. (#13)
+- Preserve raw HTML and footnote references instead of silently ignoring their
+  text-carrying parser events.
+
 ## [0.1.12] - 2026-10-01
 
 ### Fixed

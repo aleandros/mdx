@@ -6,6 +6,8 @@ pub enum InlineElement {
     Bold(String),
     Italic(String),
     Code(String),
+    // Lists hold inline elements, so keep display math here until rendering the item.
+    DisplayMath(String),
     Link { text: String, url: String },
     SoftBreak,
 }
@@ -77,6 +79,14 @@ pub fn parse_markdown(input: &str) -> Vec<Block> {
     let mut in_list_item = false;
 
     for event in parser {
+        // Normalize text-like events so they share the current container routing,
+        // including image alt text and list items.
+        let event = match event {
+            Event::InlineMath(text) => Event::Code(format!("${text}$").into()),
+            Event::InlineHtml(text) => Event::Text(text),
+            Event::FootnoteReference(label) => Event::Text(format!("[^{label}]").into()),
+            other => other,
+        };
         match event {
             Event::Start(Tag::Heading { level, .. }) => {
                 let lvl = heading_level_to_u8(level);
@@ -85,7 +95,9 @@ pub fn parse_markdown(input: &str) -> Vec<Block> {
                 style_stack.clear();
             }
             Event::End(TagEnd::Heading(_)) => {
-                if let Some(Container::Header(level)) = container_stack.pop() {
+                if let Some(Container::Header(level)) = container_stack.pop()
+                    && !inline_buf.is_empty()
+                {
                     blocks.push(Block::Header {
                         level,
                         content: std::mem::take(&mut inline_buf),
@@ -254,12 +266,49 @@ pub fn parse_markdown(input: &str) -> Vec<Block> {
             }
 
             Event::Code(text) => {
+                if in_image.is_some() {
+                    image_alt_buf.push_str(&text);
+                    continue;
+                }
                 let target_buf = if in_list_item {
                     &mut list_item_buf
                 } else {
                     &mut inline_buf
                 };
                 target_buf.push(InlineElement::Code(text.to_string()));
+            }
+
+            Event::DisplayMath(text) => {
+                let source = format!("$${text}$$");
+                if in_image.is_some() {
+                    image_alt_buf.push_str(&source);
+                } else if in_list_item {
+                    list_item_buf.push(InlineElement::DisplayMath(source));
+                } else {
+                    // Display math can occur mid-paragraph or mid-heading. Flush
+                    // preceding text before emitting the block to keep source order.
+                    if !inline_buf.is_empty() {
+                        let content = std::mem::take(&mut inline_buf);
+                        blocks.push(match container_stack.last() {
+                            Some(Container::Header(level)) => Block::Header {
+                                level: *level,
+                                content,
+                            },
+                            _ => Block::Paragraph { content },
+                        });
+                    }
+                    blocks.push(Block::CodeBlock {
+                        language: None,
+                        content: source,
+                    });
+                }
+            }
+
+            Event::Html(text) => {
+                blocks.push(Block::CodeBlock {
+                    language: None,
+                    content: text.into_string(),
+                });
             }
 
             Event::SoftBreak => {
@@ -290,6 +339,10 @@ pub fn parse_markdown(input: &str) -> Vec<Block> {
                 }
             }
 
+            // Intentionally ignore unsupported structural Start/End tags
+            // (block quotes, tables, strikethrough, HTML blocks, footnote
+            // definitions, metadata and definition lists), HardBreak and
+            // TaskListMarker. All text-carrying events are handled above.
             _ => {}
         }
     }
@@ -311,6 +364,186 @@ fn heading_level_to_u8(level: HeadingLevel) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_inline_math_preserves_delimiters_and_position() {
+        assert_eq!(
+            parse_markdown("Before $a^2$ after."),
+            vec![Block::Paragraph {
+                content: vec![
+                    InlineElement::Text("Before ".into()),
+                    InlineElement::Code("$a^2$".into()),
+                    InlineElement::Text(" after.".into())
+                ],
+            }]
+        );
+    }
+
+    #[test]
+    fn test_display_math_is_a_separate_unhighlighted_block() {
+        assert_eq!(
+            parse_markdown("Before\n\n$$\na^2 + b^2 = c^2\n$$\n\nAfter"),
+            vec![
+                Block::Paragraph {
+                    content: vec![InlineElement::Text("Before".into())]
+                },
+                Block::CodeBlock {
+                    language: None,
+                    content: "$$\na^2 + b^2 = c^2\n$$".into()
+                },
+                Block::Paragraph {
+                    content: vec![InlineElement::Text("After".into())]
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn test_display_math_splits_paragraph_in_source_order() {
+        assert_eq!(
+            parse_markdown("Before $$a^2$$ after."),
+            vec![
+                Block::Paragraph {
+                    content: vec![InlineElement::Text("Before ".into())]
+                },
+                Block::CodeBlock {
+                    language: None,
+                    content: "$$a^2$$".into()
+                },
+                Block::Paragraph {
+                    content: vec![InlineElement::Text(" after.".into())]
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn test_math_in_list_items_and_headings() {
+        assert_eq!(
+            parse_markdown("# Value $a^2$\n\n- First $b^2$\n- Second $c^2$"),
+            vec![
+                Block::Header {
+                    level: 1,
+                    content: vec![
+                        InlineElement::Text("Value ".into()),
+                        InlineElement::Code("$a^2$".into())
+                    ]
+                },
+                Block::List {
+                    ordered: false,
+                    items: vec![
+                        vec![
+                            InlineElement::Text("First ".into()),
+                            InlineElement::Code("$b^2$".into())
+                        ],
+                        vec![
+                            InlineElement::Text("Second ".into()),
+                            InlineElement::Code("$c^2$".into())
+                        ],
+                    ]
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn test_display_math_in_list_and_heading_keeps_source_order() {
+        assert_eq!(
+            parse_markdown("# Before $$a^2$$ after\n\n1. Before $$b^2$$ after\n2. Next"),
+            vec![
+                Block::Header {
+                    level: 1,
+                    content: vec![InlineElement::Text("Before ".into())]
+                },
+                Block::CodeBlock {
+                    language: None,
+                    content: "$$a^2$$".into()
+                },
+                Block::Header {
+                    level: 1,
+                    content: vec![InlineElement::Text(" after".into())]
+                },
+                Block::List {
+                    ordered: true,
+                    items: vec![
+                        vec![
+                            InlineElement::Text("Before ".into()),
+                            InlineElement::DisplayMath("$$b^2$$".into()),
+                            InlineElement::Text(" after".into())
+                        ],
+                        vec![InlineElement::Text("Next".into())],
+                    ]
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn test_math_in_loose_list_and_image_alt() {
+        let blocks = parse_markdown("- $a^2$\n\n- $b^2$\n\n![Value $x$ and $$y$$](plot.png)");
+        assert_eq!(
+            blocks,
+            vec![
+                Block::List {
+                    ordered: false,
+                    items: vec![
+                        vec![InlineElement::Code("$a^2$".into())],
+                        vec![InlineElement::Code("$b^2$".into())],
+                    ]
+                },
+                Block::Image {
+                    alt: "Value $x$ and $$y$$".into(),
+                    url: "plot.png".into()
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn test_other_text_events_have_raw_fallbacks() {
+        let blocks = parse_markdown(
+            "<div>raw HTML</div>\n\nA <span>word</span>[^note].\n\n[^note]: Footnote body",
+        );
+        assert_eq!(
+            blocks,
+            vec![
+                Block::CodeBlock {
+                    language: None,
+                    content: "<div>raw HTML</div>\n".into()
+                },
+                Block::Paragraph {
+                    content: vec![
+                        InlineElement::Text("A ".into()),
+                        InlineElement::Text("<span>".into()),
+                        InlineElement::Text("word".into()),
+                        InlineElement::Text("</span>".into()),
+                        InlineElement::Text("[^note]".into()),
+                        InlineElement::Text(".".into()),
+                    ]
+                },
+                Block::Paragraph {
+                    content: vec![InlineElement::Text("Footnote body".into())]
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn test_math_currency_signs_preserve_text() {
+        // pulldown-cmark 0.12 leaves this currency example as ordinary text.
+        let blocks = parse_markdown("$5 and $10");
+        let [Block::Paragraph { content }] = blocks.as_slice() else {
+            panic!("{blocks:?}")
+        };
+        let text: String = content
+            .iter()
+            .map(|element| match element {
+                InlineElement::Text(text) | InlineElement::Code(text) => text.as_str(),
+                _ => panic!("Unexpected currency element: {element:?}"),
+            })
+            .collect();
+        assert_eq!(text, "$5 and $10");
+    }
 
     #[test]
     fn test_parse_header() {

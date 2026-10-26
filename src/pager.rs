@@ -1256,6 +1256,29 @@ mod tests {
     }
 
     #[test]
+    fn math_source_survives_pager_rendering() {
+        let input = include_str!("../docs/examples/math.md");
+        let blocks = crate::parser::parse_markdown(input);
+        let highlighter = crate::highlight::Highlighter::new(None).unwrap();
+        let rendered = crate::render::render_blocks(
+            &blocks,
+            80,
+            &highlighter,
+            theme(),
+            crate::render::MermaidMode::Render,
+        );
+        let state = PagerState::new(rendered, 40, 80, 100, theme());
+        let rows: Vec<String> = screen(&state, 80, 40)
+            .into_iter()
+            .map(|row| row.trim_end().to_string())
+            .collect();
+        let text = rows.join("\n");
+        assert!(text.contains("Before $a^2$ after."), "{text}");
+        assert!(text.contains("  $$\n  a^2 + b^2 = c^2\n  $$"), "{text}");
+        assert!(text.contains("2. Next $y^2$"), "{text}");
+    }
+
+    #[test]
     fn content_width_helper_caps_and_uncaps() {
         assert_eq!(content_width(80, 100), 80);
         assert_eq!(content_width(200, 100), 100);

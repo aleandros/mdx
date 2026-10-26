@@ -674,3 +674,28 @@ fn integration_renders_er_diagram() {
         stdout
     );
 }
+
+#[test]
+fn math_source_survives_stdout_and_embed() {
+    for args in [
+        vec!["--no-pager", "--width", "80"],
+        vec!["embed", "--width", "80"],
+    ] {
+        let output = Command::new(env!("CARGO_BIN_EXE_mdx"))
+            .args(args)
+            .arg("docs/examples/math.md")
+            .env("NO_COLOR", "1")
+            .output()
+            .expect("failed to run mdx");
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let text = String::from_utf8(output.stdout).unwrap();
+        assert!(text.contains("Before $a^2$ after."), "{text}");
+        assert!(text.contains("  $$\n  a^2 + b^2 = c^2\n  $$\n"), "{text}");
+        assert!(text.contains("Currency: $5 and $10."), "{text}");
+        assert!(text.contains("2. Next $y^2$"), "{text}");
+    }
+}
