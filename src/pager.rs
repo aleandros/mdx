@@ -429,7 +429,8 @@ impl PagerState {
         base_dir: std::path::PathBuf,
     ) -> Self {
         self.graphics = graphics;
-        if graphics.supported {
+        let no_color = std::env::var_os("NO_COLOR");
+        if graphics.supported && crate::images::allowed_with_no_color(no_color.as_deref()) {
             self.images = Some(crate::images::ImageStore::new(
                 base_dir.clone(),
                 graphics.cell_px,
@@ -497,6 +498,14 @@ impl PagerState {
             .as_mut()
             .map(crate::images::ImageStore::delete_all)
             .unwrap_or_default()
+    }
+
+    /// Check whether shown image files changed on disk (watch mode); changed
+    /// ones decode again and show up through [`Self::poll_images`].
+    pub(crate) fn refresh_images(&mut self) {
+        if let Some(images) = &mut self.images {
+            images.refresh();
+        }
     }
 
     /// Record a new cell size in pixels, e.g. after a font size change.
@@ -834,8 +843,9 @@ impl PagerState {
                     crate::kitty::placeholder_row(*id, *row, *cols),
                     Style::default().fg(RColor::Rgb(r, g, b)),
                 );
-                if self.is_in_active_block(flat_line_index) {
-                    // Same gutter marker as an active expanded diagram.
+                // Same gutter marker as an active expanded diagram, but only
+                // in a margin: without one it would push the last column off.
+                if self.gutter > 0 && self.is_in_active_block(flat_line_index) {
                     let marker = Span::styled("▎", Style::default().fg(collapsed_color));
                     (
                         self.gutter.saturating_sub(1),
@@ -1896,6 +1906,26 @@ mod tests {
             assert_eq!(row.chars().nth(10), Some(crate::kitty::PLACEHOLDER));
         }
         assert!(rows[10].trim_start().starts_with("▸ [Image: cat"));
+    }
+
+    #[test]
+    fn active_image_without_a_margin_has_no_marker() {
+        // 80 columns, cap 100 → no gutter; a full-width image must not shift.
+        let (mut state, _) = image_pager(vec![image("wide", "a.png")], 40, 80, (2000, 400));
+        state.active = Some(0);
+        let rows = screen(&state, 80, 40);
+        assert!(
+            rows[0].chars().all(|c| c == crate::kitty::PLACEHOLDER)
+                || rows[0].starts_with(crate::kitty::PLACEHOLDER)
+        );
+        assert_eq!(
+            rows[0]
+                .chars()
+                .filter(|&c| c == crate::kitty::PLACEHOLDER)
+                .count(),
+            80
+        );
+        assert!(!rows[0].contains('▎'));
     }
 
     #[test]

@@ -124,10 +124,14 @@ Kitty Unicode placeholders, so they scroll with the text:
 - Images decode on a background thread; the text placeholder shows until the
   image is ready. The alt text stays below the image as a caption, so search
   finds it, and `Tab` / `Enter` select and open the image as before.
-- Watch mode sends an image again only when its file's modification time has
-  changed. On exit mdx deletes its images from the terminal.
+- Watch mode checks image files once a second and sends an image again only
+  when its file's modification time has changed. On exit mdx deletes its
+  images from the terminal.
+- Only regular files are read, and decoding is capped at 16384 px a side and
+  256 MiB.
 
-Plain or piped output, `mdx embed` and `--graphics off` print images as
+Plain or piped output, `mdx embed`, `--graphics off` and `NO_COLOR` (the image
+id travels in the text color, which `NO_COLOR` removes) print images as
 `[Image: alt](url)`, as before.
 
 ## Interactive pager

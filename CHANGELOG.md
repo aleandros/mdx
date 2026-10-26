@@ -14,10 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   absolute. Images are scaled down to the content column and to 60% of the
   pager height, keeping the aspect ratio, and refit on resize. Decoding runs on
   a background thread. The alt text stays as a caption below the image. Watch
-  mode re-sends an image only when its mtime changes, and images are deleted
-  from the terminal on exit. Remote URLs, missing files, other formats,
-  `--graphics off`, piped output and `mdx embed` keep the text placeholder.
-  (#16)
+  mode checks image files once a second and re-sends an image only when its
+  mtime changes, and images are deleted from the terminal on exit. Remote
+  URLs, missing files, other formats, `--graphics off`, `NO_COLOR`, piped
+  output and `mdx embed` keep the text placeholder. (#16)
 
 ### Changed
 - `Enter` on an image opens local paths relative to the markdown file's

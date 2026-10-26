@@ -24,6 +24,9 @@ use ratatui::{
 use crate::pager::{KeyAction, PagerState, TerminalGuard};
 use crate::render::{self, MermaidMode, RenderedBlock};
 
+/// How often watch mode checks shown image files for changes.
+const IMAGE_CHECK_INTERVAL: Duration = Duration::from_secs(1);
+
 pub(crate) fn content_hash(content: &str) -> u64 {
     let mut hasher = DefaultHasher::new();
     content.hash(&mut hasher);
@@ -327,6 +330,7 @@ pub(crate) fn run_watch(
     // Event loop state
     let mut pending_change = false;
     let mut last_event_time: Option<Instant> = None;
+    let mut last_image_check = Instant::now();
     let mut needs_redraw = true;
 
     let mut event_loop = || -> Result<()> {
@@ -433,6 +437,13 @@ pub(crate) fn run_watch(
             // 6. Clear expired status messages
             if status.tick() {
                 needs_redraw = true;
+            }
+
+            // 7. Only the markdown file is watched; check image files for
+            // changes now and then (one stat each).
+            if last_image_check.elapsed() >= IMAGE_CHECK_INTERVAL {
+                last_image_check = Instant::now();
+                pager.refresh_images();
             }
         }
         Ok(())

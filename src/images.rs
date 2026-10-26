@@ -17,6 +17,17 @@ use crate::kitty;
 /// are scaled down first; the terminal scales them to the placement.
 const MAX_TRANSMIT_PX: u32 = 2048;
 
+/// Name of the decoding thread. The panic hook leaves the terminal alone for
+/// it: a decoder panic only fails that image.
+pub(crate) const WORKER_THREAD: &str = "mdx-images";
+
+/// Whether images may be drawn under the `NO_COLOR` value `no_color`.
+/// Crossterm drops all colors when it is set and not empty, and the image id
+/// travels in the foreground color, so placeholders would stay blank.
+pub(crate) fn allowed_with_no_color(no_color: Option<&std::ffi::OsStr>) -> bool {
+    no_color.is_none_or(std::ffi::OsStr::is_empty)
+}
+
 /// The local file an image URL refers to: an absolute path, a path relative
 /// to `base_dir` (the markdown file's directory), or a `file://` URL. Remote
 /// and other URLs return `None`.
@@ -32,12 +43,47 @@ pub(crate) fn resolve(url: &str, base_dir: &Path) -> Option<PathBuf> {
     if path.is_empty() {
         return None;
     }
-    let path = Path::new(path);
-    Some(if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        base_dir.join(path)
-    })
+    let join = |path: &str| {
+        let path = Path::new(path);
+        if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            base_dir.join(path)
+        }
+    };
+    let resolved = join(path);
+    // Markdown often escapes spaces (`my%20pic.png`); use the decoded name
+    // when only that one exists.
+    if !resolved.exists()
+        && let Some(decoded) = percent_decode(path)
+    {
+        let decoded = join(&decoded);
+        if decoded.exists() {
+            return Some(decoded);
+        }
+    }
+    Some(resolved)
+}
+
+/// `%XX` escapes decoded, or `None` when there are none or they are invalid.
+fn percent_decode(text: &str) -> Option<String> {
+    if !text.contains('%') {
+        return None;
+    }
+    let bytes = text.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' {
+            let hex = std::str::from_utf8(bytes.get(i + 1..i + 3)?).ok()?;
+            out.push(u8::from_str_radix(hex, 16).ok()?);
+            i += 3;
+        } else {
+            out.push(bytes[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8(out).ok()
 }
 
 /// `scheme:` with a scheme of two or more characters, so `C:\x` stays a path.
@@ -67,9 +113,20 @@ fn modified(path: &Path) -> Option<SystemTime> {
 /// Decode a PNG, JPEG or GIF (first frame) and re-encode it as RGBA PNG,
 /// scaled down to [`MAX_TRANSMIT_PX`] when larger.
 fn decode(path: &Path) -> Result<Decoded, image::ImageError> {
-    let img = image::ImageReader::open(path)?
-        .with_guessed_format()?
-        .decode()?;
+    // Only regular files: a FIFO would block the worker, and a device such
+    // as /dev/tty would read the user's keystrokes.
+    if !std::fs::metadata(path)?.is_file() {
+        return Err(image::ImageError::IoError(std::io::Error::other(
+            "not a regular file",
+        )));
+    }
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(16_384);
+    limits.max_image_height = Some(16_384);
+    limits.max_alloc = Some(256 * 1024 * 1024);
+    let mut reader = image::ImageReader::open(path)?.with_guessed_format()?;
+    reader.limits(limits);
+    let img = reader.decode()?;
     let px = (img.width(), img.height());
     let img = if px.0 > MAX_TRANSMIT_PX || px.1 > MAX_TRANSMIT_PX {
         img.resize(
@@ -103,11 +160,14 @@ impl Worker {
         let (requests, request_rx) = mpsc::channel::<PathBuf>();
         let (result_tx, results) = mpsc::channel();
         std::thread::Builder::new()
-            .name("mdx-images".into())
+            .name(WORKER_THREAD.into())
             .spawn(move || {
                 for path in request_rx {
                     let mtime = modified(&path);
-                    let decoded = decode(&path).ok();
+                    // A decoder panic fails this image, not the pager.
+                    let decoded = std::panic::catch_unwind(|| decode(&path))
+                        .ok()
+                        .and_then(Result::ok);
                     if result_tx.send((path, mtime, decoded)).is_err() {
                         break;
                     }
@@ -147,6 +207,8 @@ pub(crate) struct ImageStore {
     cell_px: (u16, u16),
     entries: HashMap<PathBuf, Entry>,
     worker: Option<Worker>,
+    /// Start the worker on the first request; off in tests.
+    spawn_worker: bool,
     next_id: u32,
     /// Escape sequences waiting to be written to the terminal.
     output: Vec<u8>,
@@ -155,10 +217,11 @@ pub(crate) struct ImageStore {
 }
 
 impl ImageStore {
-    /// A store that decodes on a background thread.
+    /// A store that decodes on a background thread, started when the first
+    /// image is requested.
     pub(crate) fn new(base_dir: PathBuf, cell_px: (u16, u16)) -> Self {
         let mut store = Self::without_worker(base_dir, cell_px);
-        store.worker = Worker::spawn();
+        store.spawn_worker = true;
         store
     }
 
@@ -168,6 +231,7 @@ impl ImageStore {
             cell_px,
             entries: HashMap::new(),
             worker: None,
+            spawn_worker: false,
             next_id: first_id(),
             output: Vec::new(),
             sent: HashSet::new(),
@@ -191,6 +255,10 @@ impl ImageStore {
     }
 
     fn request(&mut self, path: &Path) -> bool {
+        if self.worker.is_none() && self.spawn_worker {
+            self.spawn_worker = false;
+            self.worker = Worker::spawn();
+        }
         self.worker
             .as_ref()
             .is_some_and(|w| w.requests.send(path.to_path_buf()).is_ok())
@@ -388,6 +456,50 @@ mod tests {
         assert_eq!(resolve("http://example.com/a.png", base), None);
         assert_eq!(resolve("data:image/png;base64,AAAA", base), None);
         assert_eq!(resolve("", base), None);
+    }
+
+    #[test]
+    fn resolve_decodes_percent_escapes_only_when_needed() {
+        let dir = temp_dir("percent");
+        std::fs::write(dir.join("my pic.png"), "").unwrap();
+        std::fs::write(dir.join("100%.png"), "").unwrap();
+        assert_eq!(resolve("my%20pic.png", &dir), Some(dir.join("my pic.png")));
+        assert_eq!(resolve("100%.png", &dir), Some(dir.join("100%.png")));
+        assert_eq!(
+            resolve("no%20such.png", &dir),
+            Some(dir.join("no%20such.png"))
+        );
+        assert_eq!(percent_decode("a%2Fb"), Some("a/b".into()));
+        assert_eq!(percent_decode("a%zz"), None);
+        assert_eq!(percent_decode("plain"), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn no_color_turns_images_off() {
+        use std::ffi::OsStr;
+        assert!(allowed_with_no_color(None));
+        assert!(allowed_with_no_color(Some(OsStr::new(""))));
+        assert!(!allowed_with_no_color(Some(OsStr::new("1"))));
+    }
+
+    #[test]
+    fn non_regular_files_are_not_read() {
+        let dir = temp_dir("special");
+        assert!(decode(&dir).is_err(), "a directory is not decoded");
+        #[cfg(unix)]
+        assert!(decode(Path::new("/dev/null")).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn worker_starts_with_the_first_request() {
+        let mut store = ImageStore::new(PathBuf::from("/docs"), (10, 20));
+        assert!(store.worker.is_none());
+        store.layout("https://example.com/a.png", 80, 30);
+        assert!(store.worker.is_none(), "remote images need no worker");
+        store.layout("a.png", 80, 30);
+        assert!(store.worker.is_some());
     }
 
     fn temp_dir(name: &str) -> PathBuf {
