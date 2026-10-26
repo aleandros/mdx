@@ -765,3 +765,27 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod properties {
+    use super::*;
+    use crate::strategies;
+    use proptest::prelude::*;
+    proptest! {
+        #![proptest_config(strategies::model_config(32))]
+        #[test]
+        fn property_render_deterministic_and_embed_bounded((source, _) in strategies::markdown(), width in strategies::width()) {
+            let highlighter = crate::highlight::Highlighter::new(None).unwrap();
+            let theme = crate::theme::Theme::default_theme();
+            let blocks = crate::parser::parse_markdown(&source);
+            for mode in [MermaidMode::Raw, MermaidMode::Render, MermaidMode::Split] {
+                let a = render_blocks(&blocks,width,&highlighter,theme,mode);
+                prop_assert_eq!(&a, &render_blocks(&blocks,width,&highlighter,theme,mode));
+                for line in crate::embed::flatten_blocks(&a) {
+                    let cut = crate::embed::truncate_line_width(&line,width as usize);
+                    prop_assert!(unicode_width::UnicodeWidthStr::width(strategies::line_text(&cut).as_str()) <= width as usize);
+                }
+            }
+        }
+    }
+}

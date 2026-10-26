@@ -2,6 +2,7 @@ use std::process::Command;
 
 fn run_mdx(file: &str, width: u16) -> String {
     let output = Command::new(env!("CARGO_BIN_EXE_mdx"))
+        .env_remove("NO_COLOR")
         .arg(file)
         .arg("--no-pager")
         .arg("--width")

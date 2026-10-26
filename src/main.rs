@@ -7,6 +7,8 @@ mod parser;
 mod preview;
 mod render;
 mod self_update;
+#[cfg(test)]
+mod strategies;
 mod theme;
 mod watch;
 

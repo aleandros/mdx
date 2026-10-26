@@ -93,6 +93,16 @@ pub fn parse_markdown(input: &str) -> Vec<Block> {
                 }
             }
 
+            Event::Start(Tag::TableHead | Tag::TableRow) => {
+                inline_buf.clear();
+                style_stack.clear();
+            }
+            Event::End(TagEnd::TableCell) => inline_buf.push(InlineElement::SoftBreak),
+            Event::End(TagEnd::TableHead | TagEnd::TableRow) => {
+                blocks.push(Block::Paragraph {
+                    content: std::mem::take(&mut inline_buf),
+                });
+            }
             Event::Start(Tag::Paragraph) => {
                 container_stack.push(Container::Paragraph);
                 inline_buf.clear();
@@ -230,7 +240,7 @@ pub fn parse_markdown(input: &str) -> Vec<Block> {
                 });
             }
 
-            Event::Text(text) => {
+            Event::Text(text) | Event::InlineMath(text) | Event::DisplayMath(text) => {
                 let text_str = text.to_string();
 
                 if in_image.is_some() {
@@ -458,6 +468,52 @@ mod tests {
             assert_eq!(url, "photo.jpg");
         } else {
             panic!("Expected Image block");
+        }
+    }
+}
+
+#[cfg(test)]
+mod properties {
+    use super::*;
+    use crate::strategies::{self, significant};
+    use proptest::prelude::*;
+    fn payload(blocks: &[Block]) -> String {
+        fn inline(content: &[InlineElement]) -> String {
+            content
+                .iter()
+                .map(|e| match e {
+                    InlineElement::Text(s)
+                    | InlineElement::Bold(s)
+                    | InlineElement::Italic(s)
+                    | InlineElement::Code(s)
+                    | InlineElement::Link { text: s, .. } => s.as_str(),
+                    InlineElement::SoftBreak => " ",
+                })
+                .collect()
+        }
+        blocks
+            .iter()
+            .map(|b| match b {
+                Block::Header { content, .. } | Block::Paragraph { content } => inline(content),
+                Block::List { items, .. } => items.iter().map(|i| inline(i)).collect(),
+                Block::CodeBlock { content, .. } | Block::MermaidBlock { content } => {
+                    content.clone()
+                }
+                Block::Image { alt, .. } => alt.clone(),
+                Block::HorizontalRule => String::new(),
+            })
+            .collect()
+    }
+    proptest! {
+        #![proptest_config(strategies::model_config(64))]
+        #[test]
+        fn property_markdown_retains_payload((source, expected) in strategies::markdown()) {
+            prop_assert_eq!(significant(&payload(&parse_markdown(&source))), expected);
+        }
+        #[test]
+        fn property_arbitrary_unicode_never_panics(source in strategies::unicode()) {
+            let blocks = parse_markdown(&source);
+            prop_assert_eq!(&blocks, &parse_markdown(&source));
         }
     }
 }
