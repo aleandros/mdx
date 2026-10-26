@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.20] - 2026-10-26
+
+### Added
+- Switch Mermaid diagrams between image and ASCII in the pager. With graphics
+  on, `i` switches the selected diagram between its image and its ASCII form,
+  which stays available because its text can be selected and copied. Every
+  diagram with an image can now be selected with `Tab` or by scrolling to it,
+  and the blank row above the selected diagram names its form (`[image — i
+  for ASCII]`, `[ASCII — i for image]`, `image loading`, `image unavailable`).
+  Both forms take the same rows, so switching does not scroll. Collapsed
+  diagrams stay collapsed and show the chosen form when expanded. The choice
+  is kept per diagram across scrolling, resizing and watch-mode reloads.
+  Without graphics, `i` does nothing and no hint is shown. (#18)
+- `--mermaid-graphics on|off` and `mermaid_graphics = "on" | "off"` in the
+  config choose whether diagrams start as images (default) or ASCII when
+  graphics are on; the flag wins over the config.
+
+### Changed
+- When a search match (`/`, `?`, `n`, `N`) lands inside a diagram shown as an
+  image, that diagram switches to ASCII so the match is visible.
+
 ## [0.1.19] - 2026-10-26
 
 ### Added

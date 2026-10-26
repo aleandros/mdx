@@ -226,6 +226,10 @@ impl StatusState {
     clippy::too_many_lines,
     reason = "event loop coordinates terminal input, file changes, and redraws"
 )]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "watch mode combines input, rendering, and terminal settings"
+)]
 pub(crate) fn run_watch(
     path: &Path,
     width: u16,
@@ -234,6 +238,7 @@ pub(crate) fn run_watch(
     theme: &'static crate::theme::Theme,
     mermaid_mode: MermaidMode,
     graphics: crate::graphics::GraphicsSetting,
+    mermaid_graphics: crate::graphics::MermaidGraphics,
 ) -> Result<()> {
     // Initial read and render
     let input = std::fs::read_to_string(path)?;
@@ -284,7 +289,8 @@ pub(crate) fn run_watch(
         max_content_width,
         theme,
     )
-    .with_graphics(detection.caps, base_dir(path));
+    .with_graphics(detection.caps, base_dir(path))
+    .with_mermaid_graphics(mermaid_graphics);
 
     // Start file watcher
     let (_watcher, rx) = start_watcher(path)?;
@@ -380,6 +386,7 @@ pub(crate) fn run_watch(
 
                         if new_blocks.len() != blocks.len() {
                             pager.expanded.clear();
+                            pager.toggled_diagrams.clear();
                             mermaid_cache.clear();
                         }
 

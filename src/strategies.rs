@@ -212,16 +212,18 @@ pub(crate) enum PagerOp {
     Reload(Vec<RenderedBlock>),
     ReloadDiagram(GraphInput),
     ToggleTwice,
+    ImageToggleTwice,
 }
 pub(crate) fn pager_ops() -> impl Strategy<Value = Vec<PagerOp>> {
     prop::collection::vec(
         prop_oneof![
-            8 => (0u8..12).prop_map(PagerOp::Key),
+            8 => (0u8..13).prop_map(PagerOp::Key),
             2 => prop::sample::select(vec!["a", "漢", "node", "", "missing", "IMAGE"]).prop_map(|s| PagerOp::Search(s.into())),
             2 => (width(),0u16..50).prop_map(|(w,h)| PagerOp::Resize(w,h)),
             1 => rendered_blocks().prop_map(PagerOp::Reload),
         1 => graph().prop_map(PagerOp::ReloadDiagram),
             1 => Just(PagerOp::ToggleTwice),
+            1 => Just(PagerOp::ImageToggleTwice),
         ],
         0..60,
     )

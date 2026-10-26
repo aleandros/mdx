@@ -40,6 +40,18 @@ pub(crate) enum GraphicsMode {
     Off,
 }
 
+/// How mermaid diagrams start out in the pager when graphics are on. The
+/// `i` key switches one diagram either way.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, clap::ValueEnum)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum MermaidGraphics {
+    /// Draw diagrams as images
+    #[default]
+    On,
+    /// Draw diagrams as ASCII art
+    Off,
+}
+
 /// Where the effective [`GraphicsMode`] came from, for diagnostics.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SettingSource {
