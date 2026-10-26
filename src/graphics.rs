@@ -26,6 +26,23 @@ const PROBE_TIMEOUT: Duration = Duration::from_secs(1);
 /// [`PROBE_TIMEOUT`] over SSH, where the round trip can be much longer.
 const PROBE_TIMEOUT_SSH: Duration = Duration::from_secs(2);
 
+/// Longest wait for `tmux display-message`, which answers at once unless the
+/// server is stuck.
+const TMUX_TIMEOUT: Duration = Duration::from_secs(1);
+
+/// What tmux is asked about this pane and the terminal its client runs in,
+/// separated by tabs: the server version, the pane's effective
+/// `allow-passthrough`, the client's terminal features (`RGB` when tmux
+/// added 24-bit color), the client terminal's `XTVERSION` reply, the
+/// client's and the pane's tty, and `1` when the pane is the one the client
+/// shows active (its session's current window and that window's active
+/// pane).
+const TMUX_FORMAT: &str = concat!(
+    "#{version}\t#{allow-passthrough}\t#{client_termfeatures}\t#{client_termtype}",
+    "\t#{client_tty}\t#{pane_tty}",
+    "\t#{&&:#{pane_active},#{&&:#{window_active},#{==:#{client_session},#{session_name}}}}",
+);
+
 /// Terminals whose Unicode placeholder support has been verified, with the
 /// first version that has it, matched against the `XTVERSION` reply.
 /// Ghostty, `WezTerm` and Konsole are candidates, not yet verified.
@@ -88,13 +105,14 @@ impl GraphicsCaps {
 /// The terminal's answer to the Kitty graphics query.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum GraphicsReply {
-    /// No graphics reply arrived before the DA1 reply.
+    /// No graphics reply arrived before the DA1 reply (outside tmux).
     NoAnswer,
     Ok,
     Error(String),
 }
 
-/// Replies collected up to and including the DA1 reply.
+/// Replies collected up to and including the reply that ends the query (see
+/// [`ReplyEnd`]).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ProbeReply {
     pub(crate) graphics: GraphicsReply,
@@ -102,6 +120,89 @@ pub(crate) struct ProbeReply {
     pub(crate) version: Option<String>,
     /// Cell size from `CSI 16 t` as (width, height).
     pub(crate) cell_px: Option<(u16, u16)>,
+}
+
+/// What tmux reports, from [`TMUX_FORMAT`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct TmuxInfo {
+    /// Server version, e.g. `3.4` or `next-3.6`.
+    pub(crate) version: String,
+    /// The pane's `allow-passthrough`: `on`, `all` or `off`; empty before
+    /// tmux 3.3, which added it.
+    pub(crate) passthrough: String,
+    /// Comma-separated terminal features of the client, e.g. `RGB,title`.
+    pub(crate) features: String,
+    /// The terminal outside tmux as its `XTVERSION` names it, e.g.
+    /// `kitty(0.35.2)`; empty when tmux does not know.
+    pub(crate) termtype: String,
+    /// The client's tty, which names its terminal in `show-messages -T`.
+    pub(crate) client_tty: String,
+    /// The pane's tty, to check that mdx runs in this pane.
+    pub(crate) pane_tty: String,
+    /// The client shows this pane as its active pane. Only then does tmux
+    /// deliver the terminal's reply to it rather than to another pane.
+    pub(crate) active: bool,
+    /// The client's terminal description has `setrgbf` and `setrgbb`, so tmux
+    /// sends 24-bit color even without the `RGB` feature.
+    pub(crate) terminal_rgb: bool,
+}
+
+impl TmuxInfo {
+    fn parse(output: &str) -> Option<Self> {
+        let mut fields = output.trim_end_matches(['\r', '\n']).split('\t');
+        let mut next = || fields.next().map(str::to_string);
+        Some(TmuxInfo {
+            version: next()?,
+            passthrough: next()?,
+            features: next()?,
+            termtype: next()?,
+            client_tty: next()?,
+            pane_tty: next()?,
+            active: next()? == "1",
+            terminal_rgb: false,
+        })
+    }
+
+    fn has_rgb_feature(&self) -> bool {
+        self.features.split(',').any(|f| f.trim() == "RGB")
+    }
+
+    /// (major, minor) of [`Self::version`], ignoring a `next-` prefix and
+    /// letter suffixes such as `3.3a`.
+    fn version_number(&self) -> Option<(u32, u32)> {
+        let version = self.version.trim();
+        let version = version.strip_prefix("next-").unwrap_or(version);
+        let (major, rest) = version.split_once('.')?;
+        let minor: String = rest.chars().take_while(char::is_ascii_digit).collect();
+        Some((major.parse().ok()?, minor.parse().ok()?))
+    }
+
+    fn has_rgb(&self) -> bool {
+        self.has_rgb_feature() || self.terminal_rgb
+    }
+}
+
+/// Whether the terminal of the client on `tty`, in `tmux show-messages -T`
+/// output, has both `setrgbf` and `setrgbb`, which tmux uses for 24-bit
+/// color. The output lists one `Terminal N: NAME for TTY, flags=...:` header
+/// per client, then one `INDEX: NAME: (TYPE) VALUE` line per capability.
+fn terminal_sends_rgb(messages: &str, tty: &str) -> bool {
+    let header = format!(" for {tty},");
+    let mut ours = false;
+    let (mut fg, mut bg) = (false, false);
+    for line in messages.lines() {
+        if line.starts_with("Terminal ") {
+            ours = !tty.is_empty() && line.contains(&header);
+            continue;
+        }
+        if !ours {
+            continue;
+        }
+        let capability = line.trim_start().split_once(": ").map_or("", |(_, c)| c);
+        fg |= capability.starts_with("setrgbf: (string)");
+        bg |= capability.starts_with("setrgbb: (string)");
+    }
+    fg && bg
 }
 
 /// What happened to the terminal query.
@@ -121,6 +222,9 @@ type ProbeOutput = (Option<ProbeReply>, Option<(u16, u16)>);
 pub(crate) struct Detection {
     pub(crate) caps: GraphicsCaps,
     pub(crate) probe: Probe,
+    /// What tmux reported; `None` outside tmux or when it was not asked or
+    /// did not answer.
+    pub(crate) tmux: Option<TmuxInfo>,
 }
 
 fn parse_mode(value: &str) -> Option<GraphicsMode> {
@@ -191,13 +295,12 @@ pub(crate) fn setting_from_env(
 /// must be asked.
 #[expect(
     clippy::fn_params_excessive_bools,
-    reason = "pure decision over two environment facts, kept separate for tests"
+    reason = "pure decision over an environment fact, kept separate for tests"
 )]
 fn decide_without_probe(
     setting: GraphicsSetting,
     target: OutputTarget,
     stdout_is_terminal: bool,
-    in_tmux: bool,
 ) -> Option<GraphicsCaps> {
     if setting.mode == GraphicsMode::Off {
         return Some(GraphicsCaps::unsupported(match setting.source {
@@ -213,15 +316,57 @@ fn decide_without_probe(
             "output is not the interactive pager on a terminal",
         ));
     }
-    if in_tmux {
-        return Some(GraphicsCaps {
-            via_tmux: true,
-            ..GraphicsCaps::unsupported(
-                "running inside tmux; tmux passthrough is not supported yet",
-            )
-        });
-    }
     None
+}
+
+/// Decide inside tmux from what it reports. `Err` holds the reason graphics
+/// stay off; `Ok` means the terminal outside tmux must be asked, through
+/// passthrough. Only an allowlisted terminal is asked, so no other terminal
+/// waits for a reply that tmux cannot deliver.
+fn decide_tmux(info: Option<&TmuxInfo>) -> Result<(), &'static str> {
+    let Some(info) = info else {
+        return Err("running inside tmux, but tmux could not be asked for its settings");
+    };
+    if info.passthrough.is_empty() || info.version_number().is_some_and(|v| v < (3, 3)) {
+        return Err("tmux is older than 3.3 and cannot pass graphics through");
+    }
+    if !matches!(info.passthrough.as_str(), "on" | "all") {
+        return Err("tmux allow-passthrough is off (set -g allow-passthrough on)");
+    }
+    if !info.has_rgb() {
+        return Err(
+            "tmux does not send 24-bit color to the terminal (add the RGB terminal feature)",
+        );
+    }
+    if !placeholders_known(Some(&info.termtype)) {
+        return Err(
+            "the terminal outside tmux is unknown or its Unicode placeholder support is not verified",
+        );
+    }
+    if !info.active {
+        // tmux hands the terminal's reply to the active pane, where a shell
+        // or editor would read it as keystrokes.
+        return Err(
+            "the mdx pane is not the active tmux pane, so the query's reply would go to another pane",
+        );
+    }
+    Ok(())
+}
+
+/// Decide from the terminal's replies through tmux passthrough. `None` means
+/// no graphics reply came back in time.
+fn decide_from_tmux_reply(reply: Option<&ProbeReply>) -> (bool, &'static str) {
+    match reply.map(|r| &r.graphics) {
+        Some(GraphicsReply::Ok) => (
+            true,
+            "terminal supports Kitty graphics with Unicode placeholders, through tmux passthrough",
+        ),
+        Some(GraphicsReply::Error(_)) => (false, "terminal rejected the Kitty graphics query"),
+        Some(GraphicsReply::NoAnswer) | None => (
+            false,
+            "no reply to the graphics query came back through tmux passthrough",
+        ),
+    }
 }
 
 /// Decide from the terminal's replies. `None` means the query timed out.
@@ -269,7 +414,30 @@ fn placeholders_known(version: Option<&str>) -> bool {
 /// The bytes sent to the terminal: the graphics query, `XTVERSION`, the cell
 /// size request and finally DA1, which every terminal answers.
 fn query_bytes(id: u32) -> Vec<u8> {
-    format!("\x1b_Gi={id},s=1,v=1,a=q,t=d,f=24;AAAA\x1b\\\x1b[>q\x1b[16t\x1b[c").into_bytes()
+    let mut bytes = graphics_query(id);
+    bytes.extend_from_slice(b"\x1b[>q\x1b[16t\x1b[c");
+    bytes
+}
+
+fn graphics_query(id: u32) -> Vec<u8> {
+    format!("\x1b_Gi={id},s=1,v=1,a=q,t=d,f=24;AAAA\x1b\\").into_bytes()
+}
+
+/// The bytes sent inside tmux: only the graphics query, in passthrough.
+/// tmux answers DA1, `XTVERSION` and the cell size request itself, so
+/// asking those would describe tmux rather than the terminal outside it.
+fn tmux_query_bytes(id: u32) -> Vec<u8> {
+    crate::kitty::tmux_passthrough(&graphics_query(id))
+}
+
+/// Which reply completes the query.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ReplyEnd {
+    /// DA1, which every terminal sends after answering the earlier queries.
+    Da1,
+    /// The graphics reply itself: inside tmux, where tmux answers DA1 before
+    /// the outer terminal's reply comes back.
+    Graphics,
 }
 
 const ESC: u8 = 0x1b;
@@ -298,11 +466,11 @@ fn find_st(buf: &[u8], from: usize) -> StringEnd {
     }
 }
 
-/// Parse the replies read so far. Returns `None` until the DA1 reply has
-/// arrived; anything after it is not part of the reply. Unrelated bytes,
-/// such as keys pressed during the query, are skipped: a sequence that is
-/// not well formed only skips its ESC.
-pub(crate) fn parse_reply(buf: &[u8], id: u32) -> Option<ProbeReply> {
+/// Parse the replies read so far. Returns `None` until the reply that
+/// `until` names has arrived; anything after it is not part of the reply. Unrelated
+/// bytes, such as keys pressed during the query, are skipped: a sequence
+/// that is not well formed only skips its ESC.
+pub(crate) fn parse_reply(buf: &[u8], id: u32, until: ReplyEnd) -> Option<ProbeReply> {
     let mut reply = ProbeReply {
         graphics: GraphicsReply::NoAnswer,
         version: None,
@@ -332,7 +500,9 @@ pub(crate) fn parse_reply(buf: &[u8], id: u32) -> Option<ProbeReply> {
                 };
                 let body = String::from_utf8_lossy(&buf[i + 2..end]);
                 if let Some(graphics) = body.strip_prefix('G') {
-                    parse_graphics(graphics, id, &mut reply);
+                    if parse_graphics(graphics, id, &mut reply) && until == ReplyEnd::Graphics {
+                        return Some(reply);
+                    }
                 } else if let Some(version) = body.strip_prefix(">|") {
                     reply.version = Some(version.to_string());
                 }
@@ -351,7 +521,9 @@ pub(crate) fn parse_reply(buf: &[u8], id: u32) -> Option<ProbeReply> {
                 }
                 let params = &buf[start..start + len];
                 match buf[start + len] {
-                    b'c' if params.first() == Some(&b'?') => return Some(reply),
+                    b'c' if until == ReplyEnd::Da1 && params.first() == Some(&b'?') => {
+                        return Some(reply);
+                    }
                     b't' => {
                         if let Some(cell) = parse_cell_size(params) {
                             reply.cell_px = Some(cell);
@@ -367,19 +539,20 @@ pub(crate) fn parse_reply(buf: &[u8], id: u32) -> Option<ProbeReply> {
     None
 }
 
-fn parse_graphics(body: &str, id: u32, reply: &mut ProbeReply) {
+/// Record a graphics reply for image `id`. Returns whether it was ours.
+fn parse_graphics(body: &str, id: u32, reply: &mut ProbeReply) -> bool {
     let (keys, message) = body.split_once(';').unwrap_or((body, ""));
     let ours = keys
         .split(',')
         .any(|kv| kv.strip_prefix("i=").and_then(|v| v.parse().ok()) == Some(id));
-    if !ours {
-        return;
+    if ours {
+        reply.graphics = if message == "OK" {
+            GraphicsReply::Ok
+        } else {
+            GraphicsReply::Error(message.to_string())
+        };
     }
-    reply.graphics = if message == "OK" {
-        GraphicsReply::Ok
-    } else {
-        GraphicsReply::Error(message.to_string())
-    };
+    ours
 }
 
 /// `CSI 6 ; height ; width t` → (width, height).
@@ -402,15 +575,34 @@ fn env_is_set(name: &str) -> bool {
 /// Sends nothing unless the output is the pager on a terminal and the mode
 /// is `auto`. Enables raw mode for the query if it is not enabled already.
 pub(crate) fn detect(setting: GraphicsSetting, target: OutputTarget) -> Detection {
-    if let Some(caps) = decide_without_probe(
-        setting,
-        target,
-        std::io::stdout().is_terminal(),
-        env_is_set("TMUX"),
-    ) {
+    if let Some(caps) = decide_without_probe(setting, target, std::io::stdout().is_terminal()) {
         return Detection {
-            caps,
+            caps: GraphicsCaps {
+                via_tmux: env_is_set("TMUX"),
+                ..caps
+            },
             probe: Probe::NotSent,
+            tmux: None,
+        };
+    }
+    let mut tmux = if env_is_set("TMUX") { ask_tmux() } else { None };
+    // A `TMUX` inherited by a terminal outside tmux names a pane that is
+    // not ours; query that terminal directly.
+    let stray = tmux.as_ref().is_some_and(|info| {
+        sys::stdout_tty().is_some_and(|own| !info.pane_tty.is_empty() && info.pane_tty != own)
+    });
+    if stray {
+        tmux = None;
+    }
+    let via_tmux = env_is_set("TMUX") && !stray;
+    if via_tmux && let Err(reason) = decide_tmux(tmux.as_ref()) {
+        return Detection {
+            caps: GraphicsCaps {
+                via_tmux,
+                ..GraphicsCaps::unsupported(reason)
+            },
+            probe: Probe::NotSent,
+            tmux,
         };
     }
     let timeout = if env_is_set("SSH_TTY") || env_is_set("SSH_CONNECTION") {
@@ -418,9 +610,25 @@ pub(crate) fn detect(setting: GraphicsSetting, target: OutputTarget) -> Detectio
     } else {
         PROBE_TIMEOUT
     };
-    match sys::probe(&query_bytes(PROBE_IMAGE_ID), timeout) {
-        Ok((reply, winsize_cell)) => {
-            let (supported, reason) = decide_from_reply(reply.as_ref());
+    // Inside tmux the graphics reply is the only end marker: tmux answers
+    // DA1 itself and swallows the outer terminal's DA1. A reply slower than
+    // the timeout therefore arrives after the probe, as keystrokes.
+    let (query, end) = if via_tmux {
+        (tmux_query_bytes(PROBE_IMAGE_ID), ReplyEnd::Graphics)
+    } else {
+        (query_bytes(PROBE_IMAGE_ID), ReplyEnd::Da1)
+    };
+    match sys::probe(&query, timeout, end) {
+        Ok((mut reply, winsize_cell)) => {
+            let (supported, reason) = if let Some(info) = &tmux {
+                // tmux knows which terminal it runs in; the query did not ask.
+                if let Some(reply) = &mut reply {
+                    reply.version = Some(info.termtype.clone());
+                }
+                decide_from_tmux_reply(reply.as_ref())
+            } else {
+                decide_from_reply(reply.as_ref())
+            };
             let cell_px = reply
                 .as_ref()
                 .and_then(|r| r.cell_px)
@@ -430,17 +638,84 @@ pub(crate) fn detect(setting: GraphicsSetting, target: OutputTarget) -> Detectio
                 caps: GraphicsCaps {
                     supported,
                     cell_px,
-                    via_tmux: false,
+                    via_tmux,
                     reason,
                 },
                 probe: reply.map_or(Probe::TimedOut, Probe::Answered),
+                tmux,
             }
         }
         Err(err) => Detection {
-            caps: GraphicsCaps::unsupported("could not query the terminal"),
+            caps: GraphicsCaps {
+                via_tmux,
+                ..GraphicsCaps::unsupported("could not query the terminal")
+            },
             probe: Probe::Failed(err),
+            tmux,
         },
     }
+}
+
+/// Ask tmux about this pane (`$TMUX_PANE`) and its client. `None` when tmux
+/// cannot be run or does not answer.
+fn ask_tmux() -> Option<TmuxInfo> {
+    let mut args = vec!["display-message".into(), "-p".into()];
+    if let Some(pane) = std::env::var_os("TMUX_PANE").filter(|p| !p.is_empty()) {
+        args.push("-t".into());
+        args.push(pane);
+    }
+    args.push(TMUX_FORMAT.into());
+    let mut info = TmuxInfo::parse(&run_tmux(&args)?)?;
+    if !info.has_rgb_feature() {
+        info.terminal_rgb = run_tmux(&["show-messages".into(), "-T".into()])
+            .is_some_and(|messages| terminal_sends_rgb(&messages, &info.client_tty));
+    }
+    Some(info)
+}
+
+/// Run `tmux` with `args`, waiting at most [`TMUX_TIMEOUT`]. Returns its
+/// output, or `None` when it cannot run, fails or takes too long.
+fn run_tmux(args: &[std::ffi::OsString]) -> Option<String> {
+    use std::io::Read;
+    use std::process::{Command, Stdio};
+    use std::time::Instant;
+
+    let mut child = Command::new("tmux")
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+    // Read on another thread, so output larger than the pipe buffer cannot
+    // block tmux while this one waits.
+    let Some(mut stdout) = child.stdout.take() else {
+        let _ = child.kill();
+        let _ = child.wait();
+        return None;
+    };
+    let reader = std::thread::spawn(move || {
+        let mut output = Vec::new();
+        stdout.read_to_end(&mut output).map(|_| output)
+    });
+    let deadline = Instant::now() + TMUX_TIMEOUT;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+        }
+    };
+    let output = reader.join().ok()?.ok()?;
+    status
+        .success()
+        .then(|| String::from_utf8_lossy(&output).into_owned())
 }
 
 /// Terminal-supplied text with control characters removed, safe to print.
@@ -471,12 +746,27 @@ pub(crate) fn report(setting: GraphicsSetting, detection: &Detection) -> String 
             GraphicsReply::Error(message) => format!("error: {}", printable(message)),
         },
     };
-    let terminal = match &detection.probe {
-        Probe::Answered(ProbeReply {
-            version: Some(version),
-            ..
-        }) => printable(version),
+    let terminal = match (&detection.probe, &detection.tmux) {
+        (
+            Probe::Answered(ProbeReply {
+                version: Some(version),
+                ..
+            }),
+            _,
+        ) if !version.is_empty() => printable(version),
+        (_, Some(info)) if !info.termtype.is_empty() => printable(&info.termtype),
         _ => "unknown".to_string(),
+    };
+    let tmux = match (&detection.tmux, caps.via_tmux) {
+        (Some(info), _) => format!(
+            "yes, version {}, allow-passthrough {}, 24-bit color {}, active pane {}",
+            non_empty(&printable(&info.version)),
+            non_empty(&printable(&info.passthrough)),
+            if info.has_rgb() { "yes" } else { "no" },
+            if info.active { "yes" } else { "no" },
+        ),
+        (None, true) => "yes (settings unknown)".to_string(),
+        (None, false) => "no".to_string(),
     };
     let cell = if caps.cell_px == (0, 0) {
         "unknown".to_string()
@@ -484,11 +774,14 @@ pub(crate) fn report(setting: GraphicsSetting, detection: &Detection) -> String 
         format!("{}x{} px", caps.cell_px.0, caps.cell_px.1)
     };
     format!(
-        "graphics: {}\nreason: {}\nsetting: {mode} (from {source})\nquery: {probe}\nterminal: {terminal}\ncell size: {cell}\ntmux: {}\n",
+        "graphics: {}\nreason: {}\nsetting: {mode} (from {source})\nquery: {probe}\nterminal: {terminal}\ncell size: {cell}\ntmux: {tmux}\n",
         if caps.supported { "on" } else { "off" },
         caps.reason,
-        if caps.via_tmux { "yes" } else { "no" },
     )
+}
+
+fn non_empty(text: &str) -> &str {
+    if text.is_empty() { "unknown" } else { text }
 }
 
 #[cfg(unix)]
@@ -511,11 +804,15 @@ mod sys {
         }
     }
 
-    /// Send `query` to the controlling terminal and read replies until DA1.
+    /// Send `query` to the controlling terminal and read replies until `end`.
     /// Returns the parsed reply (`None` when nothing complete arrived in
     /// time) and the cell size from `TIOCGWINSZ`. Input that is not part of
     /// the reply, such as keys typed during the query, is consumed and lost.
-    pub(super) fn probe(query: &[u8], timeout: Duration) -> std::io::Result<super::ProbeOutput> {
+    pub(super) fn probe(
+        query: &[u8],
+        timeout: Duration,
+        end: super::ReplyEnd,
+    ) -> std::io::Result<super::ProbeOutput> {
         let mut tty = File::options().read(true).write(true).open("/dev/tty")?;
         let already_raw = crossterm::terminal::is_raw_mode_enabled()?;
         if !already_raw {
@@ -525,7 +822,7 @@ mod sys {
             restore: !already_raw,
         };
         let winsize_cell = winsize_cell(&tty);
-        let reply = exchange(&mut tty, query, timeout)?;
+        let reply = exchange(&mut tty, query, timeout, end)?;
         Ok((reply, winsize_cell))
     }
 
@@ -537,13 +834,14 @@ mod sys {
         tty: &mut File,
         query: &[u8],
         timeout: Duration,
+        end: super::ReplyEnd,
     ) -> std::io::Result<Option<super::ProbeReply>> {
         // Fail before sending anything, so no reply can arrive unread.
         check_selectable(tty)?;
         tty.write_all(query)?;
         tty.flush()?;
         let mut buf = Vec::new();
-        let reply = read_reply(tty, &mut buf, Instant::now() + timeout);
+        let reply = read_reply(tty, &mut buf, Instant::now() + timeout, end);
         if !matches!(reply, Ok(Some(_))) {
             // SAFETY: tcflush only discards queued input on a valid, open fd.
             unsafe {
@@ -558,10 +856,11 @@ mod sys {
         tty: &mut File,
         buf: &mut Vec<u8>,
         deadline: Instant,
+        end: super::ReplyEnd,
     ) -> std::io::Result<Option<super::ProbeReply>> {
         let mut chunk = [0u8; 256];
         loop {
-            if let Some(reply) = super::parse_reply(buf, super::PROBE_IMAGE_ID) {
+            if let Some(reply) = super::parse_reply(buf, super::PROBE_IMAGE_ID, end) {
                 return Ok(Some(reply));
             }
             if !wait_readable(tty, deadline)? {
@@ -631,6 +930,19 @@ mod sys {
         }
     }
 
+    /// Path of the terminal on stdout, e.g. `/dev/ttys004`.
+    pub(super) fn stdout_tty() -> Option<String> {
+        // SAFETY: ttyname returns null or a NUL-terminated string in a static
+        // buffer, copied below before anything else can call ttyname.
+        let name = unsafe { libc::ttyname(libc::STDOUT_FILENO) };
+        if name.is_null() {
+            return None;
+        }
+        // SAFETY: non-null, so a valid C string (see above).
+        let name = unsafe { std::ffi::CStr::from_ptr(name) };
+        Some(name.to_string_lossy().into_owned())
+    }
+
     /// Cell size from the pixel fields of `TIOCGWINSZ`, which many terminals
     /// leave at zero.
     fn winsize_cell(tty: &File) -> Option<(u16, u16)> {
@@ -655,11 +967,19 @@ mod sys {
 mod sys {
     use std::time::Duration;
 
-    pub(super) fn probe(_query: &[u8], _timeout: Duration) -> std::io::Result<super::ProbeOutput> {
+    pub(super) fn probe(
+        _query: &[u8],
+        _timeout: Duration,
+        _end: super::ReplyEnd,
+    ) -> std::io::Result<super::ProbeOutput> {
         Err(std::io::Error::new(
             std::io::ErrorKind::Unsupported,
             "terminal queries are only implemented on Unix",
         ))
+    }
+
+    pub(super) fn stdout_tty() -> Option<String> {
+        None
     }
 }
 
@@ -685,7 +1005,7 @@ mod tests {
     #[test]
     fn parse_ok_before_da1() {
         let buf = concat(&[&graphics_ok(), DA1]);
-        let reply = parse_reply(&buf, ID).unwrap();
+        let reply = parse_reply(&buf, ID, ReplyEnd::Da1).unwrap();
         assert_eq!(reply.graphics, GraphicsReply::Ok);
     }
 
@@ -695,7 +1015,7 @@ mod tests {
             format!("\x1b_Gi={ID};ENOTSUPPORTED:bad format\x1b\\").as_bytes(),
             DA1,
         ]);
-        let reply = parse_reply(&buf, ID).unwrap();
+        let reply = parse_reply(&buf, ID, ReplyEnd::Da1).unwrap();
         assert_eq!(
             reply.graphics,
             GraphicsReply::Error("ENOTSUPPORTED:bad format".to_string())
@@ -708,7 +1028,7 @@ mod tests {
 
     #[test]
     fn parse_no_graphics_answer() {
-        let reply = parse_reply(DA1, ID).unwrap();
+        let reply = parse_reply(DA1, ID, ReplyEnd::Da1).unwrap();
         assert_eq!(reply.graphics, GraphicsReply::NoAnswer);
         assert!(!decide_from_reply(Some(&reply)).0);
     }
@@ -716,18 +1036,18 @@ mod tests {
     #[test]
     fn parse_da1_first_ignores_later_graphics_reply() {
         let buf = concat(&[DA1, &graphics_ok()]);
-        let reply = parse_reply(&buf, ID).unwrap();
+        let reply = parse_reply(&buf, ID, ReplyEnd::Da1).unwrap();
         assert_eq!(reply.graphics, GraphicsReply::NoAnswer);
     }
 
     #[test]
     fn parse_incomplete_until_da1() {
-        assert_eq!(parse_reply(b"", ID), None);
-        assert_eq!(parse_reply(&graphics_ok(), ID), None);
+        assert_eq!(parse_reply(b"", ID, ReplyEnd::Da1), None);
+        assert_eq!(parse_reply(&graphics_ok(), ID, ReplyEnd::Da1), None);
         // Truncated mid-sequence.
-        assert_eq!(parse_reply(b"\x1b_Gi=1;O", ID), None);
-        assert_eq!(parse_reply(b"\x1b[?62;2", ID), None);
-        assert_eq!(parse_reply(b"\x1b", ID), None);
+        assert_eq!(parse_reply(b"\x1b_Gi=1;O", ID, ReplyEnd::Da1), None);
+        assert_eq!(parse_reply(b"\x1b[?62;2", ID, ReplyEnd::Da1), None);
+        assert_eq!(parse_reply(b"\x1b", ID, ReplyEnd::Da1), None);
     }
 
     #[test]
@@ -742,7 +1062,7 @@ mod tests {
     fn parse_ignores_other_image_ids() {
         let buf = concat(&[b"\x1b_Gi=7;OK\x1b\\", DA1]);
         assert_eq!(
-            parse_reply(&buf, ID).unwrap().graphics,
+            parse_reply(&buf, ID, ReplyEnd::Da1).unwrap().graphics,
             GraphicsReply::NoAnswer
         );
     }
@@ -755,7 +1075,7 @@ mod tests {
             b"\x1b[6;20;10t",
             DA1,
         ]);
-        let reply = parse_reply(&buf, ID).unwrap();
+        let reply = parse_reply(&buf, ID, ReplyEnd::Da1).unwrap();
         assert_eq!(reply.version.as_deref(), Some("kitty(0.35.2)"));
         assert_eq!(reply.cell_px, Some((10, 20)));
         assert_eq!(
@@ -770,7 +1090,10 @@ mod tests {
     #[test]
     fn parse_skips_unrelated_bytes() {
         let buf = concat(&[b"jk\x1bOA", &graphics_ok(), b"x\x1b[1;5A", DA1]);
-        assert_eq!(parse_reply(&buf, ID).unwrap().graphics, GraphicsReply::Ok);
+        assert_eq!(
+            parse_reply(&buf, ID, ReplyEnd::Da1).unwrap().graphics,
+            GraphicsReply::Ok
+        );
     }
 
     #[test]
@@ -788,7 +1111,7 @@ mod tests {
     #[test]
     fn graphics_ok_without_allowlisted_terminal_is_off() {
         let buf = concat(&[&graphics_ok(), b"\x1bP>|ghostty 1.1.0\x1b\\", DA1]);
-        let reply = parse_reply(&buf, ID).unwrap();
+        let reply = parse_reply(&buf, ID, ReplyEnd::Da1).unwrap();
         assert!(!decide_from_reply(Some(&reply)).0);
     }
 
@@ -841,12 +1164,21 @@ mod tests {
     fn parse_survives_keys_pressed_during_query() {
         // A lone Esc / Alt-[ before the reply must not swallow it.
         let buf = concat(&[b"\x1b[", &graphics_ok(), DA1]);
-        assert_eq!(parse_reply(&buf, ID).unwrap().graphics, GraphicsReply::Ok);
+        assert_eq!(
+            parse_reply(&buf, ID, ReplyEnd::Da1).unwrap().graphics,
+            GraphicsReply::Ok
+        );
         // Alt-_ and Alt-P are not replies either.
         let buf = concat(&[b"\x1b_x\x1bPq", &graphics_ok(), DA1]);
-        assert_eq!(parse_reply(&buf, ID).unwrap().graphics, GraphicsReply::Ok);
+        assert_eq!(
+            parse_reply(&buf, ID, ReplyEnd::Da1).unwrap().graphics,
+            GraphicsReply::Ok
+        );
         let buf = concat(&[b"\x1b_G", &graphics_ok(), DA1]);
-        assert_eq!(parse_reply(&buf, ID).unwrap().graphics, GraphicsReply::Ok);
+        assert_eq!(
+            parse_reply(&buf, ID, ReplyEnd::Da1).unwrap().graphics,
+            GraphicsReply::Ok
+        );
     }
 
     #[test]
@@ -858,6 +1190,7 @@ mod tests {
                 version: Some("evil\x1b]0;x\x07".to_string()),
                 cell_px: None,
             }),
+            tmux: None,
         };
         let text = report(
             setting(GraphicsMode::Auto, SettingSource::Default),
@@ -877,7 +1210,6 @@ mod tests {
                 setting(GraphicsMode::Off, source),
                 OutputTarget::Pager,
                 true,
-                false,
             )
             .unwrap();
             assert!(!caps.supported);
@@ -887,25 +1219,231 @@ mod tests {
     #[test]
     fn plain_or_non_tty_output_never_probes() {
         let auto = setting(GraphicsMode::Auto, SettingSource::Default);
-        assert!(decide_without_probe(auto, OutputTarget::Plain, true, false).is_some());
-        assert!(decide_without_probe(auto, OutputTarget::Pager, false, false).is_some());
+        assert!(decide_without_probe(auto, OutputTarget::Plain, true).is_some());
+        assert!(decide_without_probe(auto, OutputTarget::Pager, false).is_some());
+    }
+
+    fn tmux_info(version: &str, passthrough: &str, features: &str, termtype: &str) -> TmuxInfo {
+        TmuxInfo {
+            version: version.to_string(),
+            passthrough: passthrough.to_string(),
+            features: features.to_string(),
+            termtype: termtype.to_string(),
+            client_tty: "/dev/ttys001".to_string(),
+            pane_tty: "/dev/ttys002".to_string(),
+            active: true,
+            terminal_rgb: false,
+        }
+    }
+
+    fn kitty_in_tmux() -> TmuxInfo {
+        tmux_info("3.4", "on", "bpaste,clipboard,RGB,title", "kitty(0.35.2)")
     }
 
     #[test]
-    fn tmux_resolves_off() {
-        let auto = setting(GraphicsMode::Auto, SettingSource::Default);
-        let caps = decide_without_probe(auto, OutputTarget::Pager, true, true).unwrap();
-        assert!(!caps.supported);
-        assert!(caps.via_tmux);
+    fn tmux_info_parses_display_message_output() {
+        let info = TmuxInfo::parse(
+            "3.3a\ton\tclipboard,RGB\tkitty(0.35.2)\t/dev/ttys001\t/dev/ttys002\t1\n",
+        )
+        .unwrap();
+        assert_eq!(
+            info,
+            tmux_info("3.3a", "on", "clipboard,RGB", "kitty(0.35.2)")
+        );
+        assert_eq!(info.version_number(), Some((3, 3)));
+        assert!(info.has_rgb());
+        // tmux before 3.3 expands the unknown option to nothing.
+        let old = TmuxInfo::parse("3.2a\t\tRGB\t\t/dev/ttys001\t/dev/ttys002\t0\n").unwrap();
+        assert_eq!(old.passthrough, "");
+        assert!(!old.active);
+        assert_eq!(TmuxInfo::parse("3.4"), None);
+        assert_eq!(TmuxInfo::parse("3.4\ton\tRGB\tkitty(0.35.2)"), None);
+        assert_eq!(
+            tmux_info("next-3.6", "", "", "").version_number(),
+            Some((3, 6))
+        );
+        assert_eq!(tmux_info("master", "", "", "").version_number(), None);
+        assert!(!tmux_info("3.4", "on", "256,title", "").has_rgb());
+    }
+
+    #[test]
+    fn tmux_with_passthrough_and_rgb_in_kitty_probes() {
+        assert_eq!(decide_tmux(Some(&kitty_in_tmux())), Ok(()));
+        let all = TmuxInfo {
+            passthrough: "all".to_string(),
+            ..kitty_in_tmux()
+        };
+        assert_eq!(decide_tmux(Some(&all)), Ok(()));
+    }
+
+    #[test]
+    fn tmux_without_passthrough_resolves_off() {
+        let off = TmuxInfo {
+            passthrough: "off".to_string(),
+            ..kitty_in_tmux()
+        };
+        let reason = decide_tmux(Some(&off)).unwrap_err();
+        assert!(reason.contains("allow-passthrough is off"), "{reason}");
+    }
+
+    #[test]
+    fn old_tmux_resolves_off() {
+        for info in [
+            tmux_info("3.2a", "", "RGB", "kitty(0.35.2)"),
+            tmux_info("3.2", "on", "RGB", "kitty(0.35.2)"),
+        ] {
+            let reason = decide_tmux(Some(&info)).unwrap_err();
+            assert!(reason.contains("older than 3.3"), "{reason}");
+        }
+    }
+
+    #[test]
+    fn tmux_without_rgb_resolves_off() {
+        let no_rgb = TmuxInfo {
+            features: "bpaste,title".to_string(),
+            ..kitty_in_tmux()
+        };
+        let reason = decide_tmux(Some(&no_rgb)).unwrap_err();
+        assert!(reason.contains("24-bit color"), "{reason}");
+    }
+
+    #[test]
+    fn tmux_in_unverified_terminal_resolves_off_without_asking() {
+        for termtype in ["", "ghostty 1.1.0", "kitty(0.27.0)"] {
+            let info = TmuxInfo {
+                termtype: termtype.to_string(),
+                ..kitty_in_tmux()
+            };
+            let reason = decide_tmux(Some(&info)).unwrap_err();
+            assert!(reason.contains("outside tmux"), "{reason}");
+        }
+    }
+
+    #[test]
+    fn tmux_rgb_from_the_terminal_description() {
+        let info = TmuxInfo {
+            features: "bpaste,title".to_string(),
+            terminal_rgb: true,
+            ..kitty_in_tmux()
+        };
+        assert_eq!(decide_tmux(Some(&info)), Ok(()));
+    }
+
+    #[test]
+    fn terminal_sends_rgb_reads_the_clients_terminal() {
+        let messages = "\
+Terminal 0: xterm-256color for /dev/ttys005, flags=0x20:
+ 209: setrgbb: [missing]
+ 210: setrgbf: [missing]
+Terminal 1: xterm-kitty for /dev/ttys006, flags=0x31:
+ 199: RGB: [missing]
+ 209: setrgbb: (string) \\033[48;2;%p1%d;%p2%d;%p3%dm
+ 210: setrgbf: (string) \\033[38;2;%p1%d;%p2%d;%p3%dm
+ 228: Tc: (flag) true
+";
+        assert!(terminal_sends_rgb(messages, "/dev/ttys006"));
+        assert!(!terminal_sends_rgb(messages, "/dev/ttys005"));
+        assert!(!terminal_sends_rgb(messages, "/dev/ttys00"));
+        assert!(!terminal_sends_rgb(messages, ""));
+        assert!(!terminal_sends_rgb("", "/dev/ttys006"));
+    }
+
+    #[test]
+    fn inactive_tmux_pane_resolves_off_without_asking() {
+        let info = TmuxInfo {
+            active: false,
+            ..kitty_in_tmux()
+        };
+        let reason = decide_tmux(Some(&info)).unwrap_err();
+        assert!(reason.contains("not the active tmux pane"), "{reason}");
+    }
+
+    #[test]
+    fn unanswered_tmux_resolves_off() {
+        assert!(decide_tmux(None).is_err());
+    }
+
+    #[test]
+    fn tmux_query_is_the_graphics_query_in_passthrough() {
+        assert_eq!(
+            tmux_query_bytes(ID),
+            b"\x1bPtmux;\x1b\x1b_Gi=28004,s=1,v=1,a=q,t=d,f=24;AAAA\x1b\x1b\\\x1b\\".to_vec()
+        );
+    }
+
+    #[test]
+    fn tmux_reply_ends_at_the_graphics_reply() {
+        // tmux answers DA1 itself, before the outer terminal's reply.
+        let buf = concat(&[DA1, b"\x1b[6;20;10t", &graphics_ok()]);
+        let reply = parse_reply(&buf, ID, ReplyEnd::Graphics).unwrap();
+        assert_eq!(reply.graphics, GraphicsReply::Ok);
+        assert_eq!(parse_reply(DA1, ID, ReplyEnd::Graphics), None);
+        // Another image's reply does not end it.
+        assert_eq!(
+            parse_reply(b"\x1b_Gi=7;OK\x1b\\", ID, ReplyEnd::Graphics),
+            None
+        );
+        assert_eq!(
+            decide_from_tmux_reply(Some(&reply)),
+            (
+                true,
+                "terminal supports Kitty graphics with Unicode placeholders, through tmux passthrough"
+            )
+        );
+        assert!(!decide_from_tmux_reply(None).0);
+    }
+
+    #[test]
+    fn tmux_reply_ends_at_an_error_for_our_image() {
+        let buf = concat(&[DA1, format!("\x1b_Gi={ID};EINVAL:bad\x1b\\").as_bytes()]);
+        let reply = parse_reply(&buf, ID, ReplyEnd::Graphics).unwrap();
+        assert_eq!(
+            reply.graphics,
+            GraphicsReply::Error("EINVAL:bad".to_string())
+        );
+        assert_eq!(
+            decide_from_tmux_reply(Some(&reply)),
+            (false, "terminal rejected the Kitty graphics query")
+        );
+    }
+
+    #[test]
+    fn report_shows_tmux_settings() {
+        let info = TmuxInfo {
+            passthrough: "off".to_string(),
+            ..kitty_in_tmux()
+        };
+        let reason = decide_tmux(Some(&info)).unwrap_err();
+        let detection = Detection {
+            caps: GraphicsCaps {
+                via_tmux: true,
+                ..GraphicsCaps::unsupported(reason)
+            },
+            probe: Probe::NotSent,
+            tmux: Some(info),
+        };
+        let text = report(
+            setting(GraphicsMode::Auto, SettingSource::Default),
+            &detection,
+        );
+        assert!(text.contains("graphics: off"), "{text}");
+        assert!(
+            text.contains("reason: tmux allow-passthrough is off"),
+            "{text}"
+        );
+        assert!(text.contains("terminal: kitty(0.35.2)"), "{text}");
+        assert!(
+            text.contains(
+                "tmux: yes, version 3.4, allow-passthrough off, 24-bit color yes, active pane yes"
+            ),
+            "{text}"
+        );
     }
 
     #[test]
     fn auto_pager_on_terminal_probes() {
         let auto = setting(GraphicsMode::Auto, SettingSource::Default);
-        assert_eq!(
-            decide_without_probe(auto, OutputTarget::Pager, true, false),
-            None
-        );
+        assert_eq!(decide_without_probe(auto, OutputTarget::Pager, true), None);
     }
 
     #[test]
@@ -913,6 +1451,7 @@ mod tests {
         let detection = Detection {
             caps: GraphicsCaps::unsupported("disabled by --graphics off"),
             probe: Probe::NotSent,
+            tmux: None,
         };
         let text = report(setting(GraphicsMode::Off, SettingSource::Cli), &detection);
         assert!(text.contains("graphics: off"), "{text}");
@@ -927,7 +1466,7 @@ mod tests {
 #[cfg(all(test, unix))]
 mod pty_tests {
     use super::sys::{exchange, wait_readable};
-    use super::{GraphicsReply, PROBE_IMAGE_ID, query_bytes};
+    use super::{GraphicsReply, PROBE_IMAGE_ID, ReplyEnd, query_bytes, tmux_query_bytes};
     use std::fs::File;
     use std::io::{Read, Write};
     use std::os::fd::{AsRawFd, FromRawFd};
@@ -968,18 +1507,28 @@ mod pty_tests {
 
     /// Play the terminal: read the query up to DA1, wait `delay`, send `reply`.
     fn answer(
+        emulator: File,
+        delay: Duration,
+        reply: &'static [u8],
+    ) -> std::thread::JoinHandle<()> {
+        answer_query(emulator, query_bytes(PROBE_IMAGE_ID), delay, reply)
+    }
+
+    /// Play the terminal: read `query`, wait `delay`, send `reply`.
+    fn answer_query(
         mut emulator: File,
+        query: Vec<u8>,
         delay: Duration,
         reply: &'static [u8],
     ) -> std::thread::JoinHandle<()> {
         std::thread::spawn(move || {
             let mut seen = Vec::new();
             let mut chunk = [0u8; 256];
-            while !seen.ends_with(b"\x1b[c") {
+            while seen.len() < query.len() {
                 let n = emulator.read(&mut chunk).expect("read query");
                 seen.extend_from_slice(&chunk[..n]);
             }
-            assert_eq!(seen, query_bytes(PROBE_IMAGE_ID));
+            assert_eq!(seen, query);
             std::thread::sleep(delay);
             emulator.write_all(reply).expect("write reply");
             // Keep the emulator side open until the probe is done reading.
@@ -997,11 +1546,34 @@ mod pty_tests {
             &mut tty,
             &query_bytes(PROBE_IMAGE_ID),
             Duration::from_secs(2),
+            ReplyEnd::Da1,
         )
         .unwrap()
         .expect("reply within the timeout");
         assert_eq!(reply.graphics, GraphicsReply::Ok);
         assert_eq!(reply.version.as_deref(), Some("kitty(0.35.2)"));
+        terminal.join().unwrap();
+    }
+
+    #[test]
+    fn tmux_reply_is_read_past_tmux_da1() {
+        let (mut tty, emulator) = raw_pty();
+        // tmux's own DA1 answer comes first; the outer terminal's reply later.
+        let terminal = answer_query(
+            emulator,
+            tmux_query_bytes(PROBE_IMAGE_ID),
+            Duration::from_millis(100),
+            b"\x1b[?1;2;4c\x1b_Gi=28004;OK\x1b\\",
+        );
+        let reply = exchange(
+            &mut tty,
+            &tmux_query_bytes(PROBE_IMAGE_ID),
+            Duration::from_secs(2),
+            ReplyEnd::Graphics,
+        )
+        .unwrap()
+        .expect("reply within the timeout");
+        assert_eq!(reply.graphics, GraphicsReply::Ok);
         terminal.join().unwrap();
     }
 
@@ -1014,6 +1586,7 @@ mod pty_tests {
             &mut tty,
             &query_bytes(PROBE_IMAGE_ID),
             Duration::from_millis(200),
+            ReplyEnd::Da1,
         );
         assert!(reply.unwrap().is_none());
         assert!(start.elapsed() >= Duration::from_millis(200));
@@ -1033,6 +1606,7 @@ mod pty_tests {
             &mut tty,
             &query_bytes(PROBE_IMAGE_ID),
             Duration::from_millis(100),
+            ReplyEnd::Da1,
         );
         assert!(reply.unwrap().is_none());
         assert!(start.elapsed() < Duration::from_secs(1));
