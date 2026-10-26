@@ -61,8 +61,11 @@ cargo build --release
 
 ## Testing
 
-Run `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, and
-`cargo test`. Shared generators live in `src/strategies.rs`; new properties
+Run `cargo fmt --check`, `cargo clippy --all-targets --all-features -- -D warnings`, and
+`cargo test`. Clippy uses the [BeautifulRust lint set](https://github.com/morganlinton/BeautifulRust/tree/main/lints),
+with library-only documentation and printing rules omitted for this CLI. Keep
+exceptions local with `#[expect(clippy::lint_name, reason = "...")]`; stale
+expectations fail CI too. Shared generators live in `src/strategies.rs`; new properties
 should reuse them. Defaults are 32–64 cases per property to keep CI fast.
 
 ```bash

@@ -24,14 +24,18 @@ A link: [example](https://example.com) and inline code: `fn main()`.
 ---
 ";
 
-pub fn run() -> Result<()> {
-    let width = crossterm::terminal::size().map(|(w, _)| w).unwrap_or(80);
-    let no_color = std::env::var("NO_COLOR").is_ok();
+pub(crate) fn run() -> Result<()> {
+    let width = crossterm::terminal::size().map_or(80, |(w, _)| w);
+    let color_mode = if std::env::var("NO_COLOR").is_ok() {
+        render::ColorMode::Plain
+    } else {
+        render::ColorMode::Ansi
+    };
     let highlighter = Highlighter::new(None).map_err(|e| anyhow::anyhow!(e))?;
     let blocks = crate::parser::parse_markdown(SAMPLE_MARKDOWN);
 
     for theme in Theme::all() {
-        if no_color {
+        if color_mode == render::ColorMode::Plain {
             println!("\n  -- {} --\n", theme.name);
         } else {
             println!("\n\x1b[1m  ── {} ──\x1b[0m\n", theme.name);
@@ -45,7 +49,7 @@ pub fn run() -> Result<()> {
             render::MermaidMode::Render,
         );
 
-        crate::pipe_output(&rendered, no_color)?;
+        crate::pipe_output(&rendered, color_mode)?;
     }
     Ok(())
 }

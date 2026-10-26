@@ -1,7 +1,7 @@
 use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum InlineElement {
+pub(crate) enum InlineElement {
     Text(String),
     Bold(String),
     Italic(String),
@@ -13,8 +13,11 @@ pub enum InlineElement {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[allow(clippy::enum_variant_names)]
-pub enum Block {
+#[expect(
+    clippy::enum_variant_names,
+    reason = "block variants describe Markdown block kinds"
+)]
+pub(crate) enum Block {
     Header {
         level: u8,
         content: Vec<InlineElement>,
@@ -47,11 +50,11 @@ enum Style {
     Link(String), // url
 }
 
-pub fn parse_markdown(input: &str) -> Vec<Block> {
-    let parser = Parser::new_ext(input, Options::all());
-
-    let mut blocks: Vec<Block> = Vec::new();
-
+#[expect(
+    clippy::too_many_lines,
+    reason = "parser events update shared container and inline-style stacks"
+)]
+pub(crate) fn parse_markdown(input: &str) -> Vec<Block> {
     // Current container state
     enum Container {
         Header(u8),
@@ -61,6 +64,10 @@ pub fn parse_markdown(input: &str) -> Vec<Block> {
             items: Vec<Vec<InlineElement>>,
         },
     }
+
+    let parser = Parser::new_ext(input, Options::all());
+
+    let mut blocks: Vec<Block> = Vec::new();
 
     let mut container_stack: Vec<Container> = Vec::new();
     let mut inline_buf: Vec<InlineElement> = Vec::new();
@@ -195,20 +202,16 @@ pub fn parse_markdown(input: &str) -> Vec<Block> {
                     items.push(item);
                 }
             }
-            Event::End(TagEnd::Item) => {}
 
             Event::Start(Tag::Strong) => {
                 style_stack.push(Style::Bold);
             }
-            Event::End(TagEnd::Strong) => {
+            Event::End(TagEnd::Strong | TagEnd::Emphasis) => {
                 style_stack.pop();
             }
 
             Event::Start(Tag::Emphasis) => {
                 style_stack.push(Style::Italic);
-            }
-            Event::End(TagEnd::Emphasis) => {
-                style_stack.pop();
             }
 
             Event::Start(Tag::Link { dest_url, .. }) => {
@@ -273,8 +276,7 @@ pub fn parse_markdown(input: &str) -> Vec<Block> {
                     let elem = match style_stack.last() {
                         Some(Style::Bold) => InlineElement::Bold(text_str),
                         Some(Style::Italic) => InlineElement::Italic(text_str),
-                        Some(Style::Link(_)) => InlineElement::Text(text_str),
-                        None => InlineElement::Text(text_str),
+                        Some(Style::Link(_)) | None => InlineElement::Text(text_str),
                     };
                     target_buf.push(elem);
                 }

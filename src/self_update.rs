@@ -4,7 +4,7 @@ use std::process::Command;
 
 const REPO: &str = "aleandros/mdx";
 
-pub fn run() -> Result<()> {
+pub(crate) fn run() -> Result<()> {
     let current_version = env!("CARGO_PKG_VERSION");
 
     println!("Checking for updates...");

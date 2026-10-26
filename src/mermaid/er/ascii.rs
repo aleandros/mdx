@@ -6,7 +6,7 @@ use crate::render::{Color, SpanStyle, StyledLine, StyledSpan};
 /// coordinates onto `canvas_lines` (one String per row). Caller has already
 /// allocated the canvas with sufficient height; rows are padded with spaces
 /// as needed.
-pub fn paint_entity(canvas_lines: &mut [String], node: &PositionedNode) {
+pub(crate) fn paint_entity(canvas_lines: &mut [String], node: &PositionedNode) {
     let Some(entity) = node.entity.as_ref() else {
         return;
     };
@@ -53,7 +53,10 @@ pub fn paint_entity(canvas_lines: &mut [String], node: &PositionedNode) {
 /// into the rows (via `paint_entity` on a plain buffer that was then promoted
 /// to single default-styled spans, or equivalent) so this function can read
 /// the existing characters.
-pub fn paint_entity_styled(rows: &mut [StyledLine], node: &crate::mermaid::layout::PositionedNode) {
+pub(crate) fn paint_entity_styled(
+    rows: &mut [StyledLine],
+    node: &crate::mermaid::layout::PositionedNode,
+) {
     let Some(entity) = node.entity.as_ref() else {
         return;
     };
@@ -104,7 +107,7 @@ pub fn paint_entity_styled(rows: &mut [StyledLine], node: &crate::mermaid::layou
                 };
 
             if !started {
-                current_fg = cell_fg.clone();
+                current_fg.clone_from(&cell_fg);
                 current_text.push(*ch);
                 started = true;
             } else if cell_fg == current_fg {
@@ -229,7 +232,7 @@ fn right_glyph(c: Cardinality) -> &'static str {
 }
 
 #[cfg(test)]
-pub fn paint_cardinality_plain_for_test(
+pub(crate) fn paint_cardinality_plain_for_test(
     rows: &mut [StyledLine],
     edge: &crate::mermaid::layout::PositionedEdge,
 ) {
@@ -246,7 +249,7 @@ pub fn paint_cardinality_plain_for_test(
             rows[i] = StyledLine {
                 spans: vec![StyledSpan {
                     text: line,
-                    style: Default::default(),
+                    style: crate::render::SpanStyle::default(),
                 }],
             };
         }
@@ -256,7 +259,7 @@ pub fn paint_cardinality_plain_for_test(
 /// Recolors the two endpoint glyph cells of an ER edge using the resolved
 /// `edge_style.stroke`. Caller has already painted the plain glyphs onto the
 /// rows.
-pub fn paint_cardinality_styled(
+pub(crate) fn paint_cardinality_styled(
     rows: &mut [StyledLine],
     edge: &crate::mermaid::layout::PositionedEdge,
 ) {
@@ -272,15 +275,15 @@ pub fn paint_cardinality_styled(
     }
 
     let start = edge.points[0];
-    let end = *edge.points.last().unwrap();
+    let end = *edge.points.last().expect("edge has at least two points");
     let next_after_start = edge.points[1];
     let next_before_end = edge.points[edge.points.len() - 2];
 
     let l_glyph_len = left_glyph(meta.left_card).chars().count();
     let r_glyph_len = right_glyph(meta.right_card).chars().count();
 
-    color_glyph_cells(rows, start, next_after_start, l_glyph_len, &stroke);
-    color_glyph_cells(rows, end, next_before_end, r_glyph_len, &stroke);
+    color_glyph_cells(rows, start, next_after_start, l_glyph_len, stroke.as_ref());
+    color_glyph_cells(rows, end, next_before_end, r_glyph_len, stroke.as_ref());
 }
 
 fn color_glyph_cells(
@@ -288,16 +291,16 @@ fn color_glyph_cells(
     endpoint: (usize, usize),
     next: (usize, usize),
     glyph_len: usize,
-    fg: &Option<Color>,
+    fg: Option<&Color>,
 ) {
     if glyph_len != 2 {
         return;
     }
     let (x, y) = endpoint;
-    let dx = next.0 as isize - endpoint.0 as isize;
-    let dy = next.1 as isize - endpoint.1 as isize;
-    let cells: [(usize, usize); 2] = if dx.abs() > dy.abs() {
-        if dx > 0 {
+    let dx = next.0.abs_diff(endpoint.0);
+    let dy = next.1.abs_diff(endpoint.1);
+    let cells: [(usize, usize); 2] = if dx > dy {
+        if next.0 > endpoint.0 {
             [(x, y), (x + 1, y)]
         } else if x >= 1 {
             [(x - 1, y), (x, y)]
@@ -305,7 +308,7 @@ fn color_glyph_cells(
             return;
         }
     } else if dy != 0 {
-        if dy > 0 {
+        if next.1 > endpoint.1 {
             [(x, y), (x, y + 1)]
         } else if y >= 1 {
             [(x, y - 1), (x, y)]
@@ -335,7 +338,7 @@ fn color_glyph_cells(
 /// Splits a `StyledLine`'s spans so the contiguous range `[x, x+len)` becomes
 /// one span styled with `fg`. Used so two adjacent glyph cells (e.g. "||")
 /// land in a single span instead of being split.
-fn recolor_range(line: &mut StyledLine, x: usize, len: usize, fg: &Option<Color>) {
+fn recolor_range(line: &mut StyledLine, x: usize, len: usize, fg: Option<&Color>) {
     if len == 0 {
         return;
     }
@@ -373,7 +376,7 @@ fn recolor_range(line: &mut StyledLine, x: usize, len: usize, fg: &Option<Color>
             new_spans.push(StyledSpan {
                 text: std::mem::take(&mut middle_text),
                 style: SpanStyle {
-                    fg: fg.clone(),
+                    fg: fg.cloned(),
                     ..Default::default()
                 },
             });
@@ -391,7 +394,7 @@ fn recolor_range(line: &mut StyledLine, x: usize, len: usize, fg: &Option<Color>
         new_spans.push(StyledSpan {
             text: middle_text,
             style: SpanStyle {
-                fg: fg.clone(),
+                fg: fg.cloned(),
                 ..Default::default()
             },
         });
@@ -400,7 +403,7 @@ fn recolor_range(line: &mut StyledLine, x: usize, len: usize, fg: &Option<Color>
 }
 
 /// Splits a `StyledLine`'s spans so the cell at column `x` gets `fg`.
-fn recolor_cell(line: &mut StyledLine, x: usize, fg: &Option<Color>) {
+fn recolor_cell(line: &mut StyledLine, x: usize, fg: Option<&Color>) {
     let mut new_spans: Vec<StyledSpan> = Vec::new();
     let mut col = 0usize;
     for span in line.spans.drain(..) {
@@ -421,7 +424,7 @@ fn recolor_cell(line: &mut StyledLine, x: usize, fg: &Option<Color>) {
         new_spans.push(StyledSpan {
             text: chars[local].to_string(),
             style: SpanStyle {
-                fg: fg.clone(),
+                fg: fg.cloned(),
                 ..Default::default()
             },
         });
@@ -436,7 +439,7 @@ fn recolor_cell(line: &mut StyledLine, x: usize, fg: &Option<Color>) {
     line.spans = new_spans;
 }
 
-pub fn paint_cardinality(canvas_lines: &mut [String], edge: &PositionedEdge) {
+pub(crate) fn paint_cardinality(canvas_lines: &mut [String], edge: &PositionedEdge) {
     let Some(meta) = edge.er_meta.as_ref() else {
         return;
     };
@@ -444,7 +447,7 @@ pub fn paint_cardinality(canvas_lines: &mut [String], edge: &PositionedEdge) {
         return;
     }
     let start = edge.points[0];
-    let end = *edge.points.last().unwrap();
+    let end = *edge.points.last().expect("edge has at least two points");
 
     let l_chars: Vec<char> = left_glyph(meta.left_card).chars().collect();
     let r_chars: Vec<char> = right_glyph(meta.right_card).chars().collect();
@@ -472,20 +475,20 @@ fn paint_glyph_at(
     // right_glyph) produce strings in canvas-order (left→right or top→bottom).
     let (c0, c1) = (glyph[0], glyph[1]);
     let (x, y) = endpoint;
-    let dx = next.0 as isize - endpoint.0 as isize;
-    let dy = next.1 as isize - endpoint.1 as isize;
-    if dx.abs() > dy.abs() {
-        if dx > 0 {
+    let dx = next.0.abs_diff(endpoint.0);
+    let dy = next.1.abs_diff(endpoint.1);
+    if dx > dy {
+        if next.0 > endpoint.0 {
             // endpoint is the lower-coord cell; next is to the right.
             set_cell(canvas_lines, x, y, c0);
             set_cell(canvas_lines, x + 1, y, c1);
-        } else if dx < 0 && x >= 1 {
+        } else if next.0 < endpoint.0 && x >= 1 {
             // endpoint is the higher-coord cell; next is to the left.
             set_cell(canvas_lines, x - 1, y, c0);
             set_cell(canvas_lines, x, y, c1);
         }
     } else if dy != 0 {
-        if dy > 0 {
+        if next.1 > endpoint.1 {
             set_cell(canvas_lines, x, y, c0);
             set_cell(canvas_lines, x, y + 1, c1);
         } else if y >= 1 {
@@ -528,17 +531,9 @@ mod tests {
             .map(|l| l.spans.iter().map(|s| s.text.as_str()).collect::<String>())
             .collect::<Vec<_>>()
             .join("\n");
-        assert!(
-            joined.contains("Foo"),
-            "name missing in styled:\n{}",
-            joined
-        );
-        assert!(
-            joined.contains("+-"),
-            "border missing in styled:\n{}",
-            joined
-        );
-        assert!(joined.contains("|"), "side missing in styled:\n{}", joined);
+        assert!(joined.contains("Foo"), "name missing in styled:\n{joined}");
+        assert!(joined.contains("+-"), "border missing in styled:\n{joined}");
+        assert!(joined.contains('|'), "side missing in styled:\n{joined}");
     }
 
     #[test]
@@ -574,16 +569,15 @@ mod tests {
         let layout = crate::mermaid::layout::layout(&chart);
         let lines = crate::mermaid::ascii::render(&layout);
         let joined = lines.join("\n");
-        assert!(joined.contains("Customer"), "header missing:\n{}", joined);
-        assert!(joined.contains("PK"), "PK marker missing:\n{}", joined);
-        assert!(joined.contains("id"), "id attr missing:\n{}", joined);
-        assert!(joined.contains("name"), "name attr missing:\n{}", joined);
+        assert!(joined.contains("Customer"), "header missing:\n{joined}");
+        assert!(joined.contains("PK"), "PK marker missing:\n{joined}");
+        assert!(joined.contains("id"), "id attr missing:\n{joined}");
+        assert!(joined.contains("name"), "name attr missing:\n{joined}");
         // Separator row inside the box: a run of dashes between header and attrs.
         // Width is dynamic but at least 5 dashes will be present.
         assert!(
             joined.contains("-----"),
-            "separator dashes missing:\n{}",
-            joined
+            "separator dashes missing:\n{joined}"
         );
     }
 
@@ -609,13 +603,11 @@ mod tests {
         let joined = lines.join("\n");
         assert!(
             joined.contains("||"),
-            "missing one-and-only-one glyph:\n{}",
-            joined
+            "missing one-and-only-one glyph:\n{joined}"
         );
         assert!(
             joined.contains("o{"),
-            "missing zero-or-many glyph:\n{}",
-            joined
+            "missing zero-or-many glyph:\n{joined}"
         );
     }
 
@@ -633,19 +625,10 @@ mod tests {
         let joined = lines.join("\n");
         assert!(
             joined.contains("Foo"),
-            "expected entity name in render:\n{}",
-            joined
+            "expected entity name in render:\n{joined}"
         );
-        assert!(
-            joined.contains("+-"),
-            "expected box top corner:\n{}",
-            joined
-        );
-        assert!(
-            joined.contains("|"),
-            "expected box side border:\n{}",
-            joined
-        );
+        assert!(joined.contains("+-"), "expected box top corner:\n{joined}");
+        assert!(joined.contains('|'), "expected box side border:\n{joined}");
     }
 
     #[test]
@@ -676,7 +659,7 @@ mod tests {
             .map(|_| StyledLine {
                 spans: vec![StyledSpan {
                     text: " ".repeat(node.width),
-                    style: Default::default(),
+                    style: crate::render::SpanStyle::default(),
                 }],
             })
             .collect();
@@ -688,7 +671,7 @@ mod tests {
             rows[i] = StyledLine {
                 spans: vec![StyledSpan {
                     text: line,
-                    style: Default::default(),
+                    style: crate::render::SpanStyle::default(),
                 }],
             };
         }
@@ -734,7 +717,7 @@ mod tests {
             .map(|_| StyledLine {
                 spans: vec![StyledSpan {
                     text: " ".repeat(node.width),
-                    style: Default::default(),
+                    style: crate::render::SpanStyle::default(),
                 }],
             })
             .collect();
@@ -744,7 +727,7 @@ mod tests {
             rows[i] = StyledLine {
                 spans: vec![StyledSpan {
                     text: line,
-                    style: Default::default(),
+                    style: crate::render::SpanStyle::default(),
                 }],
             };
         }
@@ -788,7 +771,7 @@ mod tests {
             .map(|_| StyledLine {
                 spans: vec![StyledSpan {
                     text: " ".repeat(16),
-                    style: Default::default(),
+                    style: crate::render::SpanStyle::default(),
                 }],
             })
             .collect();

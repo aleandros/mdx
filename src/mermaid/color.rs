@@ -2,7 +2,7 @@ use super::{MermaidEdgeStyle, NodeStyle};
 use crate::render::Color;
 use crate::theme::Theme;
 
-pub fn parse_color(input: &str) -> Option<Color> {
+pub(crate) fn parse_color(input: &str) -> Option<Color> {
     let input = input.trim();
     if let Some(hex) = input.strip_prefix('#') {
         parse_hex(hex)
@@ -49,7 +49,7 @@ fn parse_named(name: &str) -> Option<Color> {
 
 fn color_to_rgb(color: &Color) -> (f64, f64, f64) {
     match color {
-        Color::Rgb(r, g, b) => (*r as f64, *g as f64, *b as f64),
+        Color::Rgb(r, g, b) => (f64::from(*r), f64::from(*g), f64::from(*b)),
         Color::Red => (255.0, 0.0, 0.0),
         Color::Green => (0.0, 128.0, 0.0),
         Color::Blue => (0.0, 0.0, 255.0),
@@ -64,7 +64,7 @@ fn color_to_rgb(color: &Color) -> (f64, f64, f64) {
     }
 }
 
-pub fn resolve_color(color: &Color, theme: &Theme) -> Color {
+pub(crate) fn resolve_color(color: &Color, theme: &Theme) -> Color {
     let (r, g, b) = color_to_rgb(color);
     let mut best_color = color.clone();
     let mut best_dist = f64::MAX;

@@ -13,8 +13,8 @@ fn test_pipe_mode_renders_header() {
         .output()
         .expect("failed to run mdx");
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("Hello World"), "output was: {}", stdout);
-    assert!(stdout.contains("A paragraph"), "output was: {}", stdout);
+    assert!(stdout.contains("Hello World"), "output was: {stdout}");
+    assert!(stdout.contains("A paragraph"), "output was: {stdout}");
 }
 
 #[test]
@@ -34,12 +34,11 @@ fn test_pipe_mode_renders_mermaid() {
         .output()
         .expect("failed to run mdx");
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("Start"), "output was: {}", stdout);
-    assert!(stdout.contains("End"), "output was: {}", stdout);
+    assert!(stdout.contains("Start"), "output was: {stdout}");
+    assert!(stdout.contains("End"), "output was: {stdout}");
     assert!(
         stdout.contains('┌') || stdout.contains('│'),
-        "output was: {}",
-        stdout
+        "output was: {stdout}"
     );
 }
 
@@ -95,8 +94,7 @@ fn test_syntax_highlighting_produces_colors() {
     // Should contain ANSI escape codes for syntax highlighting
     assert!(
         stdout.contains("\x1b["),
-        "Highlighted output should contain ANSI escapes: {}",
-        stdout
+        "Highlighted output should contain ANSI escapes: {stdout}"
     );
     assert!(stdout.contains("fn"), "Should contain the code text");
     assert!(stdout.contains("main"), "Should contain the code text");
@@ -117,8 +115,7 @@ fn test_no_color_strips_highlighting() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         !stdout.contains("\x1b["),
-        "NO_COLOR output should have no ANSI escapes: {}",
-        stdout
+        "NO_COLOR output should have no ANSI escapes: {stdout}"
     );
     assert!(
         stdout.contains("fn main()"),
@@ -144,8 +141,7 @@ fn test_theme_flag_produces_output() {
     // Named theme uses 24-bit color escapes (38;2;r;g;b)
     assert!(
         stdout.contains("38;2;"),
-        "Named theme should use 24-bit RGB colors: {}",
-        stdout
+        "Named theme should use 24-bit RGB colors: {stdout}"
     );
 }
 
@@ -169,8 +165,7 @@ fn test_toml_syntax_highlighting() {
     // TOML should now be highlighted with 24-bit RGB colors
     assert!(
         stdout.contains("38;2;"),
-        "TOML code block should have RGB color escapes: {}",
-        stdout
+        "TOML code block should have RGB color escapes: {stdout}"
     );
     assert!(stdout.contains("package"), "Should contain TOML content");
 }
@@ -185,8 +180,7 @@ fn test_theme_list() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         stdout.contains("base16-ocean.dark"),
-        "Theme list should include base16-ocean.dark: {}",
-        stdout
+        "Theme list should include base16-ocean.dark: {stdout}"
     );
 }
 
@@ -201,7 +195,7 @@ fn test_watch_requires_file() {
         "Should fail without file argument"
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("requires a file"), "stderr: {}", stderr);
+    assert!(stderr.contains("requires a file"), "stderr: {stderr}");
 }
 
 #[test]
@@ -218,7 +212,7 @@ fn test_watch_conflicts_with_no_pager() {
         .expect("failed to run mdx");
     assert!(!output.status.success(), "Should fail with --no-pager");
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("incompatible"), "stderr: {}", stderr);
+    assert!(stderr.contains("incompatible"), "stderr: {stderr}");
 }
 
 #[test]
@@ -246,13 +240,11 @@ fn test_watch_short_flag_accepted() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         !stderr.contains("requires a file"),
-        "Should not have file error: {}",
-        stderr
+        "Should not have file error: {stderr}"
     );
     assert!(
         !stderr.contains("incompatible"),
-        "Should not have conflict error: {}",
-        stderr
+        "Should not have conflict error: {stderr}"
     );
 }
 
@@ -277,7 +269,7 @@ fn embed_honors_height_cap() {
     assert!(output.status.success(), "mdx embed should succeed");
     let stdout = String::from_utf8_lossy(&output.stdout);
     let line_count = stdout.matches('\n').count();
-    assert_eq!(line_count, 4, "output was: {:?}", stdout);
+    assert_eq!(line_count, 4, "output was: {stdout:?}");
 }
 
 #[test]
@@ -301,8 +293,7 @@ fn embed_honors_width_cap() {
     for line in stdout.lines() {
         assert!(
             line.chars().count() <= 20,
-            "line exceeded width 20 (chars): {:?}",
-            line
+            "line exceeded width 20 (chars): {line:?}"
         );
     }
 }
@@ -323,8 +314,7 @@ fn embed_no_color_env_strips_escape_codes() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         !stdout.contains('\x1b'),
-        "no ESC bytes allowed with NO_COLOR: {:?}",
-        stdout
+        "no ESC bytes allowed with NO_COLOR: {stdout:?}"
     );
 }
 
@@ -394,8 +384,7 @@ fn embed_diagram_crops_without_exceeding_width() {
     for line in stdout.lines() {
         assert!(
             line.chars().count() <= 30,
-            "diagram line exceeded width 30: {:?}",
-            line
+            "diagram line exceeded width 30: {line:?}"
         );
     }
 }
@@ -429,9 +418,7 @@ fn test_preview_themes_runs_and_prints_all_themes() {
     ] {
         assert!(
             stdout.contains(name),
-            "output should contain theme '{}', got: {}",
-            name,
-            stdout
+            "output should contain theme '{name}', got: {stdout}"
         );
     }
 }
@@ -471,11 +458,7 @@ fn test_config_flag_missing_file_errors() {
         .expect("failed to run mdx");
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("config file not found"),
-        "stderr: {}",
-        stderr
-    );
+    assert!(stderr.contains("config file not found"), "stderr: {stderr}");
 }
 
 #[test]
@@ -495,8 +478,7 @@ fn test_config_flag_invalid_toml_errors() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         stderr.contains("failed to parse config file"),
-        "stderr: {}",
-        stderr
+        "stderr: {stderr}"
     );
 }
 
@@ -517,8 +499,7 @@ fn test_config_flag_unknown_key_errors() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         stderr.contains("failed to parse config file"),
-        "stderr: {}",
-        stderr
+        "stderr: {stderr}"
     );
 }
 
@@ -540,18 +521,16 @@ fn test_init_creates_config_file() {
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("Config file created"), "stdout: {}", stdout);
+    assert!(stdout.contains("Config file created"), "stdout: {stdout}");
     let config_path = dir.join("mdx").join("config.toml");
     assert!(
         config_path.exists(),
-        "config file should exist at {:?}",
-        config_path
+        "config file should exist at {config_path:?}"
     );
     let content = std::fs::read_to_string(&config_path).unwrap();
     assert!(
         content.contains("# theme"),
-        "should contain commented defaults: {}",
-        content
+        "should contain commented defaults: {content}"
     );
 }
 
@@ -571,7 +550,7 @@ fn test_init_refuses_if_config_exists() {
         .expect("failed to run mdx init");
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("already exists"), "stderr: {}", stderr);
+    assert!(stderr.contains("already exists"), "stderr: {stderr}");
     // Verify original content is untouched
     let content = std::fs::read_to_string(&config_path).unwrap();
     assert_eq!(content, "theme = \"nord\"\n");
@@ -664,17 +643,12 @@ fn integration_renders_er_diagram() {
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("User"), "missing User entity:\n{}", stdout);
-    assert!(
-        stdout.contains("Order"),
-        "missing Order entity:\n{}",
-        stdout
-    );
-    assert!(stdout.contains("PK"), "missing PK marker:\n{}", stdout);
+    assert!(stdout.contains("User"), "missing User entity:\n{stdout}");
+    assert!(stdout.contains("Order"), "missing Order entity:\n{stdout}");
+    assert!(stdout.contains("PK"), "missing PK marker:\n{stdout}");
     assert!(
         stdout.contains("||") || stdout.contains("o{"),
-        "missing crow's foot glyph:\n{}",
-        stdout
+        "missing crow's foot glyph:\n{stdout}"
     );
 }
 

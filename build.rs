@@ -2,7 +2,7 @@ use std::env;
 use std::path::Path;
 
 fn main() {
-    let out_dir = env::var("OUT_DIR").unwrap();
+    let out_dir = env::var("OUT_DIR").expect("Cargo sets OUT_DIR for build scripts");
     let packdump_path = Path::new(&out_dir).join("syntaxes.packdump");
 
     // Start with syntect's bundled defaults

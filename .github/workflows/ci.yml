@@ -42,7 +42,7 @@ jobs:
           toolchain: "1.95.0"
           components: clippy
       - uses: Swatinem/rust-cache@v2
-      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo clippy --all-targets --all-features -- -D warnings
 
   fmt:
     name: Format

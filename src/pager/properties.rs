@@ -6,7 +6,7 @@ proptest! {
     #![proptest_config(strategies::model_config(64))]
     #[test]
     fn property_wrap_preserves_text_and_styles(line in strategies::styled_line(), width in strategies::width()) {
-        let wrapped = wrap_styled_line(&line,width as usize);
+        let wrapped = wrap_styled_line(&line,usize::from(width));
         prop_assert!(!wrapped.is_empty());
         let expected: Vec<_> = styled_chars(&line).into_iter().filter(|(c,_)| !c.is_whitespace()).collect();
         let actual: Vec<_> = wrapped.iter().flat_map(styled_chars).filter(|(c,_)| !c.is_whitespace()).collect();
@@ -17,7 +17,7 @@ proptest! {
                 .filter(|(c,_)| UnicodeWidthChar::width(*c).unwrap_or(0) > 0).count() == 1;
             prop_assert!(line_width(row) <= usize::from(width) || wide_glyph_alone, "{row:?}, width={width}");
         }
-        prop_assert_eq!(&wrapped, &wrap_styled_line(&line,width as usize));
+        prop_assert_eq!(&wrapped, &wrap_styled_line(&line,usize::from(width)));
     }
     #[test]
     fn property_flatten_preserves_block_order(content in strategies::rendered_blocks(), width in strategies::width(), height in 0u16..50) {
@@ -44,7 +44,7 @@ proptest! {
                     }
                     RenderedBlock::Diagram { lines,.. } => {
                         prop_assert_eq!(&pager.flat_lines[cursor], &FlatLine::Styled(StyledLine::empty())); cursor += 1;
-                        let large = lines.len() > height as usize || lines.iter().map(line_width).max().unwrap_or(0) > width as usize * 2;
+                        let large = lines.len() > usize::from(height) || lines.iter().map(line_width).max().unwrap_or(0) > usize::from(width) * 2;
                         if large && !expanded {
                             prop_assert!(matches!(pager.flat_lines[cursor],FlatLine::DiagramCollapsed { block_index,.. } if block_index == bi), "collapsed block index");
                             cursor += 1;

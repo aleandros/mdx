@@ -151,6 +151,12 @@ pub(crate) enum SearchDirection {
     Backward,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CycleDirection {
+    Forward,
+    Backward,
+}
+
 pub(crate) enum KeyAction {
     Quit,
     Redraw,
@@ -170,13 +176,11 @@ pub(crate) enum FlatLine {
         indent: usize,
     },
     DiagramCollapsed {
-        #[allow(dead_code)]
         block_index: usize,
         node_count: usize,
         edge_count: usize,
         kind: DiagramKind,
     },
-    #[allow(dead_code)]
     ImagePlaceholder {
         alt: String,
         url: String,
@@ -187,6 +191,10 @@ pub(crate) enum FlatLine {
 /// Word-wrap a styled line at `width` columns, preserving span styles.
 /// Continuation lines are prefixed with the original leading-space indent
 /// (capped) so wrapped paragraphs and list items keep their visual rhythm.
+#[expect(
+    clippy::too_many_lines,
+    reason = "word wrapping tracks styled spans and display-cell widths together"
+)]
 fn wrap_styled_line(line: &StyledLine, width: usize) -> Vec<StyledLine> {
     if width == 0 {
         return vec![line.clone()];
@@ -251,7 +259,9 @@ fn wrap_styled_line(line: &StyledLine, width: usize) -> Vec<StyledLine> {
         }
 
         if cur_w + cw > width && cur_w > 0 {
-            let cur = lines.last_mut().unwrap();
+            let cur = lines
+                .last_mut()
+                .expect("wrapping starts with one line and never removes it");
             if let Some(brk) = last_break {
                 let tail: Vec<(char, SpanStyle)> = cur.drain(brk..).collect();
                 // Drop the leading whitespace from tail
@@ -260,13 +270,15 @@ fn wrap_styled_line(line: &StyledLine, width: usize) -> Vec<StyledLine> {
                 push_continuation(&mut lines, &mut cur_w);
                 is_first_line = false;
                 seen_content = !tail.is_empty();
-                let cur = lines.last_mut().unwrap();
+                let cur = lines
+                    .last_mut()
+                    .expect("wrapping starts with one line and never removes it");
                 for entry in tail {
                     cur.push(entry);
                 }
                 cur_w = lines
                     .last()
-                    .unwrap()
+                    .expect("wrapping starts with one line and never removes it")
                     .iter()
                     .map(|(c, _)| UnicodeWidthChar::width(*c).unwrap_or(0))
                     .sum::<usize>();
@@ -280,7 +292,9 @@ fn wrap_styled_line(line: &StyledLine, width: usize) -> Vec<StyledLine> {
             }
         }
 
-        let cur = lines.last_mut().unwrap();
+        let cur = lines
+            .last_mut()
+            .expect("wrapping starts with one line and never removes it");
         cur.push((ch, style));
         cur_w += cw;
         if ch == ' ' {
@@ -394,12 +408,13 @@ impl PagerState {
 
         self.flat_lines.clear();
         self.interactive_blocks.clear();
-        let height_threshold = self.terminal_height as usize;
-        let terminal_width = self.terminal_width as usize;
+        let height_threshold = usize::from(self.terminal_height);
+        let terminal_width = usize::from(self.terminal_width);
 
         // Content column: capped at max_content_width and centered. Text wraps
         // at the column width; the gutter is applied at draw time.
-        self.content_width = content_width(self.terminal_width, self.max_content_width) as usize;
+        self.content_width =
+            usize::from(content_width(self.terminal_width, self.max_content_width));
         self.gutter = (terminal_width - self.content_width) / 2;
         let wrap_width = self.content_width;
 
@@ -529,7 +544,7 @@ impl PagerState {
 
     pub(crate) fn max_scroll(&self) -> usize {
         let total = self.flat_lines.len();
-        let height = self.terminal_height as usize;
+        let height = usize::from(self.terminal_height);
         total.saturating_sub(height)
     }
 
@@ -542,7 +557,7 @@ impl PagerState {
 
     pub(crate) fn update_active_from_viewport(&mut self) {
         let start = self.scroll;
-        let end = (self.scroll + self.terminal_height as usize).min(self.flat_lines.len());
+        let end = (self.scroll + usize::from(self.terminal_height)).min(self.flat_lines.len());
 
         self.active = self
             .interactive_blocks
@@ -550,7 +565,7 @@ impl PagerState {
             .position(|entry| entry.flat_line_index >= start && entry.flat_line_index < end);
     }
 
-    pub(crate) fn cycle_active(&mut self, forward: bool) {
+    pub(crate) fn cycle_active(&mut self, direction: CycleDirection) {
         if self.interactive_blocks.is_empty() {
             return;
         }
@@ -558,14 +573,14 @@ impl PagerState {
         let len = self.interactive_blocks.len();
         self.active = Some(match self.active {
             None => 0,
-            Some(i) if forward => (i + 1) % len,
+            Some(i) if direction == CycleDirection::Forward => (i + 1) % len,
             Some(i) => (i + len - 1) % len,
         });
 
         // Scroll to make active block visible
         if let Some(idx) = self.active {
             let flat_idx = self.interactive_blocks[idx].flat_line_index;
-            let height = self.terminal_height as usize;
+            let height = usize::from(self.terminal_height);
             if flat_idx < self.scroll {
                 self.scroll = flat_idx;
             } else if flat_idx >= self.scroll + height {
@@ -601,7 +616,7 @@ impl PagerState {
                         .spawn();
                 }
             }
-            _ => {}
+            RenderedBlock::Lines(_) => {}
         }
     }
 
@@ -664,10 +679,10 @@ impl PagerState {
                     e_noun,
                 );
                 let line = if self.is_active_indicator_line(flat_line_index) {
-                    let text = format!("▸ {}", body);
+                    let text = format!("▸ {body}");
                     Line::from(Span::styled(text, Style::default().fg(collapsed_color)))
                 } else {
-                    let text = format!("  {}", body);
+                    let text = format!("  {body}");
                     Line::from(Span::styled(
                         text,
                         Style::default()
@@ -684,9 +699,9 @@ impl PagerState {
                     (" ", Modifier::DIM)
                 };
                 let text = if alt.is_empty() {
-                    format!("{} [Image — Enter to open]", prefix)
+                    format!("{prefix} [Image — Enter to open]")
                 } else {
-                    format!("{} [Image: {} — Enter to open]", prefix, alt)
+                    format!("{prefix} [Image: {alt} — Enter to open]")
                 };
                 let line = Line::from(Span::styled(
                     text,
@@ -697,9 +712,9 @@ impl PagerState {
         }
     }
 
-    pub(crate) fn draw_content(&self, f: &mut ratatui::Frame, area: ratatui::layout::Rect) {
-        let height = area.height as usize;
-        let lines: Vec<Line> = self
+    pub(crate) fn draw_content(&self, f: &mut ratatui::Frame<'_>, area: ratatui::layout::Rect) {
+        let height = usize::from(area.height);
+        let lines: Vec<Line<'_>> = self
             .flat_lines
             .iter()
             .enumerate()
@@ -720,6 +735,11 @@ impl PagerState {
                 line
             })
             .collect();
+        #[expect(
+            clippy::as_conversions,
+            clippy::cast_possible_truncation,
+            reason = "preserve the pager's existing u16 horizontal-scroll behavior at the ratatui boundary"
+        )]
         let paragraph = Paragraph::new(lines).scroll((0, self.h_scroll as u16));
         f.render_widget(paragraph, area);
     }
@@ -794,7 +814,7 @@ impl PagerState {
                     self.search_current = Some(pos.unwrap_or(0));
                 }
                 SearchDirection::Backward => {
-                    let viewport_end = self.scroll + self.terminal_height as usize;
+                    let viewport_end = self.scroll + usize::from(self.terminal_height);
                     let pos = self.search_matches.iter().rposition(|&m| m < viewport_end);
                     self.search_current = Some(pos.unwrap_or(self.search_matches.len() - 1));
                 }
@@ -806,7 +826,7 @@ impl PagerState {
     fn scroll_to_current_match(&mut self) {
         if let Some(idx) = self.search_current {
             let line = self.search_matches[idx];
-            let height = self.terminal_height as usize;
+            let height = usize::from(self.terminal_height);
             if line < self.scroll || line >= self.scroll + height {
                 self.scroll = line.saturating_sub(height / 3);
                 self.clamp_scroll();
@@ -864,7 +884,7 @@ impl PagerState {
                 SearchDirection::Forward => "/",
                 SearchDirection::Backward => "?",
             };
-            let current = self.search_current.map(|c| c + 1).unwrap_or(0);
+            let current = self.search_current.map_or(0, |c| c + 1);
             let total = self.search_matches.len();
             Some(Line::from(Span::styled(
                 format!("{}{} [{}/{}]", prefix, self.search_query, current, total),
@@ -904,6 +924,10 @@ impl PagerState {
         }
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "key dispatch keeps each navigation action visible in one match"
+    )]
     pub(crate) fn handle_key_event(&mut self, key: KeyEvent) -> KeyAction {
         if key.kind != KeyEventKind::Press {
             return KeyAction::Nothing;
@@ -913,7 +937,7 @@ impl PagerState {
             return self.handle_search_input(key);
         }
 
-        let page = (self.terminal_height as usize).saturating_sub(1).max(1);
+        let page = usize::from(self.terminal_height).saturating_sub(1).max(1);
         let half_page = (page / 2).max(1);
 
         // Check Ctrl combinations first
@@ -922,43 +946,43 @@ impl PagerState {
                 KeyCode::Char('d') => {
                     let max = self.max_scroll();
                     let new = (self.scroll + half_page).min(max);
-                    if new != self.scroll {
+                    if new == self.scroll {
+                        KeyAction::Nothing
+                    } else {
                         self.scroll = new;
                         self.update_active_from_viewport();
                         KeyAction::Redraw
-                    } else {
-                        KeyAction::Nothing
                     }
                 }
                 KeyCode::Char('u') => {
                     let new = self.scroll.saturating_sub(half_page);
-                    if new != self.scroll {
+                    if new == self.scroll {
+                        KeyAction::Nothing
+                    } else {
                         self.scroll = new;
                         self.update_active_from_viewport();
                         KeyAction::Redraw
-                    } else {
-                        KeyAction::Nothing
                     }
                 }
                 KeyCode::Char('f') => {
                     let max = self.max_scroll();
                     let new = (self.scroll + page).min(max);
-                    if new != self.scroll {
+                    if new == self.scroll {
+                        KeyAction::Nothing
+                    } else {
                         self.scroll = new;
                         self.update_active_from_viewport();
                         KeyAction::Redraw
-                    } else {
-                        KeyAction::Nothing
                     }
                 }
                 KeyCode::Char('b') => {
                     let new = self.scroll.saturating_sub(page);
-                    if new != self.scroll {
+                    if new == self.scroll {
+                        KeyAction::Nothing
+                    } else {
                         self.scroll = new;
                         self.update_active_from_viewport();
                         KeyAction::Redraw
-                    } else {
-                        KeyAction::Nothing
                     }
                 }
                 _ => KeyAction::Nothing,
@@ -989,22 +1013,22 @@ impl PagerState {
             KeyCode::PageDown | KeyCode::Char(' ') => {
                 let max = self.max_scroll();
                 let new = (self.scroll + page).min(max);
-                if new != self.scroll {
+                if new == self.scroll {
+                    KeyAction::Nothing
+                } else {
                     self.scroll = new;
                     self.update_active_from_viewport();
                     KeyAction::Redraw
-                } else {
-                    KeyAction::Nothing
                 }
             }
             KeyCode::PageUp => {
                 let new = self.scroll.saturating_sub(page);
-                if new != self.scroll {
+                if new == self.scroll {
+                    KeyAction::Nothing
+                } else {
                     self.scroll = new;
                     self.update_active_from_viewport();
                     KeyAction::Redraw
-                } else {
-                    KeyAction::Nothing
                 }
             }
             KeyCode::Home | KeyCode::Char('g') => {
@@ -1018,12 +1042,12 @@ impl PagerState {
             }
             KeyCode::End | KeyCode::Char('G') => {
                 let max = self.max_scroll();
-                if self.scroll != max {
+                if self.scroll == max {
+                    KeyAction::Nothing
+                } else {
                     self.scroll = max;
                     self.update_active_from_viewport();
                     KeyAction::Redraw
-                } else {
-                    KeyAction::Nothing
                 }
             }
             KeyCode::Right | KeyCode::Char('l') => {
@@ -1035,11 +1059,11 @@ impl PagerState {
                 KeyAction::Redraw
             }
             KeyCode::Tab => {
-                self.cycle_active(true);
+                self.cycle_active(CycleDirection::Forward);
                 KeyAction::Redraw
             }
             KeyCode::BackTab => {
-                self.cycle_active(false);
+                self.cycle_active(CycleDirection::Backward);
                 KeyAction::Redraw
             }
             KeyCode::Enter => {
@@ -1092,7 +1116,7 @@ impl PagerState {
 
 // ─── Public entry point ────────────────────────────────────────────────────
 
-pub fn run_pager(
+pub(crate) fn run_pager(
     content: Vec<RenderedBlock>,
     max_content_width: u16,
     theme: &'static crate::theme::Theme,
@@ -1185,7 +1209,7 @@ mod tests {
         // Continuation lines should start with at least 2 spaces of indent.
         for l in out.iter().skip(1) {
             let t = line_text(l);
-            assert!(t.starts_with("  "), "continuation lacks indent: `{}`", t);
+            assert!(t.starts_with("  "), "continuation lacks indent: `{t}`");
         }
     }
 
@@ -1264,7 +1288,7 @@ mod tests {
         (0..h)
             .map(|y| {
                 (0..w)
-                    .map(|x| buf.cell((x, y)).map(|c| c.symbol()).unwrap_or(" "))
+                    .map(|x| buf.cell((x, y)).map_or(" ", ratatui::buffer::Cell::symbol))
                     .collect::<String>()
             })
             .collect()
@@ -1317,9 +1341,9 @@ mod tests {
         assert!(rows[0].trim_start().starts_with("Title"));
         // Every wrapped prose row starts at the gutter and ends inside the column.
         for row in rows.iter().filter(|r| !r.trim().is_empty()) {
-            assert_eq!(leading_spaces(row), 50, "row not at gutter: {:?}", row);
+            assert_eq!(leading_spaces(row), 50, "row not at gutter: {row:?}");
             let right_edge = row.trim_end().chars().count();
-            assert!(right_edge <= 150, "row overflows column: {:?}", row);
+            assert!(right_edge <= 150, "row overflows column: {row:?}");
         }
     }
 
@@ -1398,7 +1422,7 @@ mod tests {
             .expect("collapsed indicator not drawn");
         // It is the only interactive block in view, so it is active ("▸ ...")
         // and its marker sits exactly at the gutter.
-        assert_eq!(leading_spaces(indicator), 30, "indicator: {:?}", indicator);
+        assert_eq!(leading_spaces(indicator), 30, "indicator: {indicator:?}");
         assert!(indicator.trim_start().starts_with("▸ [Flowchart"));
     }
 
@@ -1491,7 +1515,7 @@ mod tests {
                     PagerState::new(rendered, 50, term_w, DEFAULT_MAX_CONTENT_WIDTH, theme());
                 assert_eq!(
                     state.gutter,
-                    (term_w as usize - cw as usize) / 2,
+                    (usize::from(term_w) - usize::from(cw)) / 2,
                     "{}: gutter at width {}",
                     path.display(),
                     term_w
@@ -1500,7 +1524,7 @@ mod tests {
                     if let FlatLine::Styled(line) = fl {
                         let w = line_width(line);
                         assert!(
-                            w <= cw as usize,
+                            w <= usize::from(cw),
                             "{} @ {}: prose row {} cols exceeds column {}: {:?}",
                             path.display(),
                             term_w,

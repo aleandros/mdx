@@ -24,7 +24,7 @@ use ratatui::{
 use crate::pager::{KeyAction, PagerState, TerminalGuard};
 use crate::render::{self, MermaidMode, RenderedBlock};
 
-pub fn content_hash(content: &str) -> u64 {
+pub(crate) fn content_hash(content: &str) -> u64 {
     let mut hasher = DefaultHasher::new();
     content.hash(&mut hasher);
     hasher.finish()
@@ -43,19 +43,18 @@ fn start_watcher(path: &Path) -> Result<(Box<dyn Watcher + Send>, mpsc::Receiver
         Config::default(),
     );
 
-    let mut watcher: Box<dyn Watcher + Send> = match result {
-        Ok(w) => Box::new(w),
-        Err(_) => {
-            let config = Config::default().with_poll_interval(Duration::from_millis(500));
-            Box::new(PollWatcher::new(
-                move |res: notify::Result<notify::Event>| {
-                    if res.is_ok() {
-                        let _ = tx.send(());
-                    }
-                },
-                config,
-            )?)
-        }
+    let mut watcher: Box<dyn Watcher + Send> = if let Ok(w) = result {
+        Box::new(w)
+    } else {
+        let config = Config::default().with_poll_interval(Duration::from_millis(500));
+        Box::new(PollWatcher::new(
+            move |res: notify::Result<notify::Event>| {
+                if res.is_ok() {
+                    let _ = tx.send(());
+                }
+            },
+            config,
+        )?)
     };
 
     watcher.watch(path, RecursiveMode::NonRecursive)?;
@@ -63,12 +62,11 @@ fn start_watcher(path: &Path) -> Result<(Box<dyn Watcher + Send>, mpsc::Receiver
 }
 
 fn read_file_with_retry(path: &Path) -> Option<String> {
-    match std::fs::read_to_string(path) {
-        Ok(content) => Some(content),
-        Err(_) => {
-            std::thread::sleep(Duration::from_millis(50));
-            std::fs::read_to_string(path).ok()
-        }
+    if let Ok(content) = std::fs::read_to_string(path) {
+        Some(content)
+    } else {
+        std::thread::sleep(Duration::from_millis(50));
+        std::fs::read_to_string(path).ok()
     }
 }
 
@@ -79,7 +77,10 @@ struct MermaidCacheEntry {
     kind: crate::render::DiagramKind,
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "watch mode combines input, rendering, and terminal settings"
+)]
 fn diff_and_render(
     old_blocks: &[crate::parser::Block],
     old_groups: &[Vec<crate::render::RenderedBlock>],
@@ -90,10 +91,10 @@ fn diff_and_render(
     mermaid_mode: MermaidMode,
     mermaid_cache: &mut HashMap<usize, MermaidCacheEntry>,
 ) -> Vec<Vec<crate::render::RenderedBlock>> {
-    debug_assert_eq!(old_blocks.len(), old_groups.len());
-
     use crate::parser::Block;
     use crate::render::{Color, RenderedBlock, SpanStyle, StyledLine, StyledSpan};
+
+    debug_assert_eq!(old_blocks.len(), old_groups.len());
 
     let mut result = Vec::with_capacity(new_blocks.len());
 
@@ -210,7 +211,7 @@ impl StatusState {
             let age = self.message_time.map(|t| t.elapsed()).unwrap_or_default();
             if age < Duration::from_secs(3) {
                 spans.push(Span::styled(
-                    format!("│ {} ", msg),
+                    format!("│ {msg} "),
                     Style::default().fg(RColor::Yellow),
                 ));
             }
@@ -232,7 +233,11 @@ impl StatusState {
     }
 }
 
-pub fn run_watch(
+#[expect(
+    clippy::too_many_lines,
+    reason = "event loop coordinates terminal input, file changes, and redraws"
+)]
+pub(crate) fn run_watch(
     path: &Path,
     width: u16,
     max_content_width: u16,

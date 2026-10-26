@@ -3,20 +3,20 @@ use serde::Deserialize;
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Config {
-    pub theme: Option<String>,
-    pub ui_theme: Option<String>,
-    pub pager: Option<bool>,
-    pub width: Option<u16>,
+pub(crate) struct Config {
+    pub(crate) theme: Option<String>,
+    pub(crate) ui_theme: Option<String>,
+    pub(crate) pager: Option<bool>,
+    pub(crate) width: Option<u16>,
     /// Cap on the pager's content column; wider terminals center the content
     /// between margins. `0` disables the cap.
-    pub max_width: Option<u16>,
-    pub no_mermaid_rendering: Option<bool>,
-    pub split_mermaid_rendering: Option<bool>,
+    pub(crate) max_width: Option<u16>,
+    pub(crate) no_mermaid_rendering: Option<bool>,
+    pub(crate) split_mermaid_rendering: Option<bool>,
 }
 
 impl Config {
-    pub fn from_file(path: &std::path::Path) -> anyhow::Result<Config> {
+    pub(crate) fn from_file(path: &std::path::Path) -> anyhow::Result<Config> {
         let content = std::fs::read_to_string(path)
             .with_context(|| format!("failed to read config file {}", path.display()))?;
         let config: Config = toml::from_str(&content)
@@ -24,7 +24,7 @@ impl Config {
         Ok(config)
     }
 
-    pub fn merge(self, other: Config) -> Config {
+    pub(crate) fn merge(self, other: Config) -> Config {
         Config {
             theme: other.theme.or(self.theme),
             ui_theme: other.ui_theme.or(self.ui_theme),
@@ -41,7 +41,7 @@ impl Config {
     /// Discover and load config, merging layers.
     /// If `cli_config_path` is Some, only that file is loaded (error if missing).
     /// Otherwise: user config (optional) merged with project config (optional).
-    pub fn load(cli_config_path: Option<&std::path::Path>) -> anyhow::Result<Config> {
+    pub(crate) fn load(cli_config_path: Option<&std::path::Path>) -> anyhow::Result<Config> {
         if let Some(path) = cli_config_path {
             if !path.exists() {
                 anyhow::bail!("config file not found: {}", path.display());
@@ -66,9 +66,9 @@ impl Config {
         Ok(config)
     }
 
-    /// Returns path to user config: $XDG_CONFIG_HOME/mdx/config.toml
+    /// Returns path to user config: $`XDG_CONFIG_HOME/mdx/config.toml`
     /// Falls back to ~/.config/mdx/config.toml
-    pub fn user_config_path() -> Option<std::path::PathBuf> {
+    pub(crate) fn user_config_path() -> Option<std::path::PathBuf> {
         let config_dir = std::env::var("XDG_CONFIG_HOME")
             .ok()
             .map(std::path::PathBuf::from)
@@ -82,7 +82,7 @@ impl Config {
 
     /// Walk from CWD upward to find a directory containing .git,
     /// then check for .mdx.toml there.
-    pub fn project_config_path() -> Option<std::path::PathBuf> {
+    pub(crate) fn project_config_path() -> Option<std::path::PathBuf> {
         let mut dir = std::env::current_dir().ok()?;
         loop {
             if dir.join(".git").exists() {
@@ -96,7 +96,7 @@ impl Config {
     }
 
     /// Generate the default config file content with all keys commented out.
-    pub fn generate_default() -> &'static str {
+    pub(crate) fn generate_default() -> &'static str {
         "\
 # Syntax highlighting theme for code blocks
 # theme = \"base16-ocean.dark\"
@@ -198,7 +198,7 @@ mod tests {
         let result = Config::from_file(&path);
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
-        assert!(err.contains("failed to parse config file"), "err: {}", err);
+        assert!(err.contains("failed to parse config file"), "err: {err}");
     }
 
     #[test]
@@ -217,7 +217,7 @@ mod tests {
         let result = Config::from_file(path);
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
-        assert!(err.contains("failed to read config file"), "err: {}", err);
+        assert!(err.contains("failed to read config file"), "err: {err}");
     }
 
     #[test]
@@ -265,7 +265,7 @@ mod tests {
         let result = Config::load(Some(path));
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
-        assert!(err.contains("config file not found"), "err: {}", err);
+        assert!(err.contains("config file not found"), "err: {err}");
     }
 
     #[test]
@@ -276,19 +276,17 @@ mod tests {
 
     #[test]
     fn user_config_path_respects_xdg() {
-        // SAFETY: single-threaded test; no other threads reading this var concurrently.
-        unsafe {
-            std::env::set_var("XDG_CONFIG_HOME", "/tmp/mdx_xdg_test");
+        if !crate::test_env::in_child(
+            "config::tests::user_config_path_respects_xdg",
+            std::path::Path::new("/tmp/mdx_xdg_test"),
+        ) {
+            return;
         }
         let path = Config::user_config_path().unwrap();
         assert_eq!(
             path,
             std::path::PathBuf::from("/tmp/mdx_xdg_test/mdx/config.toml")
         );
-        // SAFETY: same as above.
-        unsafe {
-            std::env::remove_var("XDG_CONFIG_HOME");
-        }
     }
 
     #[test]

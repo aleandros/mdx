@@ -12,65 +12,65 @@ const NOTE_HEIGHT: usize = 3;
 const FRAGMENT_MARGIN: usize = 2;
 
 #[derive(Debug, Clone)]
-pub struct SequenceLayout {
-    pub participants: Vec<PositionedParticipant>,
-    pub messages: Vec<PositionedMessage>,
-    pub notes: Vec<PositionedNote>,
-    pub activations: Vec<PositionedActivation>,
-    pub fragments: Vec<PositionedFragment>,
-    pub width: usize,
-    pub height: usize,
+pub(crate) struct SequenceLayout {
+    pub(crate) participants: Vec<PositionedParticipant>,
+    pub(crate) messages: Vec<PositionedMessage>,
+    pub(crate) notes: Vec<PositionedNote>,
+    pub(crate) activations: Vec<PositionedActivation>,
+    pub(crate) fragments: Vec<PositionedFragment>,
+    pub(crate) width: usize,
+    pub(crate) height: usize,
 }
 
 #[derive(Debug, Clone)]
-pub struct PositionedParticipant {
-    pub label: String,
-    pub x: usize,
-    pub y: usize,
-    pub width: usize,
-    pub center_x: usize,
-    pub style: Option<crate::mermaid::NodeStyle>,
+pub(crate) struct PositionedParticipant {
+    pub(crate) label: String,
+    pub(crate) x: usize,
+    pub(crate) y: usize,
+    pub(crate) width: usize,
+    pub(crate) center_x: usize,
+    pub(crate) style: Option<crate::mermaid::NodeStyle>,
 }
 
 #[derive(Debug, Clone)]
-pub struct PositionedMessage {
-    pub from_x: usize,
-    pub to_x: usize,
-    pub y: usize,
-    pub label: String,
-    pub arrow: ArrowStyle,
-    pub self_message: bool,
-    pub edge_style: Option<crate::mermaid::MermaidEdgeStyle>,
+pub(crate) struct PositionedMessage {
+    pub(crate) from_x: usize,
+    pub(crate) to_x: usize,
+    pub(crate) y: usize,
+    pub(crate) label: String,
+    pub(crate) arrow: ArrowStyle,
+    pub(crate) self_message: bool,
+    pub(crate) edge_style: Option<crate::mermaid::MermaidEdgeStyle>,
 }
 
 #[derive(Debug, Clone)]
-pub struct PositionedNote {
-    pub x: usize,
-    pub y: usize,
-    pub width: usize,
-    pub height: usize,
-    pub text: String,
+pub(crate) struct PositionedNote {
+    pub(crate) x: usize,
+    pub(crate) y: usize,
+    pub(crate) width: usize,
+    pub(crate) height: usize,
+    pub(crate) text: String,
 }
 
 #[derive(Debug, Clone)]
-pub struct PositionedActivation {
-    pub x: usize,
-    pub y_start: usize,
-    pub y_end: usize,
+pub(crate) struct PositionedActivation {
+    pub(crate) x: usize,
+    pub(crate) y_start: usize,
+    pub(crate) y_end: usize,
 }
 
 #[derive(Debug, Clone)]
-pub struct PositionedFragment {
-    pub x: usize,
-    pub y: usize,
-    pub width: usize,
-    pub height: usize,
-    pub kind: FragmentKind,
-    pub label: String,
-    pub section_dividers: Vec<(usize, Option<String>)>,
+pub(crate) struct PositionedFragment {
+    pub(crate) x: usize,
+    pub(crate) y: usize,
+    pub(crate) width: usize,
+    pub(crate) height: usize,
+    pub(crate) kind: FragmentKind,
+    pub(crate) label: String,
+    pub(crate) section_dividers: Vec<(usize, Option<String>)>,
 }
 
-pub fn layout(diagram: &SequenceDiagram) -> SequenceLayout {
+pub(crate) fn layout(diagram: &SequenceDiagram) -> SequenceLayout {
     if diagram.participants.is_empty() {
         return SequenceLayout {
             participants: vec![],
@@ -164,7 +164,11 @@ pub fn layout(diagram: &SequenceDiagram) -> SequenceLayout {
         &mut activations,
         &mut fragments,
         &mut activation_stacks,
-        diagram.autonumber,
+        if diagram.autonumber {
+            MessageNumbering::Enabled
+        } else {
+            MessageNumbering::Disabled
+        },
         &mut message_counter,
     );
 
@@ -196,13 +200,11 @@ fn collect_message_gaps(
                 if from == to {
                     continue; // self-message, no inter-participant gap needed
                 }
-                let fi = match participant_index.get(from) {
-                    Some(&i) => i,
-                    None => continue,
+                let Some(&fi) = participant_index.get(from) else {
+                    continue;
                 };
-                let ti = match participant_index.get(to) {
-                    Some(&i) => i,
-                    None => continue,
+                let Some(&ti) = participant_index.get(to) else {
+                    continue;
                 };
                 let (left, right) = if fi < ti { (fi, ti) } else { (ti, fi) };
                 let num_gaps = right - left;
@@ -217,7 +219,7 @@ fn collect_message_gaps(
                 if current_span < label_needed {
                     let extra = label_needed - current_span;
                     let extra_per_gap = extra.div_ceil(num_gaps);
-                    for gap in gaps[left..right].iter_mut() {
+                    for gap in &mut gaps[left..right] {
                         *gap += extra_per_gap;
                     }
                 }
@@ -232,8 +234,21 @@ fn collect_message_gaps(
     }
 }
 
-/// Process events recursively, advancing current_y and collecting positioned items.
-#[allow(clippy::too_many_arguments)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum MessageNumbering {
+    Enabled,
+    Disabled,
+}
+
+/// Process events recursively, advancing `current_y` and collecting positioned items.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "recursive layout carries shared geometry and output accumulators"
+)]
+#[expect(
+    clippy::too_many_lines,
+    reason = "each event variant advances shared recursive sequence layout state"
+)]
 fn process_events(
     events: &[Event],
     participant_index: &HashMap<String, usize>,
@@ -245,7 +260,7 @@ fn process_events(
     activations: &mut Vec<PositionedActivation>,
     fragments: &mut Vec<PositionedFragment>,
     activation_stacks: &mut Vec<Vec<usize>>,
-    autonumber: bool,
+    numbering: MessageNumbering,
     message_counter: &mut usize,
 ) {
     for event in events {
@@ -264,7 +279,7 @@ fn process_events(
                 let from_x = center_xs[fi];
                 let to_x = center_xs[ti];
 
-                let display_label = if autonumber {
+                let display_label = if numbering == MessageNumbering::Enabled {
                     *message_counter += 1;
                     format!("{}. {}", *message_counter, label)
                 } else {
@@ -400,7 +415,7 @@ fn process_events(
                         activations,
                         fragments,
                         activation_stacks,
-                        autonumber,
+                        numbering,
                         message_counter,
                     );
 
@@ -420,9 +435,9 @@ fn process_events(
                 // Minimum width: header text "─ {kind} [{label}] ─┐" needs space
                 let kind_str_len = match kind {
                     super::FragmentKind::Loop => 4,
-                    super::FragmentKind::Alt => 3,
-                    super::FragmentKind::Opt => 3,
-                    super::FragmentKind::Par => 3,
+                    super::FragmentKind::Alt
+                    | super::FragmentKind::Opt
+                    | super::FragmentKind::Par => 3,
                 };
                 let header_min = if label.is_empty() {
                     kind_str_len + 4 // "─ kind ─┐" plus "┌" = kind + 5 chars min
@@ -479,9 +494,9 @@ fn collect_participant_ids_in_events(events: &[Event], ids: &mut Vec<String>) {
                 ids.push(participant.clone());
             }
             Event::Fragment { sections, .. } => {
-                collect_participant_ids_in_sections(sections)
-                    .into_iter()
-                    .for_each(|id| ids.push(id));
+                for id in collect_participant_ids_in_sections(sections) {
+                    ids.push(id);
+                }
             }
         }
     }

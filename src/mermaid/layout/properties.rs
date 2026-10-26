@@ -72,18 +72,18 @@ proptest! {
     #![proptest_config(strategies::model_config(64))]
     #[test]
     fn property_dag_geometry(input in strategies::graph()) {
-        let chart = crate::mermaid::parse::parse_flowchart(&input.flowchart(true)).unwrap();
+        let chart = crate::mermaid::parse::parse_flowchart(&input.flowchart(crate::strategies::Topology::Dag)).unwrap();
         check_chart(&chart);
     }
     #[test]
     fn property_cyclic_geometry(input in strategies::graph()) {
-        let chart = crate::mermaid::parse::parse_flowchart(&input.flowchart(false)).unwrap();
+        let chart = crate::mermaid::parse::parse_flowchart(&input.flowchart(crate::strategies::Topology::Cyclic)).unwrap();
         check_chart(&chart);
     }
     #[test]
     fn property_er_geometry(input in strategies::graph(), width in strategies::width()) {
         let mut diagram = crate::mermaid::er::parse::parse_er(&input.er()).unwrap();
-        let chart = crate::mermaid::er::layout::to_flowchart(&mut diagram,width as usize);
+        let chart = crate::mermaid::er::layout::to_flowchart(&mut diagram,usize::from(width));
         check_chart(&chart);
     }
 }

@@ -1,23 +1,23 @@
-pub mod ascii;
-pub mod layout;
-pub mod parse;
+pub(crate) mod ascii;
+pub(crate) mod layout;
+pub(crate) mod parse;
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct SequenceDiagram {
-    pub participants: Vec<Participant>,
-    pub events: Vec<Event>,
-    pub autonumber: bool,
+pub(crate) struct SequenceDiagram {
+    pub(crate) participants: Vec<Participant>,
+    pub(crate) events: Vec<Event>,
+    pub(crate) autonumber: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct Participant {
-    pub id: String,
-    pub label: String,
-    pub style: Option<crate::mermaid::NodeStyle>,
+pub(crate) struct Participant {
+    pub(crate) id: String,
+    pub(crate) label: String,
+    pub(crate) style: Option<crate::mermaid::NodeStyle>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum Event {
+pub(crate) enum Event {
     Message {
         from: String,
         to: String,
@@ -44,13 +44,13 @@ pub enum Event {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct FragmentSection {
-    pub label: Option<String>,
-    pub events: Vec<Event>,
+pub(crate) struct FragmentSection {
+    pub(crate) label: Option<String>,
+    pub(crate) events: Vec<Event>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum ArrowStyle {
+pub(crate) enum ArrowStyle {
     SolidArrow,
     DashedArrow,
     SolidOpen,
@@ -60,14 +60,14 @@ pub enum ArrowStyle {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum NotePosition {
+pub(crate) enum NotePosition {
     RightOf,
     LeftOf,
     Over,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum FragmentKind {
+pub(crate) enum FragmentKind {
     Loop,
     Alt,
     Opt,
