@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.20] - 2026-10-26
+
+### Added
+- Graphics inside tmux. With `set -g allow-passthrough on` (tmux 3.3+),
+  `auto` now turns graphics on in a tmux pane when tmux sends 24-bit color to
+  the terminal outside it (the `RGB` feature), that terminal is kitty 0.28+
+  (from tmux's `client_termtype`), and the Kitty graphics query sent through
+  passthrough is answered. Image transmissions, placements and deletions are
+  wrapped in tmux passthrough, one sequence (and so one 4096-byte chunk) per
+  passthrough; the placeholder cells stay ordinary text that tmux redraws, so
+  inline images and diagrams scroll with the pane and come back after
+  switching windows. Otherwise graphics stay off, with the reason. (#17)
+- `--debug-graphics` shows the tmux version, the pane's `allow-passthrough`
+  and whether tmux sends 24-bit color, and names the terminal outside tmux.
+
 ## [0.1.19] - 2026-10-26
 
 ### Added

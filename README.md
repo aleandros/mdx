@@ -45,7 +45,8 @@ The installer detects your OS and architecture and drops the binary in `/usr/loc
 ## Graphics
 
 mdx decides at startup whether the terminal can show pixel graphics. It turns
-graphics on only in the interactive pager, in kitty 0.28 or later, outside tmux.
+graphics on only in the interactive pager, in kitty 0.28 or later, including
+inside tmux 3.3+ with passthrough enabled.
 With graphics on, local PNG, JPEG and GIF images (`![alt](diagram.png)`) show
 inline, scaled to the content column; everywhere else they stay a text
 placeholder. Mermaid diagrams are drawn as images too, with real shapes and
@@ -62,6 +63,13 @@ MDX_GRAPHICS=off mdx README.md
 ```toml
 # ~/.config/mdx/config.toml or .mdx.toml
 graphics = "off"
+```
+
+Inside tmux, allow graphics to pass through to the terminal in
+`~/.tmux.conf` (tmux 3.3 or later):
+
+```tmux
+set -g allow-passthrough on
 ```
 
 `mdx --debug-graphics` prints the decision and the reason. See

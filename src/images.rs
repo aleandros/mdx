@@ -261,6 +261,8 @@ pub(crate) struct ImageStore {
     output: Vec<u8>,
     /// Ids whose data reached the terminal and must be deleted on exit.
     sent: HashSet<u32>,
+    /// Wrap output in tmux passthrough, for a pager running inside tmux.
+    via_tmux: bool,
 }
 
 impl ImageStore {
@@ -283,6 +285,23 @@ impl ImageStore {
             next_id: first_id(),
             output: Vec::new(),
             sent: HashSet::new(),
+            via_tmux: false,
+        }
+    }
+
+    /// Wrap every escape sequence in tmux passthrough, so the terminal
+    /// outside tmux receives it.
+    pub(crate) fn through_tmux(mut self) -> Self {
+        self.via_tmux = true;
+        self
+    }
+
+    /// `bytes` as written to the terminal: wrapped for tmux when needed.
+    fn encode(&self, bytes: Vec<u8>) -> Vec<u8> {
+        if self.via_tmux {
+            kitty::tmux_passthrough(&bytes)
+        } else {
+            bytes
         }
     }
 
@@ -532,7 +551,8 @@ impl ImageStore {
                 self.sent.insert(id);
             }
         }
-        std::mem::take(&mut self.output)
+        let output = std::mem::take(&mut self.output);
+        self.encode(output)
     }
 
     /// Delete every image this store sent, so none stays in the terminal's
@@ -540,7 +560,8 @@ impl ImageStore {
     pub(crate) fn delete_all(&mut self) -> Vec<u8> {
         let mut ids: Vec<u32> = self.sent.drain().collect();
         ids.sort_unstable();
-        ids.into_iter().flat_map(kitty::delete).collect()
+        let output = ids.into_iter().flat_map(kitty::delete).collect();
+        self.encode(output)
     }
 
     #[cfg(test)]
@@ -747,6 +768,21 @@ mod tests {
         let narrow = store.layout("a.png", 40, 30).unwrap();
         assert_eq!((narrow.cols, narrow.rows), (40, 8));
         assert_eq!(store.take_output(), kitty::place(id, 40, 8));
+    }
+
+    #[test]
+    fn tmux_store_wraps_placements_and_deletes() {
+        let mut store = ImageStore::for_tests(PathBuf::from("/docs"), (10, 20)).through_tmux();
+        let id = store.insert_ready("a.png", (100, 40));
+        store.layout("a.png", 80, 30).unwrap();
+        assert_eq!(
+            store.take_output(),
+            kitty::tmux_passthrough(&kitty::place(id, 10, 2))
+        );
+        assert_eq!(
+            store.delete_all(),
+            kitty::tmux_passthrough(&kitty::delete(id))
+        );
     }
 
     #[test]

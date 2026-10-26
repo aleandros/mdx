@@ -449,10 +449,12 @@ impl PagerState {
         self.graphics = graphics;
         let no_color = std::env::var_os("NO_COLOR");
         if graphics.supported && crate::images::allowed_with_no_color(no_color.as_deref()) {
-            self.images = Some(crate::images::ImageStore::new(
-                base_dir.clone(),
-                graphics.cell_px,
-            ));
+            let images = crate::images::ImageStore::new(base_dir.clone(), graphics.cell_px);
+            self.images = Some(if graphics.via_tmux {
+                images.through_tmux()
+            } else {
+                images
+            });
         }
         self.base_dir = base_dir;
         self.rebuild_flat_lines();
@@ -1446,6 +1448,7 @@ mod tests {
         let detection = |probe| crate::graphics::Detection {
             caps: crate::graphics::GraphicsCaps::unsupported("test"),
             probe,
+            tmux: None,
         };
         let mut out = Vec::new();
         clear_after_probe(&mut out, &detection(crate::graphics::Probe::NotSent)).unwrap();

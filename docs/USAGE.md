@@ -87,8 +87,8 @@ An invalid `MDX_GRAPHICS` value is ignored with a warning.
    reaching the pager as keystrokes.
 3. The terminal is known to support Unicode placeholders. Only kitty 0.28 or
    later is on this list; other terminals are added once verified.
-4. mdx is not running inside tmux. tmux passthrough is not supported yet, so
-   `auto` resolves to off when `TMUX` is set.
+4. Inside tmux (`TMUX` is set), tmux can pass graphics through to the
+   terminal outside it; see [tmux](#tmux) for the extra conditions.
 
 mdx also records the terminal cell size in pixels, from `CSI 16 t` or the
 `TIOCGWINSZ` pixel fields.
@@ -108,6 +108,59 @@ terminal: kitty(0.35.2)
 cell size: 10x20 px
 tmux: no
 ```
+
+### tmux
+
+tmux does not speak the Kitty graphics protocol itself, but tmux 3.3 and later
+can pass escape sequences through to the terminal outside it. Turn that on in
+`~/.tmux.conf`:
+
+```tmux
+set -g allow-passthrough on
+```
+
+Inside tmux, `auto` turns graphics on only when all of these hold, in
+addition to the first rule above:
+
+1. tmux is 3.3 or later and `allow-passthrough` is `on` or `all` for the pane.
+2. tmux sends 24-bit color to the outer terminal (the `RGB` terminal
+   feature), because the image id travels in the text color. tmux usually
+   detects it; if not, add `set -as terminal-features ",xterm-kitty:RGB"`.
+3. tmux reports the outer terminal (`client_termtype`, from its `XTVERSION`
+   reply) as one with verified Unicode placeholder support, i.e. kitty 0.28
+   or later.
+4. The Kitty graphics query, sent in a passthrough sequence, is answered
+   through tmux within 1 s (2 s over SSH). tmux answers DA1 itself, so mdx
+   waits for the graphics reply instead.
+
+mdx reads these settings with `tmux display-message` and shows them, and the
+reason when graphics stay off, in `--debug-graphics`:
+
+```
+graphics: off
+reason: tmux allow-passthrough is off (set -g allow-passthrough on)
+setting: auto (from default)
+query: not sent
+terminal: kitty(0.35.2)
+cell size: unknown
+tmux: yes, version 3.4, allow-passthrough off, 24-bit color yes
+```
+
+With graphics on, only image data and placements go through passthrough; the
+placeholder cells are ordinary text that tmux stores and redraws itself, so
+images scroll with the pane and come back after switching windows. Known
+limits:
+
+- Images stay in the outer terminal's memory while you switch tmux windows,
+  sessions or panes, and are deleted when mdx exits.
+- With `allow-passthrough on`, tmux drops passthrough from panes that are not
+  visible. An image that finishes loading or changes (watch mode) while the
+  pane is hidden stays blank until it is sent again; `allow-passthrough all`
+  avoids that.
+- Splitting or zooming the pane resizes it, and images are fitted to the new
+  size.
+- With several tmux clients attached, mdx checks one client's terminal, and
+  tmux passes the images to every client showing the pane.
 
 ### Inline images
 
