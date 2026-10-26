@@ -35,6 +35,7 @@ Pager keybindings:
   n / N               Next / previous match
   Tab / Shift-Tab     Cycle diagrams/images
   Enter               Expand/collapse diagram, open image
+  i                   Switch diagram between image and ASCII (graphics on)
   q / Esc             Quit";
 
 #[derive(Parser)]
@@ -130,6 +131,11 @@ struct Args {
     #[arg(long, value_enum, value_name = "MODE")]
     graphics: Option<graphics::GraphicsMode>,
 
+    /// Mermaid diagrams in the pager when graphics are on: on (images) or
+    /// off (ASCII). `i` switches one diagram. Overrides the config [default: on]
+    #[arg(long, value_enum, value_name = "MODE")]
+    mermaid_graphics: Option<graphics::MermaidGraphics>,
+
     /// Print whether graphics would be enabled, and why, then exit
     #[arg(long)]
     debug_graphics: bool,
@@ -206,6 +212,14 @@ fn resolve_mermaid_mode(no_mermaid: bool, split_mermaid: bool) -> render::Mermai
     }
 }
 
+/// The CLI flag wins over the config; both unset means images.
+fn resolve_mermaid_graphics(
+    cli: Option<graphics::MermaidGraphics>,
+    config: Option<graphics::MermaidGraphics>,
+) -> graphics::MermaidGraphics {
+    cli.or(config).unwrap_or_default()
+}
+
 fn resolve_ui_theme(name: Option<&str>) -> Result<&'static theme::Theme> {
     match name {
         Some(n) => theme::Theme::resolve(n).map_err(|e| anyhow::anyhow!(e)),
@@ -273,6 +287,16 @@ fn setup_panic_hook() {
         );
         original_hook(info);
     }));
+}
+
+/// `--debug-graphics`: run the graphics detection and print the decision.
+fn print_graphics_report(setting: graphics::GraphicsSetting, target: graphics::OutputTarget) {
+    let detection = graphics::detect(setting, target);
+    if !matches!(detection.probe, graphics::Probe::NotSent) {
+        // Erase any part of the query a terminal printed instead of parsing.
+        print!("\r\x1b[2K");
+    }
+    print!("{}", graphics::report(setting, &detection));
 }
 
 fn run_init() -> Result<()> {
@@ -347,18 +371,14 @@ fn main() -> Result<()> {
         std::io::stdout().is_terminal()
     };
     let graphics_setting = graphics::setting_from_env(args.graphics, config.graphics);
+    let mermaid_graphics = resolve_mermaid_graphics(args.mermaid_graphics, config.mermaid_graphics);
     let graphics_target = if use_pager || args.watch {
         graphics::OutputTarget::Pager
     } else {
         graphics::OutputTarget::Plain
     };
     if args.debug_graphics {
-        let detection = graphics::detect(graphics_setting, graphics_target);
-        if !matches!(detection.probe, graphics::Probe::NotSent) {
-            // Erase any part of the query a terminal printed instead of parsing.
-            print!("\r\x1b[2K");
-        }
-        print!("{}", graphics::report(graphics_setting, &detection));
+        print_graphics_report(graphics_setting, graphics_target);
         return Ok(());
     }
 
@@ -387,6 +407,7 @@ fn main() -> Result<()> {
             ui_theme,
             mermaid_mode,
             graphics_setting,
+            mermaid_graphics,
         );
     }
 
@@ -401,6 +422,7 @@ fn main() -> Result<()> {
             max_content_width,
             ui_theme,
             graphics_setting,
+            mermaid_graphics,
             args.file
                 .as_deref()
                 .map_or_else(|| PathBuf::from("."), watch::base_dir),
@@ -555,6 +577,35 @@ mod tests {
     }
 
     #[test]
+    fn test_args_mermaid_graphics_flag() {
+        let cli = Cli::parse_from(["mdx", "--mermaid-graphics", "off", "file.md"]);
+        assert_eq!(
+            cli.args.mermaid_graphics,
+            Some(graphics::MermaidGraphics::Off)
+        );
+        let cli = Cli::parse_from(["mdx", "--mermaid-graphics", "on", "file.md"]);
+        assert_eq!(
+            cli.args.mermaid_graphics,
+            Some(graphics::MermaidGraphics::On)
+        );
+        assert_eq!(
+            Cli::parse_from(["mdx", "file.md"]).args.mermaid_graphics,
+            None
+        );
+        assert!(Cli::try_parse_from(["mdx", "--mermaid-graphics", "auto", "file.md"]).is_err());
+        assert!(Cli::try_parse_from(["mdx", "embed", "--mermaid-graphics", "on"]).is_err());
+    }
+
+    #[test]
+    fn test_mermaid_graphics_cli_wins_over_config() {
+        use graphics::MermaidGraphics::{Off, On};
+        assert_eq!(resolve_mermaid_graphics(None, None), On);
+        assert_eq!(resolve_mermaid_graphics(None, Some(Off)), Off);
+        assert_eq!(resolve_mermaid_graphics(Some(On), Some(Off)), On);
+        assert_eq!(resolve_mermaid_graphics(Some(Off), Some(On)), Off);
+    }
+
+    #[test]
     fn test_update_subcommand() {
         let cli = Cli::parse_from(["mdx", "update"]);
         assert!(matches!(cli.command, Some(Commands::Update)));
@@ -575,6 +626,7 @@ mod tests {
             no_mermaid_rendering: false,
             split_mermaid_rendering: false,
             graphics: None,
+            mermaid_graphics: None,
             debug_graphics: false,
         };
         let result = validate_watch_args(&args);
@@ -597,6 +649,7 @@ mod tests {
             no_mermaid_rendering: false,
             split_mermaid_rendering: false,
             graphics: None,
+            mermaid_graphics: None,
             debug_graphics: false,
         };
         let result = validate_watch_args(&args);
@@ -619,6 +672,7 @@ mod tests {
             no_mermaid_rendering: false,
             split_mermaid_rendering: false,
             graphics: None,
+            mermaid_graphics: None,
             debug_graphics: false,
         };
         let result = validate_watch_args(&args);

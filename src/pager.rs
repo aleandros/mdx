@@ -364,6 +364,9 @@ pub(crate) struct InteractiveEntry {
     pub(crate) block_index: usize,
     pub(crate) flat_line_index: usize,
     pub(crate) flat_line_end: usize, // exclusive
+    /// A diagram too large to show by default, which `Enter` expands and
+    /// collapses. Small diagrams are selectable only for `i`.
+    pub(crate) collapsible: bool,
 }
 
 // ─── PagerState ────────────────────────────────────────────────────────────
@@ -374,6 +377,13 @@ pub(crate) struct PagerState {
     pub(crate) scroll: usize,
     pub(crate) h_scroll: usize,
     pub(crate) expanded: HashSet<usize>,
+    /// Diagrams (by block index) the user switched away from the session
+    /// default with `i`: shown as ASCII when `diagram_images`, as images
+    /// otherwise.
+    pub(crate) toggled_diagrams: HashSet<usize>,
+    /// Whether diagrams start as images when graphics are on
+    /// (`--mermaid-graphics`).
+    diagram_images: bool,
     pub(crate) active: Option<usize>,
     interactive_blocks: Vec<InteractiveEntry>,
     pub(crate) terminal_height: u16,
@@ -415,6 +425,8 @@ impl PagerState {
             scroll: 0,
             h_scroll: 0,
             expanded: HashSet::new(),
+            toggled_diagrams: HashSet::new(),
+            diagram_images: true,
             active: None,
             interactive_blocks: Vec::new(),
             terminal_height,
@@ -457,6 +469,19 @@ impl PagerState {
             });
         }
         self.base_dir = base_dir;
+        self.rebuild_flat_lines();
+        self.update_active_from_viewport();
+        self
+    }
+
+    /// Start diagrams as images (`On`) or as ASCII (`Off`) when graphics are
+    /// on. Call it before [`Self::with_graphics`], so diagrams that start as
+    /// ASCII are never rasterized.
+    pub(crate) fn with_mermaid_graphics(
+        mut self,
+        mermaid_graphics: crate::graphics::MermaidGraphics,
+    ) -> Self {
+        self.diagram_images = mermaid_graphics == crate::graphics::MermaidGraphics::On;
         self.rebuild_flat_lines();
         self.update_active_from_viewport();
         self
@@ -591,8 +616,15 @@ impl PagerState {
                         terminal_width.saturating_sub(diagram_width) / 2
                     };
 
+                    // With graphics on, `i` switches a diagram between its
+                    // image and ASCII, so every such diagram is selectable.
+                    let switchable = image.is_some() && self.images.is_some();
+                    let show_image =
+                        self.diagram_images != self.toggled_diagrams.contains(&block_index);
+
                     // Pad with a blank line above so collapsed indicators (and
-                    // expanded diagrams) don't run flush against neighboring text.
+                    // expanded diagrams) don't run flush against neighboring
+                    // text. The active diagram's image/ASCII hint goes here.
                     self.flat_lines.push(FlatLine::Styled(StyledLine::empty()));
 
                     if is_large && !self.expanded.contains(&block_index) {
@@ -607,6 +639,7 @@ impl PagerState {
                             block_index,
                             flat_line_index,
                             flat_line_end: flat_line_index + 1,
+                            collapsible: true,
                         });
                     } else {
                         let flat_line_index = self.flat_lines.len();
@@ -614,6 +647,7 @@ impl PagerState {
                         // over the same cells, once it has been rasterized.
                         let placed = image
                             .as_deref()
+                            .filter(|_| show_image)
                             .zip(self.images.as_mut())
                             .and_then(|(image, images)| images.diagram(image));
                         for (row, line) in lines.iter().enumerate() {
@@ -629,11 +663,12 @@ impl PagerState {
                                 None => FlatLine::DiagramAscii { line, indent },
                             });
                         }
-                        if is_large {
+                        if is_large || switchable {
                             self.interactive_blocks.push(InteractiveEntry {
                                 block_index,
                                 flat_line_index,
                                 flat_line_end: flat_line_index + lines.len(),
+                                collapsible: is_large,
                             });
                         }
                     }
@@ -667,6 +702,7 @@ impl PagerState {
                         block_index,
                         flat_line_index,
                         flat_line_end: self.flat_lines.len(),
+                        collapsible: false,
                     });
                 }
             }
@@ -697,6 +733,8 @@ impl PagerState {
     pub(crate) fn replace_content(&mut self, content: Vec<RenderedBlock>) {
         self.content = content;
         self.expanded
+            .retain(|&i| matches!(self.content.get(i), Some(RenderedBlock::Diagram { .. })));
+        self.toggled_diagrams
             .retain(|&i| matches!(self.content.get(i), Some(RenderedBlock::Diagram { .. })));
         if let Some(images) = &mut self.images {
             images.retain(self.content.iter().filter_map(|block| match block {
@@ -753,7 +791,12 @@ impl PagerState {
 
         // Scroll to make active block visible
         if let Some(idx) = self.active {
-            let flat_idx = self.interactive_blocks[idx].flat_line_index;
+            let entry = &self.interactive_blocks[idx];
+            let mut flat_idx = entry.flat_line_index;
+            // Show the image/ASCII hint on the row above a diagram too.
+            if self.can_switch_diagram(entry.block_index) {
+                flat_idx = flat_idx.saturating_sub(1);
+            }
             let height = usize::from(self.terminal_height);
             if flat_idx < self.scroll {
                 self.scroll = flat_idx;
@@ -765,12 +808,14 @@ impl PagerState {
     }
 
     pub(crate) fn activate_current(&mut self) {
-        let block_index = match self.active {
-            Some(idx) => self.interactive_blocks[idx].block_index,
-            None => return,
+        let Some(entry) = self.active_entry() else {
+            return;
         };
+        let (block_index, collapsible) = (entry.block_index, entry.collapsible);
 
         match &self.content[block_index] {
+            // A small diagram (selectable only for `i`) has nothing to expand.
+            RenderedBlock::Diagram { .. } if !collapsible => {}
             RenderedBlock::Diagram { .. } => {
                 if self.expanded.contains(&block_index) {
                     self.expanded.remove(&block_index);
@@ -798,6 +843,112 @@ impl PagerState {
             }
             RenderedBlock::Lines(_) => {}
         }
+    }
+
+    /// Whether `i` can switch block `block_index` between image and ASCII:
+    /// graphics are on and the block is a diagram the SVG backend can draw.
+    fn can_switch_diagram(&self, block_index: usize) -> bool {
+        self.images.is_some()
+            && matches!(
+                self.content.get(block_index),
+                Some(RenderedBlock::Diagram { image: Some(_), .. })
+            )
+    }
+
+    /// Whether diagram `block_index` is (or, collapsed, would be) drawn as
+    /// an image rather than ASCII.
+    fn diagram_shows_image(&self, block_index: usize) -> bool {
+        self.diagram_images != self.toggled_diagrams.contains(&block_index)
+    }
+
+    /// Switch diagram `block_index` between image and ASCII. Image rows and
+    /// ASCII rows map one to one, so neither the scroll position nor the
+    /// search matches move.
+    fn switch_diagram(&mut self, block_index: usize) {
+        if !self.toggled_diagrams.remove(&block_index) {
+            self.toggled_diagrams.insert(block_index);
+        }
+        let current = self.search_current;
+        self.rebuild_flat_lines();
+        if current.is_some_and(|c| c < self.search_matches.len()) {
+            self.search_current = current;
+        }
+    }
+
+    /// The `i` key: switch the active diagram between its image and its
+    /// ASCII drawing. A collapsed diagram stays collapsed and shows the
+    /// chosen form when expanded. Returns whether anything changed; without
+    /// graphics it never does.
+    pub(crate) fn toggle_active_diagram_image(&mut self) -> bool {
+        let Some(block_index) = self.active_entry().map(|e| e.block_index) else {
+            return false;
+        };
+        if !self.can_switch_diagram(block_index) {
+            return false;
+        }
+        self.switch_diagram(block_index);
+        true
+    }
+
+    /// Switch the diagram holding flat line `line` to ASCII if it is drawn
+    /// (or waiting to be drawn) as an image, so a search match inside it is
+    /// visible.
+    fn show_ascii_at(&mut self, line: usize) {
+        let block_index = self
+            .interactive_blocks
+            .iter()
+            .find(|e| (e.flat_line_index..e.flat_line_end).contains(&line))
+            .map(|e| e.block_index);
+        if let Some(block_index) = block_index
+            && self.can_switch_diagram(block_index)
+            && self.diagram_shows_image(block_index)
+        {
+            self.switch_diagram(block_index);
+        }
+    }
+
+    /// The hint naming the form the active diagram is in and the key that
+    /// switches it, drawn on the blank row above the diagram, or on the one
+    /// below when the row above is scrolled out of view. `None` for every
+    /// other row, and whenever `i` would do nothing.
+    fn diagram_hint(&self, flat_line_index: usize) -> Option<Line<'static>> {
+        let entry = self.active_entry()?;
+        let above = entry.flat_line_index.checked_sub(1);
+        let hint_row = match above {
+            Some(row) if row >= self.scroll => row,
+            _ => entry.flat_line_end,
+        };
+        if hint_row != flat_line_index || !self.can_switch_diagram(entry.block_index) {
+            return None;
+        }
+        let text = if !self.diagram_shows_image(entry.block_index) {
+            "[ASCII — i for image]"
+        } else if matches!(
+            self.flat_lines.get(entry.flat_line_index),
+            Some(FlatLine::DiagramAscii { .. })
+        ) {
+            let pending = match (&self.content[entry.block_index], &self.images) {
+                (
+                    RenderedBlock::Diagram {
+                        image: Some(image), ..
+                    },
+                    Some(images),
+                ) => images.diagram_pending(image),
+                _ => false,
+            };
+            if pending {
+                "[image loading — i for ASCII]"
+            } else {
+                "[image unavailable — i for ASCII]"
+            }
+        } else {
+            "[image — i for ASCII]"
+        };
+        let color = color_to_ratatui(&self.theme.diagram_collapsed);
+        Some(Line::from(Span::styled(
+            format!("  {text}"),
+            Style::default().fg(color).add_modifier(Modifier::DIM),
+        )))
     }
 
     fn active_entry(&self) -> Option<&InteractiveEntry> {
@@ -828,7 +979,11 @@ impl PagerState {
         let collapsed_color = color_to_ratatui(&self.theme.diagram_collapsed);
 
         match flat {
-            FlatLine::Styled(line) => (self.gutter, styled_line_to_ratatui(line)),
+            FlatLine::Styled(line) => (
+                self.gutter,
+                self.diagram_hint(flat_line_index)
+                    .unwrap_or_else(|| styled_line_to_ratatui(line)),
+            ),
             FlatLine::DiagramAscii {
                 line: styled_line,
                 indent,
@@ -1036,9 +1191,12 @@ impl PagerState {
         }
     }
 
+    /// Scroll the current match into view. A match inside a diagram drawn
+    /// as an image switches that diagram to ASCII, where the text shows.
     fn scroll_to_current_match(&mut self) {
         if let Some(idx) = self.search_current {
             let line = self.search_matches[idx];
+            self.show_ascii_at(line);
             let height = usize::from(self.terminal_height);
             if line < self.scroll || line >= self.scroll + height {
                 self.scroll = line.saturating_sub(height / 3);
@@ -1283,6 +1441,13 @@ impl PagerState {
                 self.activate_current();
                 KeyAction::Redraw
             }
+            KeyCode::Char('i') => {
+                if self.toggle_active_diagram_image() {
+                    KeyAction::Redraw
+                } else {
+                    KeyAction::Nothing
+                }
+            }
             KeyCode::Char('/') => {
                 self.enter_search(SearchDirection::Forward);
                 KeyAction::Redraw
@@ -1372,6 +1537,7 @@ pub(crate) fn run_pager(
     max_content_width: u16,
     theme: &'static crate::theme::Theme,
     graphics: crate::graphics::GraphicsSetting,
+    mermaid_graphics: crate::graphics::MermaidGraphics,
     base_dir: std::path::PathBuf,
 ) -> Result<()> {
     enable_raw_mode()?;
@@ -1386,6 +1552,7 @@ pub(crate) fn run_pager(
 
     let size = terminal.size()?;
     let mut state = PagerState::new(content, size.height, size.width, max_content_width, theme)
+        .with_mermaid_graphics(mermaid_graphics)
         .with_graphics(detection.caps, base_dir);
 
     let result = event_loop(&mut terminal, &mut state);
@@ -2149,7 +2316,10 @@ mod tests {
             .find(|&i| plain_rows[i].contains("Start"));
         let label_row = label_row.expect("ASCII diagram shows its label");
         assert!(!screen_rows[label_row].contains("Start"));
-        assert_eq!(screen_rows[0], plain_rows[0]);
+        // The blank row above names the form of the active diagram; without
+        // graphics it stays blank.
+        assert_eq!(screen_rows[0].trim(), "[image — i for ASCII]");
+        assert_eq!(plain_rows[0].trim(), "");
     }
 
     #[test]
@@ -2178,6 +2348,235 @@ mod tests {
         state.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
         assert_eq!(state.search_matches.len(), 1);
         assert!(rows.iter().any(|r| r.0 == state.search_matches[0]));
+        // The match landed in the image, so the diagram switched to ASCII
+        // to show it, in the same rows.
+        assert!(diagram_image_rows(&state).is_empty());
+        assert!(matches!(
+            state.flat_lines[state.search_matches[0]],
+            FlatLine::DiagramAscii { .. }
+        ));
+        assert_eq!(state.search_current, Some(0));
+    }
+
+    fn press(state: &mut PagerState, c: char) -> KeyAction {
+        state.handle_key_event(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE))
+    }
+
+    #[test]
+    fn i_switches_the_active_diagram_and_keeps_the_scroll() {
+        let content = vec![
+            para("intro"),
+            mermaid("graph LR\n    A[Start] --> B[End]\n"),
+            para("between"),
+            mermaid("graph LR\n    C[Left] --> D[Right]\n"),
+        ];
+        let (mut state, ids) = diagram_pager(content, 40, 80);
+        let image_rows = diagram_image_rows(&state);
+        let original = state.flat_lines.clone();
+        let before = original.len();
+        state.scroll = 1;
+        // Both diagrams are selectable; the first one in view is active.
+        assert_eq!(state.interactive_blocks.len(), 2);
+        state.update_active_from_viewport();
+        assert_eq!(state.active, Some(0));
+
+        assert!(matches!(press(&mut state, 'i'), KeyAction::Redraw));
+        assert_eq!(state.scroll, 1);
+        assert_eq!(state.flat_lines.len(), before);
+        assert_eq!(state.toggled_diagrams, HashSet::from([1]));
+        // Only the active diagram turned to ASCII, in the same rows.
+        let rows = diagram_image_rows(&state);
+        assert!(rows.iter().all(|r| r.1 == ids[1]));
+        assert_eq!(
+            rows,
+            image_rows
+                .iter()
+                .copied()
+                .filter(|r| r.1 == ids[1])
+                .collect::<Vec<_>>()
+        );
+        let screen_rows = screen(&state, 80, 40);
+        assert!(screen_rows.iter().any(|r| r.contains("Start")));
+        assert!(!screen_rows.iter().any(|r| r.contains("Right")));
+        assert!(
+            screen_rows
+                .iter()
+                .any(|r| r.trim() == "[ASCII — i for image]")
+        );
+
+        // Again: back to the image, and the same flat lines as before.
+        let toggled = state.flat_lines.clone();
+        press(&mut state, 'i');
+        assert!(state.toggled_diagrams.is_empty());
+        assert_eq!(diagram_image_rows(&state), image_rows);
+        assert_ne!(state.flat_lines, toggled);
+        assert_eq!(state.flat_lines, original);
+        assert_eq!(state.scroll, 1);
+    }
+
+    #[test]
+    fn mermaid_graphics_off_starts_diagrams_as_ascii() {
+        let (state, _) = diagram_pager(vec![mermaid("graph LR\n    A --> B\n")], 40, 80);
+        let mut state = state.with_mermaid_graphics(crate::graphics::MermaidGraphics::Off);
+        assert!(diagram_image_rows(&state).is_empty());
+        assert_eq!(screen(&state, 80, 40)[0].trim(), "[ASCII — i for image]");
+        // `i` still draws this one as an image.
+        press(&mut state, 'i');
+        assert_eq!(diagram_image_rows(&state).len(), state.flat_lines.len() - 2);
+    }
+
+    #[test]
+    fn mermaid_graphics_off_before_graphics_rasterizes_nothing() {
+        let caps = crate::graphics::GraphicsCaps {
+            supported: true,
+            cell_px: (10, 20),
+            via_tmux: false,
+            reason: "test",
+        };
+        let state = PagerState::new(
+            vec![mermaid("graph LR\n    A --> B\n")],
+            40,
+            80,
+            100,
+            theme(),
+        )
+        .with_mermaid_graphics(crate::graphics::MermaidGraphics::Off);
+        // NO_COLOR would keep the image store off; this test needs it on.
+        if std::env::var_os("NO_COLOR").is_some() {
+            return;
+        }
+        let mut state = state.with_graphics(caps, "/docs".into());
+        assert!(state.images.is_some());
+        assert!(!state.images_loading());
+        assert!(state.take_graphics_output().is_empty());
+        assert!(state.images.as_ref().unwrap().diagrams_is_empty());
+    }
+
+    #[test]
+    fn hint_moves_below_when_the_row_above_is_scrolled_away() {
+        let mut content = vec![mermaid("graph LR\n    A --> B\n")];
+        content.extend((0..40).map(|i| para(&format!("paragraph {i}"))));
+        content.push(mermaid("graph LR\n    C --> D\n"));
+        let (mut state, _) = diagram_pager(content, 10, 80);
+        // Tab to the second diagram and back: the first one's hint shows.
+        state.handle_key_event(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+        state.handle_key_event(KeyEvent::new(KeyCode::BackTab, KeyModifiers::NONE));
+        assert_eq!(state.active, Some(0));
+        assert!(
+            screen(&state, 80, 10)
+                .iter()
+                .any(|r| r.contains("i for ASCII"))
+        );
+        // Scrolled so the diagram's first row is the top line: the hint goes
+        // to the blank row below it.
+        state.scroll = state.interactive_blocks[0].flat_line_index;
+        state.update_active_from_viewport();
+        assert_eq!(state.active, Some(0));
+        let rows = screen(&state, 80, 10);
+        let end = state.interactive_blocks[0].flat_line_end - state.scroll;
+        assert_eq!(rows[end].trim(), "[image — i for ASCII]");
+    }
+
+    #[test]
+    fn enter_on_a_small_diagram_does_not_mark_it_expanded() {
+        let (mut state, _) = diagram_pager(vec![mermaid("graph LR\n    A --> B\n")], 40, 80);
+        assert_eq!(state.active, Some(0));
+        let before = state.flat_lines.clone();
+        state.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(state.expanded.is_empty());
+        assert_eq!(state.flat_lines, before);
+    }
+
+    #[test]
+    fn i_does_nothing_without_graphics() {
+        let block = mermaid("graph TD\n    A --> B\n    B --> C\n");
+        // Collapsed in a short pager, so the diagram is selectable.
+        let mut state = PagerState::new(vec![block], 6, 80, 100, theme());
+        state.active = Some(0);
+        let before = state.flat_lines.clone();
+        assert!(matches!(press(&mut state, 'i'), KeyAction::Nothing));
+        assert!(state.toggled_diagrams.is_empty());
+        assert_eq!(state.flat_lines, before);
+        state.activate_current();
+        assert!(matches!(press(&mut state, 'i'), KeyAction::Nothing));
+        // No hint above it either.
+        assert_eq!(screen(&state, 80, 6)[0].trim(), "");
+        // Small diagrams stay unselectable, as before.
+        let small = PagerState::new(
+            vec![mermaid("graph LR\n    A --> B\n")],
+            40,
+            80,
+            100,
+            theme(),
+        );
+        assert!(small.interactive_blocks.is_empty());
+    }
+
+    #[test]
+    fn collapsed_diagram_stays_collapsed_and_expands_in_the_chosen_form() {
+        let block = mermaid("graph TD\n    A --> B\n    B --> C\n");
+        let (mut state, _) = diagram_pager(vec![block], 6, 80);
+        state.active = Some(0);
+        let collapsed = state.flat_lines.clone();
+        assert_eq!(screen(&state, 80, 6)[0].trim(), "[image — i for ASCII]");
+        press(&mut state, 'i');
+        assert_eq!(state.flat_lines, collapsed);
+        assert_eq!(screen(&state, 80, 6)[0].trim(), "[ASCII — i for image]");
+        state.activate_current();
+        assert!(diagram_image_rows(&state).is_empty());
+        assert!(
+            state
+                .flat_lines
+                .iter()
+                .any(|l| matches!(l, FlatLine::DiagramAscii { .. }))
+        );
+    }
+
+    #[test]
+    fn diagram_choice_survives_resize_and_reload() {
+        let a = mermaid("graph LR\n    A[Start] --> B[End]\n");
+        let b = mermaid("graph LR\n    C[Left] --> D[Right]\n");
+        let (mut state, ids) = diagram_pager(vec![a.clone(), para("text"), b.clone()], 40, 80);
+        state.active = Some(1);
+        press(&mut state, 'i');
+        let only_a = |state: &PagerState| {
+            diagram_image_rows(state).iter().all(|r| r.1 == ids[0])
+                && !diagram_image_rows(state).is_empty()
+        };
+        assert!(only_a(&state));
+
+        state.resize(90, 30);
+        assert!(only_a(&state));
+        assert!(screen(&state, 90, 30).iter().any(|r| r.contains("Right")));
+
+        // Watch-mode reload with the same blocks keeps the choice.
+        state.replace_content(vec![a.clone(), para("edited"), b]);
+        assert!(only_a(&state));
+        assert_eq!(state.toggled_diagrams, HashSet::from([2]));
+        assert!(screen(&state, 90, 30).iter().any(|r| r.contains("Right")));
+
+        // A block that is no longer a diagram forgets it.
+        state.replace_content(vec![a, para("text"), para("gone")]);
+        assert!(state.toggled_diagrams.is_empty());
+    }
+
+    #[test]
+    fn search_in_ascii_diagram_keeps_it_ascii_and_leaves_images_alone() {
+        let content = vec![
+            mermaid("graph LR\n    A[Start] --> B[End]\n"),
+            mermaid("graph LR\n    C[Start] --> D[Right]\n"),
+        ];
+        let (mut state, ids) = diagram_pager(content, 40, 80);
+        for c in "/Right".chars() {
+            press(&mut state, c);
+        }
+        state.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        // Only the diagram the match landed in switched.
+        assert_eq!(state.toggled_diagrams, HashSet::from([1]));
+        assert!(diagram_image_rows(&state).iter().all(|r| r.1 == ids[0]));
+        // `n` stays put in the now-ASCII diagram.
+        press(&mut state, 'n');
+        assert_eq!(state.toggled_diagrams, HashSet::from([1]));
     }
 
     #[test]

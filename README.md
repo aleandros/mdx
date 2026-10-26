@@ -72,6 +72,11 @@ Inside tmux, allow graphics to pass through to the terminal in
 set -g allow-passthrough on
 ```
 
+Press `i` on a diagram to switch it between the image and its ASCII form (which
+you can select and copy); `--mermaid-graphics off` or `mermaid_graphics = "off"`
+starts every diagram as ASCII. A search match inside a diagram image switches
+that diagram to ASCII.
+
 `mdx --debug-graphics` prints the decision and the reason. See
 [docs/USAGE.md](docs/USAGE.md#graphics) for the detection rules.
 

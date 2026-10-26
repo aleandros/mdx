@@ -397,6 +397,14 @@ impl ImageStore {
         })
     }
 
+    /// Whether `diagram` is still being rasterized for the current cell
+    /// size.
+    pub(crate) fn diagram_pending(&self, diagram: &crate::mermaid::svg::DiagramImage) -> bool {
+        self.diagrams
+            .get(&(diagram.key(), self.cell_px))
+            .is_some_and(|d| d.status == Status::Pending)
+    }
+
     /// Image id and placement size for `url`, fitted to `max_cols x
     /// max_rows`, or `None` while it loads, when it is not a local image, or
     /// when it failed. The first call for a path starts decoding it. Queues
@@ -567,6 +575,12 @@ impl ImageStore {
     #[cfg(test)]
     pub(crate) fn for_tests(base_dir: PathBuf, cell_px: (u16, u16)) -> Self {
         Self::without_worker(base_dir, cell_px)
+    }
+
+    /// Whether no diagram was ever requested.
+    #[cfg(test)]
+    pub(crate) fn diagrams_is_empty(&self) -> bool {
+        self.diagrams.is_empty()
     }
 
     /// Mark `diagram` as rasterized, as if the worker had finished.
@@ -906,6 +920,28 @@ mod tests {
         assert_eq!(store.diagram(&wide), None);
         assert!(!store.loading(), "nothing is rasterized");
         assert!(store.worker.is_none());
+    }
+
+    #[test]
+    fn diagram_pending_only_while_rasterizing_for_this_cell_size() {
+        let a = diagram("graph LR\n    A --> B\n");
+        let mut store = ImageStore::for_tests(PathBuf::from("/docs"), (10, 20));
+        assert!(!store.diagram_pending(&a));
+        let id = store.alloc_id();
+        store.diagrams.insert(
+            (a.key(), (10, 20)),
+            DiagramEntry {
+                id,
+                status: Status::Pending,
+                placed: None,
+            },
+        );
+        assert!(store.diagram_pending(&a));
+        store.set_cell_px((8, 16));
+        assert!(!store.diagram_pending(&a));
+        // Without a worker the request fails at once.
+        assert!(store.diagram(&a).is_none());
+        assert!(!store.diagram_pending(&a));
     }
 
     #[test]

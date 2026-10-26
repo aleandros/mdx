@@ -15,6 +15,9 @@ pub(crate) struct Config {
     pub(crate) split_mermaid_rendering: Option<bool>,
     /// Pixel graphics: `auto` (default) or `off`.
     pub(crate) graphics: Option<crate::graphics::GraphicsMode>,
+    /// Mermaid diagrams as images (`on`, default) or ASCII (`off`) when
+    /// graphics are on.
+    pub(crate) mermaid_graphics: Option<crate::graphics::MermaidGraphics>,
 }
 
 impl Config {
@@ -38,6 +41,7 @@ impl Config {
                 .split_mermaid_rendering
                 .or(self.split_mermaid_rendering),
             graphics: other.graphics.or(self.graphics),
+            mermaid_graphics: other.mermaid_graphics.or(self.mermaid_graphics),
         }
     }
 
@@ -123,6 +127,10 @@ impl Config {
 
 # Pixel graphics in the pager: \"auto\" (when the terminal supports them) or \"off\"
 # graphics = \"auto\"
+
+# Mermaid diagrams in the pager when graphics are on: \"on\" draws them as
+# images, \"off\" as ASCII. Press i on a diagram to switch it.
+# mermaid_graphics = \"on\"
 "
     }
 }
@@ -281,6 +289,38 @@ mod tests {
         assert_eq!(
             base.merge(overlay).graphics,
             Some(crate::graphics::GraphicsMode::Auto)
+        );
+    }
+
+    #[test]
+    fn from_file_parses_mermaid_graphics() {
+        let dir = std::env::temp_dir().join("mdx_config_test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("mermaid_graphics.toml");
+        std::fs::write(&path, "mermaid_graphics = \"off\"\n").unwrap();
+        let config = Config::from_file(&path).unwrap();
+        assert_eq!(
+            config.mermaid_graphics,
+            Some(crate::graphics::MermaidGraphics::Off)
+        );
+
+        std::fs::write(&path, "mermaid_graphics = \"auto\"\n").unwrap();
+        assert!(Config::from_file(&path).is_err());
+    }
+
+    #[test]
+    fn merge_mermaid_graphics_overlay_wins() {
+        let base = Config {
+            mermaid_graphics: Some(crate::graphics::MermaidGraphics::On),
+            ..Config::default()
+        };
+        let overlay = Config {
+            mermaid_graphics: Some(crate::graphics::MermaidGraphics::Off),
+            ..Config::default()
+        };
+        assert_eq!(
+            base.merge(overlay).mermaid_graphics,
+            Some(crate::graphics::MermaidGraphics::Off)
         );
     }
 

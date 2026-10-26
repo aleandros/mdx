@@ -12,6 +12,16 @@ fn selected(state: &PagerState) -> Option<usize> {
         .active
         .map(|i| state.interactive_blocks[i].block_index)
 }
+/// The diagram block holding flat line `line`, if `i` can switch it and it
+/// is in image form.
+fn shown_image_at(state: &PagerState, line: usize) -> Option<usize> {
+    let bi = state
+        .interactive_blocks
+        .iter()
+        .find(|e| (e.flat_line_index..e.flat_line_end).contains(&line))?
+        .block_index;
+    (state.can_switch_diagram(bi) && state.diagram_shows_image(bi)).then_some(bi)
+}
 fn check(state: &PagerState) {
     assert!(state.scroll <= state.max_scroll());
     if let Some(i) = state.active {
@@ -76,7 +86,7 @@ proptest! {
                     let old_scroll = state.scroll;
                     let max = state.flat_lines.len().saturating_sub(usize::from(state.terminal_height));
                     let page = usize::from(state.terminal_height).saturating_sub(1).max(1);
-                    let code = [KeyCode::Char('j'),KeyCode::Char('k'),KeyCode::Char('g'),KeyCode::Char('G'),KeyCode::PageDown,KeyCode::PageUp,KeyCode::Tab,KeyCode::BackTab,KeyCode::Enter,KeyCode::Char('n'),KeyCode::Char('N'),KeyCode::Char('l')][usize::from(which)];
+                    let code = [KeyCode::Char('j'),KeyCode::Char('k'),KeyCode::Char('g'),KeyCode::Char('G'),KeyCode::PageDown,KeyCode::PageUp,KeyCode::Tab,KeyCode::BackTab,KeyCode::Enter,KeyCode::Char('n'),KeyCode::Char('N'),KeyCode::Char('l'),KeyCode::Char('i')][usize::from(which)];
                     let expected_scroll = match which {
                         0 => Some((old_scroll+1).min(max)),
                         1 => Some(old_scroll.saturating_sub(1)),
@@ -93,12 +103,29 @@ proptest! {
                         let len = state.search_matches.len();
                         Some((state.search_current.unwrap() + if which == 9 {1} else {len-1}) % len)
                     } else { None };
+                    // `i` flips the active diagram when graphics are on and
+                    // never moves the scroll position or the row count.
+                    let mut expected_toggled = state.toggled_diagrams.clone();
+                    if which == 12 && let Some(bi) = selected(&state) && state.images.is_some() && matches!(state.content[bi],RenderedBlock::Diagram { image: Some(_),.. }) && !expected_toggled.remove(&bi) {
+                        expected_toggled.insert(bi);
+                    }
+                    // A match `n`/`N` lands on inside a diagram image switches
+                    // that diagram to ASCII.
+                    if let Some(current) = expected_match && let Some(bi) = shown_image_at(&state,state.search_matches[current]) && !expected_toggled.remove(&bi) {
+                        expected_toggled.insert(bi);
+                    }
+                    let old_len = state.flat_lines.len();
                     let mut expected_expanded = state.expanded.clone();
-                    if which == 8 && let Some(bi) = selected(&state) && matches!(state.content[bi],RenderedBlock::Diagram {..}) && !expected_expanded.remove(&bi) {
+                    if which == 8 && let Some(i) = state.active && state.interactive_blocks[i].collapsible && let Some(bi) = selected(&state) && matches!(state.content[bi],RenderedBlock::Diagram {..}) && !expected_expanded.remove(&bi) {
                         expected_expanded.insert(bi);
                     }
                     key(&mut state,code);
                     prop_assert_eq!(&state.expanded, &expected_expanded);
+                    prop_assert_eq!(&state.toggled_diagrams, &expected_toggled);
+                    if which == 12 {
+                        prop_assert_eq!(state.scroll, old_scroll);
+                        prop_assert_eq!(state.flat_lines.len(), old_len);
+                    }
                     if let Some(scroll) = expected_scroll { prop_assert_eq!(state.scroll,scroll); }
                     if let Some(active) = expected_active { prop_assert_eq!(state.active,Some(active)); }
                     if let Some(current) = expected_match { prop_assert_eq!(state.search_current,Some(current)); }
@@ -122,9 +149,24 @@ proptest! {
                     let mut content = Vec::new();
                     for (source, kind) in [(input.flowchart(crate::strategies::Topology::Cyclic),DiagramKind::Flowchart),(input.sequence(),DiagramKind::Sequence),(input.er(),DiagramKind::Er)] {
                         let diagram = crate::mermaid::render_diagram(&source,theme,usize::from(state.terminal_width)).unwrap();
+                        // With graphics on, some diagrams are already rasterized.
+                        if let Some(images) = state.images.as_mut() && kind != DiagramKind::Er {
+                            images.insert_ready_diagram(&diagram.image);
+                        }
                         content.push(RenderedBlock::Diagram { lines: diagram.lines,node_count: diagram.primary_count,edge_count: diagram.secondary_count,kind,image: Some(std::sync::Arc::new(diagram.image)) });
                     }
                     state.replace_content(content);
+                }
+                PagerOp::ImageToggleTwice => {
+                    let before = state.flat_lines.clone();
+                    let toggled = state.toggled_diagrams.clone();
+                    let scroll = state.scroll;
+                    key(&mut state,KeyCode::Char('i')); check(&state);
+                    prop_assert_eq!(state.flat_lines.len(),before.len());
+                    key(&mut state,KeyCode::Char('i'));
+                    prop_assert_eq!(&state.flat_lines,&before);
+                    prop_assert_eq!(&state.toggled_diagrams,&toggled);
+                    prop_assert_eq!(state.scroll,scroll);
                 }
                 PagerOp::ToggleTwice => {
                     if let Some(bi) = selected(&state) && matches!(state.content[bi],RenderedBlock::Diagram {..}) {

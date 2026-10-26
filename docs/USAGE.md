@@ -57,6 +57,7 @@ the pager, plain stdout and `mdx embed`; equations are not typeset yet.
 | `--no-mermaid-rendering` | Show raw mermaid source without rendering |
 | `--split-mermaid-rendering` | Show mermaid source followed by the rendered diagram |
 | `--graphics <auto\|off>` | Pixel graphics in the pager (default: `auto`); see [Graphics](#graphics) |
+| `--mermaid-graphics <on\|off>` | With graphics on, start Mermaid diagrams as images (`on`, default) or ASCII (`off`); `i` switches one diagram. Overrides `mermaid_graphics` in the config; see [Image or ASCII](#image-or-ascii) |
 | `--debug-graphics` | Print whether graphics would be enabled, and why, then exit |
 
 ## Graphics
@@ -225,6 +226,29 @@ drives both forms, so:
 Plain or piped output, `mdx embed`, `--graphics off` and `NO_COLOR` keep the
 ASCII diagrams, byte for byte.
 
+#### Image or ASCII
+
+The ASCII form stays available, because its text can be selected and copied
+in the terminal, and the image cannot. Diagrams start as images; start them as
+ASCII with `--mermaid-graphics off` or `mermaid_graphics = "off"` in the config
+(the flag wins).
+
+With graphics on, every diagram can be selected (`Tab`, or by scrolling it into
+view), and `i` switches the selected one between its image and its ASCII form.
+The blank row above the selected diagram (or below it, when the row above is
+scrolled out of view) says which form it is in, for
+example `[image — i for ASCII]` or `[ASCII — i for image]` (`image loading`
+while it rasterizes, `image unavailable` when it cannot be drawn). The two forms
+take the same rows, so switching never moves the content above it. A collapsed
+diagram stays collapsed and shows the chosen form once expanded. The choice is
+kept per diagram across scrolling, resizing and watch-mode reloads, like
+expanded diagrams. `Enter` still only expands and collapses large diagrams.
+Without graphics, `i` does nothing and no hint is shown.
+
+Search always matches diagram text. When `/`, `?`, `n` or `N` lands on a match
+inside a diagram shown as an image, that diagram switches to ASCII so the match
+is visible; press `i` to go back to the image.
+
 ## Interactive pager
 
 When the output is a TTY, mdx launches an interactive pager with vim-style keybindings.
@@ -258,6 +282,7 @@ When the output is a TTY, mdx launches an interactive pager with vim-style keybi
 |-----|--------|
 | `Tab` / `Shift-Tab` | Cycle through diagrams/images |
 | `Enter` | Expand/collapse diagram, open image (local paths open from the markdown file's directory) |
+| `i` | Switch the selected diagram between image and ASCII (graphics on only; see [Image or ASCII](#image-or-ascii)) |
 
 **General**
 
@@ -350,6 +375,10 @@ split_mermaid_rendering = false
 
 # Pixel graphics in the pager: "auto" or "off" (see Graphics)
 graphics = "auto"
+
+# Mermaid diagrams with graphics on: "on" (images) or "off" (ASCII);
+# i switches one diagram in the pager
+mermaid_graphics = "on"
 ```
 
 ## Themes
