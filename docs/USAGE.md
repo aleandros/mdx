@@ -199,6 +199,41 @@ mdx --theme=list           # List available syntax themes
 mdx --ui-theme=list        # List available UI themes
 ```
 
+### Custom themes
+
+Add your own themes without recompiling, by dropping files into your config directory. Both are picked up automatically and show up in `--ui-theme=list` / `--theme=list`.
+
+**UI themes** — create `$XDG_CONFIG_HOME/mdx/themes/<name>.toml` (falls back to `~/.config/mdx/themes/`). Colors are `"#rrggbb"` hex strings:
+
+```toml
+# ~/.config/mdx/themes/dracula.toml
+heading = [
+  "#ff79c6", # H1
+  "#bd93f9", # H2
+  "#8be9fd", # H3
+  "#50fa7b", # H4
+  "#ffb86c", # H5
+  "#6272a4", # H6
+]
+body = "#f8f8f2"
+bold = "#f8f8f2"
+italic = "#f8f8f2"
+link = "#8be9fd"
+inline_code = "#50fa7b"
+horizontal_rule = "#6272a4"
+diagram_border = "#bd93f9"
+diagram_collapsed = "#8be9fd"
+diagram_node_fill = "#bd93f9"
+diagram_node_border = "#ff79c6"
+diagram_node_text = "#f8f8f2"
+diagram_edge_stroke = "#50fa7b"
+diagram_edge_label = "#ffb86c"
+```
+
+Select it the same way as a built-in theme: `mdx --ui-theme dracula` or `ui_theme = "dracula"` in `config.toml`. Built-in theme names take precedence if there's a name collision. Malformed files produce a clear error naming the bad field.
+
+**Syntax themes** — drop a standard TextMate/Sublime `.tmTheme` file into `$XDG_CONFIG_HOME/mdx/syntax-themes/` (falls back to `~/.config/mdx/syntax-themes/`). It's keyed by filename, e.g. `Dracula.tmTheme` is selected with `--theme Dracula`.
+
 ## Mermaid diagrams
 
 Fenced code blocks tagged `mermaid` are rendered as ASCII art.

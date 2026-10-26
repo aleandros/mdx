@@ -172,13 +172,7 @@ fn resolve_mermaid_mode(no_mermaid: bool, split_mermaid: bool) -> render::Mermai
 
 fn resolve_ui_theme(name: Option<&str>) -> Result<&'static theme::Theme> {
     match name {
-        Some(n) => theme::Theme::by_name(n).ok_or_else(|| {
-            anyhow::anyhow!(
-                "Unknown UI theme '{}'. Available: {}",
-                n,
-                theme::Theme::available_names().join(", ")
-            )
-        }),
+        Some(n) => theme::Theme::resolve(n).map_err(|e| anyhow::anyhow!(e)),
         None => Ok(theme::Theme::default_theme()),
     }
 }
