@@ -51,7 +51,10 @@ With graphics on, local PNG, JPEG and GIF images (`![alt](diagram.png)`) show
 inline, scaled to the content column; everywhere else they stay a text
 placeholder. Mermaid diagrams are drawn as images too, with real shapes and
 arrowheads, in exactly the cells their ASCII form takes; until the image is
-ready, and wherever graphics are off, they stay ASCII. Piped output and `mdx embed` never use graphics and never query
+ready, and wherever graphics are off, they stay ASCII. Display math
+(`$$...$$`) is typeset as an image in the theme's text color; it shows as raw
+source until then, wherever graphics are off, and when it cannot be typeset.
+Piped output and `mdx embed` never use graphics and never query
 the terminal. Turn graphics off with the CLI flag (which wins),
 the environment, or the config file:
 
@@ -143,4 +146,6 @@ MIT — see [LICENSE.txt](LICENSE.txt).
 
 mdx bundles the DejaVu Sans Mono font for diagram labels; see
 [assets/fonts/DejaVuSansMono-LICENSE.txt](assets/fonts/DejaVuSansMono-LICENSE.txt)
-for its license.
+for its license. It also embeds the KaTeX math fonts to typeset display math,
+under the SIL Open Font License; see
+[assets/fonts/KaTeX-LICENSE.txt](assets/fonts/KaTeX-LICENSE.txt).

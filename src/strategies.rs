@@ -179,6 +179,9 @@ impl GraphInput {
     }
 }
 
+/// The formula every generated math block draws.
+pub(crate) const MATH_TEX: &str = r"\frac{a}{b}";
+
 pub(crate) fn rendered_blocks() -> impl Strategy<Value = Vec<RenderedBlock>> {
     prop::collection::vec(
         prop_oneof![
@@ -198,6 +201,13 @@ pub(crate) fn rendered_blocks() -> impl Strategy<Value = Vec<RenderedBlock>> {
             text().prop_map(|alt| RenderedBlock::Image {
                 alt,
                 url: "test.png".into()
+            }),
+            prop::collection::vec(styled_line(), 0..5).prop_map(|lines| RenderedBlock::Math {
+                lines,
+                image: std::sync::Arc::new(crate::math::MathImage::new(
+                    MATH_TEX,
+                    crate::theme::Theme::default_theme()
+                )),
             }),
         ],
         0..10,

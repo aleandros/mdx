@@ -4,6 +4,7 @@ mod graphics;
 mod highlight;
 mod images;
 mod kitty;
+mod math;
 mod mermaid;
 mod pager;
 mod parser;
@@ -234,7 +235,7 @@ pub(crate) fn pipe_output(
     let mut stdout = std::io::stdout().lock();
     for block in blocks {
         match block {
-            render::RenderedBlock::Lines(lines) => {
+            render::RenderedBlock::Lines(lines) | render::RenderedBlock::Math { lines, .. } => {
                 for line in lines {
                     writeln!(stdout, "{}", render::styled_line_to_ansi(line, color_mode))?;
                 }

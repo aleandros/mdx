@@ -190,8 +190,9 @@ pub(crate) enum FlatLine {
         edge_count: usize,
         kind: DiagramKind,
     },
-    /// One row of a diagram drawn as image `id`. `line` is the ASCII row
-    /// the image covers, kept for search.
+    /// One row of a diagram or display math drawn as image `id`. `line` is
+    /// the ASCII row the image covers (for math, the source on the first
+    /// row), kept for search.
     DiagramImage {
         line: StyledLine,
         indent: usize,
@@ -213,6 +214,19 @@ pub(crate) enum FlatLine {
         row: u16,
         cols: u16,
     },
+}
+
+/// Push `lines` as text, each wrapped at `wrap_width` columns. An empty
+/// block still takes one blank line.
+fn push_text(flat_lines: &mut Vec<FlatLine>, lines: &[StyledLine], wrap_width: usize) {
+    if lines.is_empty() {
+        flat_lines.push(FlatLine::Styled(StyledLine::empty()));
+    }
+    for line in lines {
+        for wrapped in wrap_styled_line(line, wrap_width) {
+            flat_lines.push(FlatLine::Styled(wrapped));
+        }
+    }
 }
 
 /// Word-wrap a styled line at `width` columns, preserving span styles.
@@ -582,15 +596,46 @@ impl PagerState {
 
         for (block_index, block) in self.content.iter().enumerate() {
             match block {
-                RenderedBlock::Lines(lines) => {
-                    if lines.is_empty() {
-                        self.flat_lines.push(FlatLine::Styled(StyledLine::empty()));
+                RenderedBlock::Lines(lines) => push_text(&mut self.flat_lines, lines, wrap_width),
+                RenderedBlock::Math { lines, image } => {
+                    // With graphics on, the typeset formula replaces the
+                    // source, centered in the content column.
+                    let max_cols = u16::try_from(self.content_width).unwrap_or(u16::MAX);
+                    let placed = self
+                        .images
+                        .as_mut()
+                        .and_then(|images| images.math(image, max_cols));
+                    let Some(placed) = placed else {
+                        push_text(&mut self.flat_lines, lines, wrap_width);
+                        continue;
+                    };
+                    let indent = self.gutter
+                        + self.content_width.saturating_sub(usize::from(placed.cols)) / 2;
+                    // The first row carries the source, so search finds it.
+                    let source: Vec<String> = lines
+                        .iter()
+                        .map(|line| {
+                            line.spans
+                                .iter()
+                                .map(|s| s.text.as_str())
+                                .collect::<String>()
+                        })
+                        .filter(|text| !text.trim().is_empty())
+                        .map(|text| text.trim().to_string())
+                        .collect();
+                    let mut source = Some(StyledLine {
+                        spans: vec![StyledSpan::plain(source.join(" "))],
+                    });
+                    for row in 0..placed.rows {
+                        self.flat_lines.push(FlatLine::DiagramImage {
+                            line: source.take().unwrap_or_else(StyledLine::empty),
+                            indent,
+                            id: placed.id,
+                            row,
+                            cols: placed.cols,
+                        });
                     }
-                    for line in lines {
-                        for wrapped in wrap_styled_line(line, wrap_width) {
-                            self.flat_lines.push(FlatLine::Styled(wrapped));
-                        }
-                    }
+                    self.flat_lines.push(FlatLine::Styled(StyledLine::empty()));
                 }
                 RenderedBlock::Diagram {
                     lines,
@@ -745,6 +790,7 @@ impl PagerState {
                 RenderedBlock::Diagram {
                     image: Some(image), ..
                 } => Some(image.key()),
+                RenderedBlock::Math { image, .. } => Some(image.key()),
                 _ => None,
             }));
             images.refresh();
@@ -841,7 +887,7 @@ impl PagerState {
                         .spawn();
                 }
             }
-            RenderedBlock::Lines(_) => {}
+            RenderedBlock::Lines(_) | RenderedBlock::Math { .. } => {}
         }
     }
 
@@ -2605,6 +2651,121 @@ mod tests {
         let a = mermaid("graph LR\n    A --> B\n");
         let b = mermaid("graph LR\n    C --> D\n");
         let (mut state, ids) = diagram_pager(vec![a.clone(), b], 40, 80);
+        state.take_graphics_output();
+        state.replace_content(vec![a]);
+        assert_eq!(state.take_graphics_output(), crate::kitty::delete(ids[1]));
+        assert_eq!(diagram_image_rows(&state)[0].1, ids[0]);
+    }
+
+    /// Display math written as a `$$` block, with `tex` on its own lines.
+    fn math_block(tex: &str) -> RenderedBlock {
+        let blocks = vec![crate::parser::Block::Math {
+            tex: format!("\n{tex}\n"),
+        }];
+        let highlighter = crate::highlight::Highlighter::new(None).unwrap();
+        crate::render::render_blocks(
+            &blocks,
+            80,
+            &highlighter,
+            theme(),
+            crate::render::MermaidMode::Render,
+        )
+        .remove(0)
+    }
+
+    /// A pager over `content` with graphics on and every formula typeset to
+    /// `px` pixels (10x20 cells).
+    fn math_pager(content: Vec<RenderedBlock>, px: (u32, u32), w: u16) -> (PagerState, Vec<u32>) {
+        let mut store = crate::images::ImageStore::for_tests("/docs".into(), (10, 20));
+        let ids = content
+            .iter()
+            .filter_map(|block| match block {
+                RenderedBlock::Math { image, .. } => Some(store.insert_ready_math(image, px)),
+                _ => None,
+            })
+            .collect();
+        let state = PagerState::new(content, 40, w, 100, theme()).with_images(store);
+        (state, ids)
+    }
+
+    #[test]
+    fn display_math_image_is_centered_in_the_content_column() {
+        let content = vec![para("Before"), math_block(r"\frac{a}{b}"), para("After")];
+        // 120 columns, content capped at 100: a 10-column gutter.
+        let (mut state, ids) = math_pager(content, (200, 60), 120);
+        let rows = diagram_image_rows(&state);
+        assert_eq!(rows.len(), 3, "60 px is three 20 px rows");
+        for (n, (_, id, row, cols)) in rows.iter().enumerate() {
+            assert_eq!((*id, usize::from(*row), *cols), (ids[0], n, 20));
+        }
+        // Gutter 10, then (100 - 20) / 2 = 40 to center the formula.
+        let screen_rows = screen(&state, 120, 40);
+        let first = &screen_rows[rows[0].0];
+        assert_eq!(leading_spaces(first), 50, "{first:?}");
+        assert!(!screen_rows.iter().any(|r| r.contains("\\frac")));
+        // The source is gone from the screen, but a blank line follows.
+        assert_eq!(
+            state.flat_lines[rows[2].0 + 1],
+            FlatLine::Styled(StyledLine::empty())
+        );
+        assert_eq!(
+            state.take_graphics_output(),
+            crate::kitty::place(ids[0], 20, 3)
+        );
+    }
+
+    #[test]
+    fn display_math_stays_source_until_typeset_and_without_graphics() {
+        let content = vec![math_block(r"\frac{a}{b}")];
+        let plain = PagerState::new(content.clone(), 40, 80, 100, theme());
+        // Graphics on, but nothing typeset yet (and no worker to do it).
+        let store = crate::images::ImageStore::for_tests("/docs".into(), (10, 20));
+        let state = PagerState::new(content, 40, 80, 100, theme()).with_images(store);
+        assert!(diagram_image_rows(&state).is_empty());
+        assert_eq!(state.flat_lines, plain.flat_lines);
+        let text = screen(&plain, 80, 40)
+            .iter()
+            .map(|row| row.trim_end())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(text.contains("  $$\n  \\frac{a}{b}\n  $$"), "{text}");
+    }
+
+    #[test]
+    fn wide_display_math_scales_down_then_falls_back_to_source() {
+        // 120 columns of formula in an 80-column pager: scaled to fit.
+        let (state, _) = math_pager(vec![math_block("x")], (1200, 40), 80);
+        let rows = diagram_image_rows(&state);
+        assert!(!rows.is_empty());
+        assert!(rows.iter().all(|r| r.3 <= 80));
+        // 170 columns: more than twice too wide, so the source shows.
+        let (state, _) = math_pager(vec![math_block("x")], (1700, 40), 80);
+        assert!(diagram_image_rows(&state).is_empty());
+        assert!(screen(&state, 80, 40).iter().any(|r| r.trim() == "x"));
+    }
+
+    #[test]
+    fn search_finds_display_math_by_its_source() {
+        let content = vec![
+            para("intro"),
+            math_block("\\sum_{i=1}^{n} i\n= \\frac{n(n+1)}{2}"),
+        ];
+        let (mut state, _) = math_pager(content, (200, 60), 80);
+        let rows = diagram_image_rows(&state);
+        for query in ["/frac{n(n+1)}", "/$$ \\sum", "/i = \\frac"] {
+            for c in query.chars() {
+                state.handle_key_event(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
+            }
+            state.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            assert_eq!(state.search_matches, vec![rows[0].0], "{query}");
+        }
+    }
+
+    #[test]
+    fn reload_keeps_formulas_still_shown_and_deletes_the_rest() {
+        let a = math_block("a");
+        let b = math_block("b");
+        let (mut state, ids) = math_pager(vec![a.clone(), b], (20, 20), 80);
         state.take_graphics_output();
         state.replace_content(vec![a]);
         assert_eq!(state.take_graphics_output(), crate::kitty::delete(ids[1]));

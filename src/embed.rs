@@ -40,7 +40,7 @@ pub(crate) fn flatten_blocks(blocks: &[RenderedBlock]) -> Vec<StyledLine> {
     let mut out = Vec::new();
     for block in blocks {
         match block {
-            RenderedBlock::Lines(lines) => {
+            RenderedBlock::Lines(lines) | RenderedBlock::Math { lines, .. } => {
                 for line in lines {
                     out.push(line.clone());
                 }

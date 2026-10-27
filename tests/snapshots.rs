@@ -199,6 +199,12 @@ snapshot_test!(
 
 // Math source fallback (issue #13)
 snapshot_test!(snapshot_math_w80, "docs/examples/math.md", 80);
+// Display math corpus: outside the pager every formula stays source (issue #19)
+snapshot_test!(
+    snapshot_math_display_w80,
+    "docs/examples/math-display.md",
+    80
+);
 
 // ─── Previous defaults pinned by name (issue #20) ─────────────────────────
 // Recorded before the default changed to nord; selecting the old themes by
@@ -453,6 +459,12 @@ snapshot_test!(
 snapshot_test!(
     no_color_math_w80,
     "docs/examples/math.md",
+    80,
+    Mode::NoColor
+);
+snapshot_test!(
+    no_color_math_display_w80,
+    "docs/examples/math-display.md",
     80,
     Mode::NoColor
 );

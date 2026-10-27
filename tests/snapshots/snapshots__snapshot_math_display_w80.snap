@@ -1,0 +1,114 @@
+---
+source: tests/snapshots.rs
+expression: output
+---
+[1;38;2;136;192;208m# Display math[0m
+
+[38;2;216;222;233mWith graphics on, each formula below is typeset as an image. Elsewhere, and[0m [38;2;216;222;233mfor any formula that cannot be typeset, the source is shown as text.[0m
+
+[1;38;2;129;161;193m## Fractions[0m
+
+[38;2;216;222;233m  $$[0m
+[38;2;216;222;233m  \frac{a}{b} + \frac{c}{d} = \frac{ad + bc}{bd}[0m
+[38;2;216;222;233m  $$[0m
+
+[38;2;216;222;233m  $$[0m
+[38;2;216;222;233m  x = \frac{-b \pm \sqrt{b^2 - 4ac}}{2a}[0m
+[38;2;216;222;233m  $$[0m
+
+[38;2;216;222;233m  $$[0m
+[38;2;216;222;233m  \cfrac{1}{1 + \cfrac{1}{1 + \cfrac{1}{x}}}[0m
+[38;2;216;222;233m  $$[0m
+
+[1;38;2;129;161;193m## Sums, products and integrals with limits[0m
+
+[38;2;216;222;233m  $$[0m
+[38;2;216;222;233m  \sum_{i=1}^{n} i = \frac{n(n+1)}{2}[0m
+[38;2;216;222;233m  $$[0m
+
+[38;2;216;222;233m  $$[0m
+[38;2;216;222;233m  \prod_{p \text{ prime}} \frac{1}{1 - p^{-s}} = \sum_{n=1}^{\infty} \frac{1}{n^s}[0m
+[38;2;216;222;233m  $$[0m
+
+[38;2;216;222;233m  $$[0m
+[38;2;216;222;233m  \int_0^\infty e^{-x^2} \, dx = \frac{\sqrt{\pi}}{2}[0m
+[38;2;216;222;233m  $$[0m
+
+[38;2;216;222;233m  $$[0m
+[38;2;216;222;233m  \lim_{x \to 0} \frac{\sin x}{x} = 1[0m
+[38;2;216;222;233m  $$[0m
+
+[1;38;2;129;161;193m## Matrices[0m
+
+[38;2;216;222;233m  $$[0m
+[38;2;216;222;233m  \begin{pmatrix} a & b \\ c & d \end{pmatrix}[0m
+[38;2;216;222;233m  \begin{pmatrix} x \\ y \end{pmatrix} =[0m
+[38;2;216;222;233m  \begin{pmatrix} ax + by \\ cx + dy \end{pmatrix}[0m
+[38;2;216;222;233m  $$[0m
+
+[38;2;216;222;233m  $$[0m
+[38;2;216;222;233m  \det \begin{vmatrix} 1 & 2 & 3 \\ 4 & 5 & 6 \\ 7 & 8 & 10 \end{vmatrix} = -3[0m
+[38;2;216;222;233m  $$[0m
+
+[38;2;216;222;233m  $$[0m
+[38;2;216;222;233m  I_3 = \begin{bmatrix} 1 & 0 & 0 \\ 0 & 1 & 0 \\ 0 & 0 & 1 \end{bmatrix}[0m
+[38;2;216;222;233m  $$[0m
+
+[1;38;2;129;161;193m## Aligned equations[0m
+
+[38;2;216;222;233m  $$[0m
+[38;2;216;222;233m  \begin{aligned}[0m
+[38;2;216;222;233m  (a + b)^2 &= (a + b)(a + b) \\[0m
+[38;2;216;222;233m            &= a^2 + 2ab + b^2[0m
+[38;2;216;222;233m  \end{aligned}[0m
+[38;2;216;222;233m  $$[0m
+
+[38;2;216;222;233m  $$[0m
+[38;2;216;222;233m  f(x) = \begin{cases} x^2 & \text{if } x \ge 0 \\ -x & \text{otherwise} \end{cases}[0m
+[38;2;216;222;233m  $$[0m
+
+[1;38;2;129;161;193m## Symbols, accents and delimiters[0m
+
+[38;2;216;222;233m  $$[0m
+[38;2;216;222;233m  \nabla \cdot \vec{E} = \frac{\rho}{\varepsilon_0}, \qquad[0m
+[38;2;216;222;233m  \nabla \times \vec{B} - \frac{1}{c^2} \frac{\partial \vec{E}}{\partial t} = \mu_0 \vec{J}[0m
+[38;2;216;222;233m  $$[0m
+
+[38;2;216;222;233m  $$[0m
+[38;2;216;222;233m  \left( \sum_{k=1}^{n} a_k b_k \right)^2 \le[0m
+[38;2;216;222;233m  \left( \sum_{k=1}^{n} a_k^2 \right) \left( \sum_{k=1}^{n} b_k^2 \right)[0m
+[38;2;216;222;233m  $$[0m
+
+[38;2;216;222;233m  $$[0m
+[38;2;216;222;233m  \hat{x}, \tilde{y}, \bar{z}, \overline{AB}, \underbrace{1 + \cdots + 1}_{n}[0m
+[38;2;216;222;233m  $$[0m
+
+[38;2;216;222;233m  $$[0m
+[38;2;216;222;233m  \mathbb{R}, \mathcal{L}, \mathfrak{g}, \mathbf{v}, \operatorname{tr}(A)[0m
+[38;2;216;222;233m  $$[0m
+
+[38;2;216;222;233m  $$[0m
+[38;2;216;222;233m  e^{i\pi} + 1 = 0[0m
+[38;2;216;222;233m  $$[0m
+
+[1;38;2;129;161;193m## Formulas that fall back to the source[0m
+
+[38;2;216;222;233m  $$[0m
+[38;2;216;222;233m  \frac{a}[0m
+[38;2;216;222;233m  $$[0m
+
+[38;2;216;222;233m  $$[0m
+[38;2;216;222;233m  \begin{pmatrix} a & b[0m
+[38;2;216;222;233m  $$[0m
+
+[38;2;216;222;233m  $$[0m
+[38;2;216;222;233m  \notarealcommand{x}[0m
+[38;2;216;222;233m  $$[0m
+
+[38;2;216;222;233m  $$[0m
+[38;2;216;222;233m  \text{速度} = \frac{d}{t}[0m
+[38;2;216;222;233m  $$[0m
+
+[38;2;216;222;233m  $$[0m
+[38;2;216;222;233m  \text{😀} + 1[0m
+[38;2;216;222;233m  $$[0m

@@ -682,13 +682,44 @@ fn math_source_survives_stdout_and_embed() {
     }
 }
 
+#[test]
+fn display_math_stays_source_outside_the_pager() {
+    for args in [
+        vec!["--no-pager", "--width", "80"],
+        vec!["--no-pager", "--width", "80", "--graphics", "off"],
+        vec!["embed", "--width", "80"],
+    ] {
+        let output = Command::new(env!("CARGO_BIN_EXE_mdx"))
+            .args(&args)
+            .arg("docs/examples/math-display.md")
+            .env("NO_COLOR", "1")
+            .env("MDX_GRAPHICS", "auto")
+            .output()
+            .expect("failed to run mdx");
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let text = String::from_utf8(output.stdout).unwrap();
+        assert!(
+            text.contains("  $$\n  \\sum_{i=1}^{n} i = \\frac{n(n+1)}{2}\n  $$\n"),
+            "{args:?}: {text}"
+        );
+        assert!(
+            text.contains("  $$\n  \\notarealcommand{x}\n  $$"),
+            "{args:?}: {text}"
+        );
+    }
+}
+
 fn graphics_fixture(name: &str) -> std::path::PathBuf {
     let dir = std::env::temp_dir().join("mdx_integration");
     std::fs::create_dir_all(&dir).expect("create fixture dir");
     let path = dir.join(format!("graphics_{name}.md"));
     std::fs::write(
         &path,
-        "# Graphics\n\n![logo](logo.png)\n\n```mermaid\ngraph TD\n    A --> B\n```\n",
+        "# Graphics\n\n![logo](logo.png)\n\n```mermaid\ngraph TD\n    A --> B\n```\n\n$$\n\\frac{a}{b}\n$$\n",
     )
     .expect("write fixture");
     path
