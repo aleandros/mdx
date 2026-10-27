@@ -121,6 +121,10 @@ pub(crate) fn typeset(tex: &str, color: Rgb, em_px: f64) -> anyhow::Result<Strin
         anyhow::bail!("formula too large");
     }
     keep_katex_glyphs(&mut list)?;
+    if list.items.is_empty() {
+        // Only spaces or `\phantom`: an image would be a blank area.
+        anyhow::bail!("nothing to draw");
+    }
     let options = ratex_svg::SvgOptions {
         font_size: em_px,
         padding: PADDING_EM * em_px,
@@ -340,6 +344,13 @@ mod tests {
         ] {
             let svg = typeset(tex, WHITE, 16.0).unwrap_or_else(|e| panic!("{tex}: {e}"));
             assert!(!svg.contains("<text"), "{tex}: {svg}");
+        }
+    }
+
+    #[test]
+    fn formulas_with_nothing_to_draw_fall_back() {
+        for tex in [r"\phantom{x}", "\u{2009}", r"\verb| |", r"\quad"] {
+            assert!(typeset(tex, WHITE, 16.0).is_err(), "{tex:?} typeset");
         }
     }
 

@@ -276,8 +276,9 @@ Fractions, sums and integrals with limits, matrices (`pmatrix`, `bmatrix`,
   a glyph the KaTeX fonts lack (such as non-Latin text in `\text{}`, or
   emoji), one longer than 16 KiB of source or larger than 4096 pixels, or one
   that would have to shrink below half its size to fit the content column
-  keeps its raw source, as above. A narrower content
-  column scales wider formulas down.
+  keeps its raw source, as above; so does a formula with nothing to draw
+  (only spaces or `\phantom`). A narrower content column scales wider
+  formulas down.
 
 Inline math (`$...$`) and display math inside list items stay raw source.
 Plain or piped output, `mdx embed`, `--graphics off` and `NO_COLOR` show the
