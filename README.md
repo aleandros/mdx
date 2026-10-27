@@ -45,8 +45,19 @@ The installer detects your OS and architecture and drops the binary in `/usr/loc
 ## Graphics
 
 mdx decides at startup whether the terminal can show pixel graphics. It turns
-graphics on only in the interactive pager, in kitty 0.28 or later, including
-inside tmux 3.3+ with passthrough enabled.
+graphics on only in the interactive pager, after a successful Kitty graphics
+query, in these terminals:
+
+| Terminal | Minimum version | Inside tmux 3.3+ with passthrough |
+| --- | --- | --- |
+| kitty | 0.28 | Supported |
+| Ghostty | 1.3.1 | Not enabled; outside tmux only |
+
+Ghostty 1.3.1 is the lowest version verified with mdx; older releases stay off.
+See the [verification notes](docs/graphics-verification.md) for the tested
+environment and a repeatable visual checklist.
+WezTerm and Konsole remain separate follow-ups and are not enabled.
+
 With graphics on, local PNG, JPEG and GIF images (`![alt](diagram.png)`) show
 inline, scaled to the content column; everywhere else they stay a text
 placeholder. Mermaid diagrams are drawn as images too, with real shapes and
