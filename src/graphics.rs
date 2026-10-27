@@ -44,10 +44,11 @@ const TMUX_FORMAT: &str = concat!(
 );
 
 /// Terminals with Unicode placeholder support, with their minimum version,
-/// matched against the `XTVERSION` reply. Ghostty's 1.0 minimum is source-backed;
-/// live pager verification is pending in docs/graphics-verification.md.
+/// matched against the `XTVERSION` reply. Ghostty 1.3.1 was verified by the user;
+/// see docs/graphics-verification.md. Keep the patch so untested 1.3.0 stays off.
 /// `WezTerm` and Konsole remain separate follow-ups.
-const PLACEHOLDER_ALLOWLIST: &[(&str, (u32, u32))] = &[("kitty", (0, 28)), ("ghostty", (1, 0))];
+const PLACEHOLDER_ALLOWLIST: &[(&str, (u32, u32, u32))] =
+    &[("kitty", (0, 28, 0)), ("ghostty", (1, 3, 1))];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, clap::ValueEnum)]
 #[serde(rename_all = "lowercase")]
@@ -408,9 +409,21 @@ fn decide_from_reply(reply: Option<&ProbeReply>) -> (bool, &'static str) {
     }
 }
 
-/// Parse `kitty(0.35.2)` or `ghostty 1.3.1` into its name and (major, minor)
-/// version. Patch and build suffixes do not affect the allowlist minimum.
-fn parse_version(text: &str) -> Option<(&str, (u32, u32))> {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct TerminalVersion {
+    release: (u32, u32, u32),
+    prerelease: bool,
+}
+
+impl TerminalVersion {
+    fn meets(self, minimum: (u32, u32, u32)) -> bool {
+        self.release > minimum || (self.release == minimum && !self.prerelease)
+    }
+}
+
+/// Parse `kitty(0.35.2)` or `ghostty 1.3.1` into its name and version.
+/// An omitted patch is zero; a prerelease precedes its corresponding release.
+fn parse_version(text: &str) -> Option<(&str, TerminalVersion)> {
     let text = text.trim();
     let (name, version) = if let Some((name, rest)) = text.split_once('(') {
         (name, rest.strip_suffix(')')?)
@@ -422,6 +435,10 @@ fn parse_version(text: &str) -> Option<(&str, (u32, u32))> {
         return None;
     }
     let version = version.trim();
+    let version = version.split_once('+').map_or(version, |(v, _)| v);
+    let (version, prerelease) = version
+        .split_once('-')
+        .map_or((version, false), |(v, _)| (v, true));
     let mut parts = version.split('.');
     let number = |part: &str| {
         (!part.is_empty() && part.bytes().all(|b| b.is_ascii_digit()))
@@ -430,10 +447,23 @@ fn parse_version(text: &str) -> Option<(&str, (u32, u32))> {
     };
     let major = number(parts.next()?)?;
     let minor = number(parts.next()?)?;
-    Some((name, (major, minor)))
+    let patch = match parts.next() {
+        Some(part) => number(part)?,
+        None => 0,
+    };
+    if parts.next().is_some() {
+        return None;
+    }
+    Some((
+        name,
+        TerminalVersion {
+            release: (major, minor, patch),
+            prerelease,
+        },
+    ))
 }
 
-fn placeholder_minimum(name: &str) -> Option<(u32, u32)> {
+fn placeholder_minimum(name: &str) -> Option<(u32, u32, u32)> {
     PLACEHOLDER_ALLOWLIST
         .iter()
         .find_map(|&(allowed, minimum)| name.eq_ignore_ascii_case(allowed).then_some(minimum))
@@ -443,7 +473,7 @@ fn placeholders_known(version: Option<&str>) -> bool {
     let Some((name, version)) = version.and_then(parse_version) else {
         return false;
     };
-    placeholder_minimum(name).is_some_and(|minimum| version >= minimum)
+    placeholder_minimum(name).is_some_and(|minimum| version.meets(minimum))
 }
 
 /// The bytes sent to the terminal: the graphics query, `XTVERSION`, the cell
@@ -770,13 +800,14 @@ fn report_reason(detection: &Detection) -> String {
         }) = &detection.probe
         && let Some((name, version)) = parse_version(text)
         && let Some(minimum) = placeholder_minimum(name)
-        && version < minimum
+        && !version.meets(minimum)
     {
         return format!(
-            "{} is below the Unicode placeholder minimum (requires {}.{} or later)",
+            "{} is below the Unicode placeholder minimum (requires {}.{}.{} or later)",
             printable(text),
             minimum.0,
             minimum.1,
+            minimum.2,
         );
     }
     detection.caps.reason.to_string()
@@ -1179,16 +1210,27 @@ mod tests {
 
     #[test]
     fn xtversion_accepts_parenthesized_and_space_separated_versions() {
-        for (text, name, version) in [
-            ("kitty(0.28.0)", "kitty", (0, 28)),
-            ("kitty(0.35.2)", "kitty", (0, 35)),
-            ("ghostty 1.0.0", "ghostty", (1, 0)),
-            ("ghostty 1.3.1", "ghostty", (1, 3)),
-            ("Ghostty 1.3.1-dev+abcdef", "Ghostty", (1, 3)),
-            ("  ghostty  1.3.1  ", "ghostty", (1, 3)),
-            ("kitty(0.28)", "kitty", (0, 28)),
+        for (text, name, release, prerelease) in [
+            ("kitty(0.28.0)", "kitty", (0, 28, 0), false),
+            ("kitty(0.35.2)", "kitty", (0, 35, 2), false),
+            ("ghostty 1.0.0", "ghostty", (1, 0, 0), false),
+            ("ghostty 1.3.1", "ghostty", (1, 3, 1), false),
+            ("Ghostty 1.3.1-dev+abcdef", "Ghostty", (1, 3, 1), true),
+            ("ghostty 1.3.1+abcdef", "ghostty", (1, 3, 1), false),
+            ("  ghostty  1.3.1  ", "ghostty", (1, 3, 1), false),
+            ("kitty(0.28)", "kitty", (0, 28, 0), false),
         ] {
-            assert_eq!(parse_version(text), Some((name, version)), "{text}");
+            assert_eq!(
+                parse_version(text),
+                Some((
+                    name,
+                    TerminalVersion {
+                        release,
+                        prerelease
+                    }
+                )),
+                "{text}"
+            );
         }
     }
 
@@ -1210,6 +1252,10 @@ mod tests {
             "ghostty 1.+3",
             "ghostty 4294967296.0",
             "ghostty 1.4294967296",
+            "ghostty 1.3.4294967296",
+            "ghostty 1.3.",
+            "ghostty 1.3.bad",
+            "ghostty 1.3.1.4",
         ] {
             assert_eq!(parse_version(text), None, "{text}");
             assert!(!placeholders_known(Some(text)), "{text}");
@@ -1228,10 +1274,19 @@ mod tests {
     #[test]
     fn placeholder_allowlist() {
         assert!(placeholders_known(Some("kitty(0.28.0)")));
+        assert!(placeholders_known(Some("kitty(0.28)")));
+        assert!(placeholders_known(Some("kitty(0.35.2-dev)")));
         assert!(placeholders_known(Some("kitty(1.0.0)")));
         assert!(!placeholders_known(Some("kitty(0.27.1)")));
-        assert!(placeholders_known(Some("ghostty 1.0.0")));
+        assert!(!placeholders_known(Some("kitty(0.28.0-rc1)")));
+        assert!(!placeholders_known(Some("ghostty 1.0.0")));
+        assert!(!placeholders_known(Some("ghostty 1.2.99")));
+        assert!(!placeholders_known(Some("ghostty 1.3")));
+        assert!(!placeholders_known(Some("ghostty 1.3.0")));
+        assert!(!placeholders_known(Some("ghostty 1.3.1-dev+abcdef")));
         assert!(placeholders_known(Some("ghostty 1.3.1")));
+        assert!(placeholders_known(Some("ghostty 1.3.1+abcdef")));
+        assert!(placeholders_known(Some("ghostty 1.3.2")));
         assert!(placeholders_known(Some("Ghostty 2.0.0")));
         assert!(!placeholders_known(Some("ghostty 0.9.9")));
         assert!(!placeholders_known(Some(
@@ -1250,7 +1305,12 @@ mod tests {
 
     #[test]
     fn old_terminal_report_names_detected_and_minimum_versions() {
-        for (version, minimum) in [("ghostty 0.9.9", "1.0"), ("kitty(0.27.1)", "0.28")] {
+        for (version, minimum) in [
+            ("ghostty 0.9.9", "1.3.1"),
+            ("ghostty 1.3.0", "1.3.1"),
+            ("ghostty 1.3.1-dev", "1.3.1"),
+            ("kitty(0.27.1)", "0.28.0"),
+        ] {
             let reply = ProbeReply {
                 graphics: GraphicsReply::Ok,
                 version: Some(version.to_string()),

@@ -9,10 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Recognize Ghostty's space-separated XTVERSION reply and enable graphics in
-  Ghostty 1.0+ outside tmux after a successful graphics query. Older terminal
+  Ghostty 1.3.1+ outside tmux after a successful graphics query. Older terminal
   versions report the detected version and required minimum. Ghostty inside
   tmux remains disabled; tmux graphics still require kitty 0.28+. The Ghostty
-  minimum is source-backed, pending live pager verification. (#31)
+  minimum is the lowest version verified with mdx, including its patch level.
+  (#31)
 
 ## [0.1.22] - 2026-10-26
 
