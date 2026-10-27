@@ -106,7 +106,7 @@ pub(crate) fn typeset(tex: &str, color: Rgb, em_px: f64) -> anyhow::Result<Strin
     ));
     let tree = ratex_layout::layout(&ast, &options);
     ratex_layout::validate_layout(&tree).map_err(|e| anyhow::anyhow!(e))?;
-    let list = ratex_layout::to_display_list(&tree);
+    let mut list = ratex_layout::to_display_list(&tree);
     let (w_em, h_em) = (
         list.width + 2.0 * PADDING_EM,
         list.height + list.depth + 2.0 * PADDING_EM,
@@ -120,7 +120,7 @@ pub(crate) fn typeset(tex: &str, color: Rgb, em_px: f64) -> anyhow::Result<Strin
     if w_em.max(h_em) * em_px > MAX_RASTER_PX {
         anyhow::bail!("formula too large");
     }
-    katex_glyphs_only(&list)?;
+    keep_katex_glyphs(&mut list)?;
     let options = ratex_svg::SvgOptions {
         font_size: em_px,
         padding: PADDING_EM * em_px,
@@ -130,26 +130,29 @@ pub(crate) fn typeset(tex: &str, color: Rgb, em_px: f64) -> anyhow::Result<Strin
     Ok(size_in_px(&ratex_svg::render_to_svg(&list, &options)))
 }
 
-/// Fail unless every glyph in `list` is in the embedded `KaTeX` fonts. `RaTeX`
-/// draws other glyphs from system fonts, and loading those prints to stderr
-/// (over the pager's screen) and, for emoji, reads a large color font whose
-/// bitmaps resvg here cannot draw. Mirrors the glyph lookup in `ratex-svg`.
-fn katex_glyphs_only(list: &DisplayList) -> anyhow::Result<()> {
+/// Make every glyph in `list` one `ratex-svg` draws from the embedded `KaTeX`
+/// fonts, or fail. Glyphs it cannot outline there, it draws from system
+/// fonts: loading those prints to stderr (over the pager's screen) and, for
+/// emoji, reads a large color font whose bitmaps resvg here cannot draw.
+///
+/// Mirrors the lookup in `ratex-svg`: a glyph is drawn when it has an outline
+/// in its own font or in Main-Regular. Glyphs those fonts have but cannot
+/// outline (spaces such as U+2009) draw nothing, so they are dropped. A glyph
+/// neither font has fails the formula, which then shows as source.
+fn keep_katex_glyphs(list: &mut DisplayList) -> anyhow::Result<()> {
     use ab_glyph::Font as _;
     use ratex_font::FontId;
-    let glyphs = || {
-        list.items.iter().filter_map(|item| match item {
-            DisplayItem::GlyphPath {
-                font, char_code, ..
-            } => Some((
-                FontId::parse(font).unwrap_or(FontId::MainRegular),
-                *char_code,
-            )),
-            _ => None,
-        })
+    let glyph = |item: &DisplayItem| match item {
+        DisplayItem::GlyphPath {
+            font, char_code, ..
+        } => Some((
+            FontId::parse(font).unwrap_or(FontId::MainRegular),
+            *char_code,
+        )),
+        _ => None,
     };
     // Checked first: loading the fonts for these ids would reach the system.
-    if glyphs().any(|(font, _)| {
+    if list.items.iter().filter_map(glyph).any(|(font, _)| {
         matches!(
             font,
             FontId::CjkRegular | FontId::CjkFallback | FontId::EmojiFallback
@@ -159,17 +162,36 @@ fn katex_glyphs_only(list: &DisplayList) -> anyhow::Result<()> {
     }
     let fonts = ratex_font_loader::load_fonts_for_items_parsed("", &list.items)
         .map_err(|e| anyhow::anyhow!(e))?;
-    for (font_id, char_code) in glyphs() {
-        let font = fonts
-            .get(&font_id)
-            .or_else(|| fonts.get(&FontId::MainRegular))
-            .ok_or_else(|| anyhow::anyhow!("KaTeX font {} missing", font_id.as_str()))?;
+    let main = fonts
+        .get(&FontId::MainRegular)
+        .ok_or_else(|| anyhow::anyhow!("KaTeX Main-Regular font missing"))?;
+    let has = |font: &ab_glyph::FontVec, ch: char| font.glyph_id(ch).0 != 0;
+    let outlined = |font: &ab_glyph::FontVec, ch: char| {
+        has(font, ch)
+            && font
+                .outline(font.glyph_id(ch))
+                .is_some_and(|outline| !outline.curves.is_empty())
+    };
+    let mut missing = None;
+    list.items.retain(|item| {
+        let Some((font_id, char_code)) = glyph(item) else {
+            return true;
+        };
+        let own = fonts.get(&font_id).unwrap_or(main);
         let ch = ratex_font::katex_ttf_glyph_char(font_id, char_code);
-        if font.glyph_id(ch).0 == 0 {
-            anyhow::bail!("no KaTeX glyph for {ch:?}");
+        if outlined(own, ch) || outlined(main, ch) {
+            true
+        } else {
+            if !has(own, ch) && !has(main, ch) {
+                missing = Some(ch);
+            }
+            false
         }
+    });
+    match missing {
+        Some(ch) => anyhow::bail!("no KaTeX glyph for {ch:?}"),
+        None => Ok(()),
     }
-    Ok(())
 }
 
 /// `svg` with its root `width` and `height` in pixels. `RaTeX` gives them in
@@ -224,7 +246,9 @@ mod tests {
             [
                 r"\frac{a}",
                 r"\begin{pmatrix} a & b",
-                r"\notarealcommand{x}"
+                r"\notarealcommand{x}",
+                r"\text{速度} = \frac{d}{t}",
+                r"\text{😀} + 1",
             ]
         );
     }
@@ -299,9 +323,23 @@ mod tests {
         for tex in [r"\text{α}", r"\text{日本}", r"\text{€}", r"\text{😀}", "😀"] {
             assert!(typeset(tex, WHITE, 16.0).is_err(), "{tex} typeset");
         }
-        // KaTeX itself covers these.
-        for tex in [r"\alpha", "α", r"\mathbb{R}", r"\text{é}", r"a \times b"] {
-            typeset(tex, WHITE, 16.0).unwrap_or_else(|e| panic!("{tex}: {e}"));
+        // KaTeX itself covers these. Blank glyphs (thin, en and em spaces,
+        // a space in `\verb` or `\char`) draw nothing and are dropped. Any
+        // `<text>` would mean a glyph left for system fonts.
+        for tex in [
+            r"\alpha",
+            "α",
+            r"\mathbb{R}",
+            r"\text{é}",
+            r"a \times b",
+            "1\u{2009}000",
+            "a\u{2002}b\u{2003}c\u{200A}d",
+            r"\verb|a b|",
+            r#"a\char"20 b"#,
+            r#"a\char"A0 b"#,
+        ] {
+            let svg = typeset(tex, WHITE, 16.0).unwrap_or_else(|e| panic!("{tex}: {e}"));
+            assert!(!svg.contains("<text"), "{tex}: {svg}");
         }
     }
 

@@ -101,3 +101,11 @@ $$
 $$
 \notarealcommand{x}
 $$
+
+$$
+\text{速度} = \frac{d}{t}
+$$
+
+$$
+\text{😀} + 1
+$$
