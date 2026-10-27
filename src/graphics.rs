@@ -43,10 +43,11 @@ const TMUX_FORMAT: &str = concat!(
     "\t#{&&:#{pane_active},#{&&:#{window_active},#{==:#{client_session},#{session_name}}}}",
 );
 
-/// Terminals whose Unicode placeholder support has been verified, with the
-/// first version that has it, matched against the `XTVERSION` reply.
-/// Ghostty, `WezTerm` and Konsole are candidates, not yet verified.
-const PLACEHOLDER_ALLOWLIST: &[(&str, (u32, u32))] = &[("kitty", (0, 28))];
+/// Terminals with Unicode placeholder support, with their minimum version,
+/// matched against the `XTVERSION` reply. Ghostty's 1.0 minimum is source-backed;
+/// live pager verification is pending in docs/graphics-verification.md.
+/// `WezTerm` and Konsole remain separate follow-ups.
+const PLACEHOLDER_ALLOWLIST: &[(&str, (u32, u32))] = &[("kitty", (0, 28)), ("ghostty", (1, 0))];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, clap::ValueEnum)]
 #[serde(rename_all = "lowercase")]
@@ -128,7 +129,7 @@ pub(crate) enum GraphicsReply {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ProbeReply {
     pub(crate) graphics: GraphicsReply,
-    /// `XTVERSION` text, e.g. `kitty(0.35.2)`.
+    /// `XTVERSION` text, e.g. `kitty(0.35.2)` or `ghostty 1.3.1`.
     pub(crate) version: Option<String>,
     /// Cell size from `CSI 16 t` as (width, height).
     pub(crate) cell_px: Option<(u16, u16)>,
@@ -350,9 +351,13 @@ fn decide_tmux(info: Option<&TmuxInfo>) -> Result<(), &'static str> {
             "tmux does not send 24-bit color to the terminal (add the RGB terminal feature)",
         );
     }
-    if !placeholders_known(Some(&info.termtype)) {
+    // Direct-terminal support does not imply verified tmux passthrough.
+    // Keep this gate kitty-only until other outer terminals are tested.
+    if !parse_version(&info.termtype).is_some_and(|(name, _)| name.eq_ignore_ascii_case("kitty"))
+        || !placeholders_known(Some(&info.termtype))
+    {
         return Err(
-            "the terminal outside tmux is unknown or its Unicode placeholder support is not verified",
+            "the terminal outside tmux is not verified for passthrough (requires kitty 0.28 or later)",
         );
     }
     if !info.active {
@@ -403,24 +408,42 @@ fn decide_from_reply(reply: Option<&ProbeReply>) -> (bool, &'static str) {
     }
 }
 
-/// Parse an `XTVERSION` reply such as `kitty(0.35.2)` into its name and
-/// (major, minor) version.
+/// Parse `kitty(0.35.2)` or `ghostty 1.3.1` into its name and (major, minor)
+/// version. Patch and build suffixes do not affect the allowlist minimum.
 fn parse_version(text: &str) -> Option<(&str, (u32, u32))> {
-    let (name, rest) = text.split_once('(')?;
-    let version = rest.strip_suffix(')')?;
+    let text = text.trim();
+    let (name, version) = if let Some((name, rest)) = text.split_once('(') {
+        (name, rest.strip_suffix(')')?)
+    } else {
+        text.split_once(char::is_whitespace)?
+    };
+    let name = name.trim();
+    if name.is_empty() {
+        return None;
+    }
+    let version = version.trim();
     let mut parts = version.split('.');
-    let major = parts.next()?.parse().ok()?;
-    let minor = parts.next()?.parse().ok()?;
-    Some((name.trim(), (major, minor)))
+    let number = |part: &str| {
+        (!part.is_empty() && part.bytes().all(|b| b.is_ascii_digit()))
+            .then(|| part.parse().ok())
+            .flatten()
+    };
+    let major = number(parts.next()?)?;
+    let minor = number(parts.next()?)?;
+    Some((name, (major, minor)))
+}
+
+fn placeholder_minimum(name: &str) -> Option<(u32, u32)> {
+    PLACEHOLDER_ALLOWLIST
+        .iter()
+        .find_map(|&(allowed, minimum)| name.eq_ignore_ascii_case(allowed).then_some(minimum))
 }
 
 fn placeholders_known(version: Option<&str>) -> bool {
     let Some((name, version)) = version.and_then(parse_version) else {
         return false;
     };
-    PLACEHOLDER_ALLOWLIST
-        .iter()
-        .any(|&(allowed, minimum)| name.eq_ignore_ascii_case(allowed) && version >= minimum)
+    placeholder_minimum(name).is_some_and(|minimum| version >= minimum)
 }
 
 /// The bytes sent to the terminal: the graphics query, `XTVERSION`, the cell
@@ -735,6 +758,30 @@ fn printable(text: &str) -> String {
     text.chars().filter(|c| !c.is_control()).collect()
 }
 
+/// Add version details only when the direct graphics query succeeded but the
+/// terminal is below its allowlist minimum. Preserve other failure reasons.
+fn report_reason(detection: &Detection) -> String {
+    if !detection.caps.supported
+        && !detection.caps.via_tmux
+        && let Probe::Answered(ProbeReply {
+            graphics: GraphicsReply::Ok,
+            version: Some(text),
+            ..
+        }) = &detection.probe
+        && let Some((name, version)) = parse_version(text)
+        && let Some(minimum) = placeholder_minimum(name)
+        && version < minimum
+    {
+        return format!(
+            "{} is below the Unicode placeholder minimum (requires {}.{} or later)",
+            printable(text),
+            minimum.0,
+            minimum.1,
+        );
+    }
+    detection.caps.reason.to_string()
+}
+
 /// Human-readable report for `--debug-graphics`.
 pub(crate) fn report(setting: GraphicsSetting, detection: &Detection) -> String {
     let caps = &detection.caps;
@@ -788,7 +835,7 @@ pub(crate) fn report(setting: GraphicsSetting, detection: &Detection) -> String 
     format!(
         "graphics: {}\nreason: {}\nsetting: {mode} (from {source})\nquery: {probe}\nterminal: {terminal}\ncell size: {cell}\ntmux: {tmux}\n",
         if caps.supported { "on" } else { "off" },
-        caps.reason,
+        report_reason(detection),
     )
 }
 
@@ -1100,6 +1147,76 @@ mod tests {
     }
 
     #[test]
+    fn parse_full_ghostty_reply() {
+        let buf = concat(&[
+            &graphics_ok(),
+            b"\x1bP>|ghostty 1.3.1\x1b\\",
+            b"\x1b[6;34;16t",
+            DA1,
+        ]);
+        let reply = parse_reply(&buf, ID, ReplyEnd::Da1).unwrap();
+        assert_eq!(reply.version.as_deref(), Some("ghostty 1.3.1"));
+        assert_eq!(reply.cell_px, Some((16, 34)));
+        let (supported, reason) = decide_from_reply(Some(&reply));
+        assert!(supported, "{reason}");
+        let detection = Detection {
+            caps: GraphicsCaps {
+                supported,
+                reason,
+                cell_px: (16, 34),
+                via_tmux: false,
+            },
+            probe: Probe::Answered(reply),
+            tmux: None,
+        };
+        let text = report(
+            setting(GraphicsMode::Auto, SettingSource::Default),
+            &detection,
+        );
+        assert!(text.starts_with("graphics: on\n"), "{text}");
+        assert!(text.contains("terminal: ghostty 1.3.1\n"), "{text}");
+    }
+
+    #[test]
+    fn xtversion_accepts_parenthesized_and_space_separated_versions() {
+        for (text, name, version) in [
+            ("kitty(0.28.0)", "kitty", (0, 28)),
+            ("kitty(0.35.2)", "kitty", (0, 35)),
+            ("ghostty 1.0.0", "ghostty", (1, 0)),
+            ("ghostty 1.3.1", "ghostty", (1, 3)),
+            ("Ghostty 1.3.1-dev+abcdef", "Ghostty", (1, 3)),
+            ("  ghostty  1.3.1  ", "ghostty", (1, 3)),
+            ("kitty(0.28)", "kitty", (0, 28)),
+        ] {
+            assert_eq!(parse_version(text), Some((name, version)), "{text}");
+        }
+    }
+
+    #[test]
+    fn xtversion_rejects_missing_or_malformed_versions() {
+        for text in [
+            "",
+            "ghostty",
+            "ghostty ",
+            "ghostty 1",
+            "ghostty 1.",
+            "ghostty .3",
+            "ghostty one.3",
+            "ghostty 1.three",
+            "(1.3.1)",
+            "kitty(0.28",
+            "kitty(0.28)junk",
+            "ghostty +1.3",
+            "ghostty 1.+3",
+            "ghostty 4294967296.0",
+            "ghostty 1.4294967296",
+        ] {
+            assert_eq!(parse_version(text), None, "{text}");
+            assert!(!placeholders_known(Some(text)), "{text}");
+        }
+    }
+
+    #[test]
     fn parse_skips_unrelated_bytes() {
         let buf = concat(&[b"jk\x1bOA", &graphics_ok(), b"x\x1b[1;5A", DA1]);
         assert_eq!(
@@ -1113,18 +1230,77 @@ mod tests {
         assert!(placeholders_known(Some("kitty(0.28.0)")));
         assert!(placeholders_known(Some("kitty(1.0.0)")));
         assert!(!placeholders_known(Some("kitty(0.27.1)")));
+        assert!(placeholders_known(Some("ghostty 1.0.0")));
+        assert!(placeholders_known(Some("ghostty 1.3.1")));
+        assert!(placeholders_known(Some("Ghostty 2.0.0")));
+        assert!(!placeholders_known(Some("ghostty 0.9.9")));
         assert!(!placeholders_known(Some(
             "WezTerm 20240203-110809-5046fc22"
         )));
-        assert!(!placeholders_known(Some("ghostty 1.1.0")));
+        assert!(!placeholders_known(Some("Konsole 25.04.0")));
         assert!(!placeholders_known(None));
     }
 
     #[test]
     fn graphics_ok_without_allowlisted_terminal_is_off() {
-        let buf = concat(&[&graphics_ok(), b"\x1bP>|ghostty 1.1.0\x1b\\", DA1]);
+        let buf = concat(&[&graphics_ok(), b"\x1bP>|Konsole 25.04.0\x1b\\", DA1]);
         let reply = parse_reply(&buf, ID, ReplyEnd::Da1).unwrap();
         assert!(!decide_from_reply(Some(&reply)).0);
+    }
+
+    #[test]
+    fn old_terminal_report_names_detected_and_minimum_versions() {
+        for (version, minimum) in [("ghostty 0.9.9", "1.0"), ("kitty(0.27.1)", "0.28")] {
+            let reply = ProbeReply {
+                graphics: GraphicsReply::Ok,
+                version: Some(version.to_string()),
+                cell_px: None,
+            };
+            let (supported, reason) = decide_from_reply(Some(&reply));
+            assert!(!supported, "{version}");
+            let detection = Detection {
+                caps: GraphicsCaps::unsupported(reason),
+                probe: Probe::Answered(reply),
+                tmux: None,
+            };
+            let text = report(
+                setting(GraphicsMode::Auto, SettingSource::Default),
+                &detection,
+            );
+            let reason = text
+                .lines()
+                .find(|line| line.starts_with("reason:"))
+                .unwrap();
+            assert!(reason.contains(version), "{text}");
+            assert!(
+                reason.contains(&format!("requires {minimum} or later")),
+                "{text}"
+            );
+        }
+    }
+
+    #[test]
+    fn terminal_version_does_not_override_a_failed_graphics_query() {
+        for version in ["ghostty 1.3.1", "ghostty 0.9.9", "kitty(0.28.0)"] {
+            for graphics in [
+                GraphicsReply::NoAnswer,
+                GraphicsReply::Error("EINVAL".into()),
+            ] {
+                let reply = ProbeReply {
+                    graphics,
+                    version: Some(version.to_string()),
+                    cell_px: None,
+                };
+                let (supported, reason) = decide_from_reply(Some(&reply));
+                assert!(!supported, "{version}");
+                let detection = Detection {
+                    caps: GraphicsCaps::unsupported(reason),
+                    probe: Probe::Answered(reply),
+                    tmux: None,
+                };
+                assert_eq!(report_reason(&detection), reason, "{version}");
+            }
+        }
     }
 
     #[test]
@@ -1321,7 +1497,13 @@ mod tests {
 
     #[test]
     fn tmux_in_unverified_terminal_resolves_off_without_asking() {
-        for termtype in ["", "ghostty 1.1.0", "kitty(0.27.0)"] {
+        for termtype in [
+            "",
+            "ghostty 1.0.0",
+            "ghostty 1.3.1",
+            "ghostty 2.0.0",
+            "kitty(0.27.0)",
+        ] {
             let info = TmuxInfo {
                 termtype: termtype.to_string(),
                 ..kitty_in_tmux()

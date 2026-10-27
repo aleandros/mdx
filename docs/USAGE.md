@@ -90,8 +90,10 @@ An invalid `MDX_GRAPHICS` value is ignored with a warning.
    milliseconds; a terminal that never answers gives up after 1 s (2 s over
    SSH) and means no graphics. Waiting for DA1 keeps a slow reply from
    reaching the pager as keystrokes.
-3. The terminal is known to support Unicode placeholders. Only kitty 0.28 or
-   later is on this list; other terminals are added once verified.
+3. The terminal's `XTVERSION` identifies kitty 0.28+ or Ghostty 1.0+.
+   Both `name(version)` and `name version` replies are accepted. Older versions
+   stay off, and `--debug-graphics` names the detected and required versions.
+   Ghostty's minimum is source-backed, with [live verification pending](graphics-verification.md).
 4. Inside tmux (`TMUX` is set), tmux can pass graphics through to the
    terminal outside it; see [tmux](#tmux) for the extra conditions.
 
@@ -141,6 +143,9 @@ addition to the first rule above:
 5. The Kitty graphics query, sent in a passthrough sequence, is answered
    through tmux within 1 s (2 s over SSH). tmux answers DA1 itself, so mdx
    waits for the graphics reply instead.
+
+Ghostty inside tmux is not enabled. Its direct-terminal support does not extend
+the kitty-only tmux check.
 
 mdx reads these settings with `tmux display-message` (and `tmux
 show-messages -T` for the terminal description) and shows them, and the
