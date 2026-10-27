@@ -73,7 +73,8 @@ impl MathImage {
     }
 
     /// Typeset and rasterize the formula for cells of `cell_px` pixels. The
-    /// image is a whole number of cells in each direction.
+    /// image is a whole number of cells in each direction. Fails when nothing
+    /// was drawn (`\frac{}{}`), so the source shows instead of a blank area.
     pub(crate) fn rasterize(&self, cell_px: (u16, u16)) -> anyhow::Result<Raster> {
         let (cw, ch) = if cell_px.0 == 0 || cell_px.1 == 0 {
             crate::kitty::FALLBACK_CELL_PX
@@ -81,12 +82,17 @@ impl MathImage {
             cell_px
         };
         let svg = typeset(&self.tex, self.color, f64::from(ch) * EM_PER_ROW)?;
-        crate::mermaid::svg::rasterize_centered(&svg, |(w, h)| {
+        let raster = crate::mermaid::svg::rasterize_centered(&svg, |(w, h)| {
             (
                 w.div_ceil(u32::from(cw)) * u32::from(cw),
                 h.div_ceil(u32::from(ch)) * u32::from(ch),
             )
-        })
+        })?;
+        let pixels = image::load_from_memory(&raster.png)?.to_rgba8();
+        if pixels.pixels().all(|p| p.0[3] == 0) {
+            anyhow::bail!("nothing drawn");
+        }
+        Ok(raster)
     }
 }
 
@@ -239,10 +245,12 @@ mod tests {
     fn typesetting_never_panics_on_the_corpus() {
         let corpus = corpus();
         assert!(corpus.len() >= 15, "corpus has {} formulas", corpus.len());
-        // The corpus ends with formulas meant to fall back to their source.
+        // The corpus ends with formulas meant to fall back to their source;
+        // the rest typeset and rasterize.
+        let theme = crate::theme::Theme::default_theme();
         let failing: Vec<&str> = corpus
             .iter()
-            .filter(|tex| typeset(tex, WHITE, 16.0).is_err())
+            .filter(|tex| MathImage::new(tex, theme).rasterize((10, 20)).is_err())
             .map(|tex| tex.trim())
             .collect();
         assert_eq!(
@@ -349,8 +357,23 @@ mod tests {
 
     #[test]
     fn formulas_with_nothing_to_draw_fall_back() {
-        for tex in [r"\phantom{x}", "\u{2009}", r"\verb| |", r"\quad"] {
-            assert!(typeset(tex, WHITE, 16.0).is_err(), "{tex:?} typeset");
+        let error = |tex: &str| typeset(tex, WHITE, 16.0).unwrap_err().to_string();
+        for (tex, expected) in [
+            // No ink at all, or only glyphs that turn out blank.
+            (r"\phantom{x}", "nothing to draw"),
+            (r#"\char"2003"#, "nothing to draw"),
+            // No height: rejected before the glyphs are checked.
+            (r"\verb| |", "empty formula"),
+            ("\u{2009}", "empty formula"),
+            (r"\quad", "empty formula"),
+        ] {
+            assert_eq!(error(tex), expected, "{tex:?}");
+        }
+        // Items that draw no pixels.
+        let theme = crate::theme::Theme::default_theme();
+        for tex in [r"\frac{}{}", r"\rule[-1em]{1em}{0pt}"] {
+            let err = MathImage::new(tex, theme).rasterize((10, 20)).unwrap_err();
+            assert!(err.to_string().contains("nothing"), "{tex}: {err}");
         }
     }
 
