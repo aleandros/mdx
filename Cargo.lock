@@ -1246,6 +1246,7 @@ dependencies = [
 name = "mermd"
 version = "0.1.22"
 dependencies = [
+ "ab_glyph",
  "anyhow",
  "clap",
  "crossterm",
@@ -1256,6 +1257,8 @@ dependencies = [
  "proptest",
  "pulldown-cmark",
  "ratatui",
+ "ratex-font",
+ "ratex-font-loader",
  "ratex-layout",
  "ratex-parser",
  "ratex-svg",

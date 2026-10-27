@@ -1016,6 +1016,29 @@ mod tests {
     }
 
     #[test]
+    fn a_new_cell_size_typesets_math_again() {
+        let formula = math(r"\frac{a}{b}");
+        let mut store = ImageStore::new(PathBuf::from("/docs"), (10, 20));
+        store.math(&formula, 80);
+        wait_for(&mut store);
+        let small = store.math(&formula, 80).unwrap();
+        store.take_output();
+        store.set_cell_px((20, 40));
+        assert_eq!(
+            store.take_output(),
+            kitty::delete(small.id),
+            "old size deleted"
+        );
+        // The source shows while the new size typesets.
+        assert_eq!(store.math(&formula, 80), None);
+        wait_for(&mut store);
+        let large = store.math(&formula, 80).unwrap();
+        assert_ne!(large.id, small.id);
+        // Typeset for the cell size, so it takes the same cells.
+        assert_eq!((large.cols, large.rows), (small.cols, small.rows));
+    }
+
+    #[test]
     fn math_is_kept_by_retain_diagrams_while_referenced() {
         let formula = math("x");
         let mut store = ImageStore::for_tests(PathBuf::from("/docs"), (10, 20));

@@ -28,12 +28,15 @@ name = "mdx"
 path = "src/main.rs"
 
 [dependencies]
+ab_glyph = "0.2"
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 crossterm = "0.29"
 image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "gif"] }
 notify = "6"
 pulldown-cmark = "0.12"
+ratex-font = "0.1.15"
+ratex-font-loader = "0.1.15"
 ratex-layout = "0.1.15"
 ratex-parser = "0.1.15"
 ratex-svg = { version = "0.1.15", features = ["embed-fonts"] }

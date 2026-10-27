@@ -16,9 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   many rows as they need, are centered in the content column, and use the
   theme's body text color on a transparent background. They typeset on the
   image thread and are cached by source, theme and cell size. Search finds a
-  formula by its source. A formula that fails to typeset, is larger than 4096
-  pixels, or would shrink below half its size to fit the column keeps the raw
-  source from #13; so do inline math, display math in list items, plain and
+  formula by its source. A formula that fails to typeset, needs a glyph the
+  KaTeX fonts lack (non-Latin `\text{}`, emoji), is longer than 16 KiB or
+  larger than 4096 pixels, or would shrink below half its size to fit the
+  column keeps the raw source from #13; so do inline math, display math in list items, plain and
   piped output, `mdx embed`, `--graphics off` and `NO_COLOR`. A corpus of
   formulas is in `docs/examples/math-display.md`. (#19)
 

@@ -12,6 +12,7 @@
 use std::hash::{Hash, Hasher};
 
 use ratex_types::color::Color;
+use ratex_types::display_item::{DisplayItem, DisplayList};
 
 use crate::mermaid::svg::Raster;
 
@@ -22,6 +23,10 @@ const EM_PER_ROW: f64 = 0.8;
 /// Blank space around the formula, in ems, so glyph ink that overhangs its
 /// box (italic corrections, accents) is not cut off.
 const PADDING_EM: f64 = 0.1;
+
+/// Longest TeX source typeset, in bytes. Longer formulas show as source, so
+/// pathological input cannot hold the image worker for seconds.
+const MAX_TEX_BYTES: usize = 16 * 1024;
 
 /// Longest side of a rasterized formula, in pixels. A larger one would have
 /// to shrink far below the text size to fit the content column, so it is
@@ -86,9 +91,13 @@ impl MathImage {
 }
 
 /// Typeset `tex` in display style as a self-contained SVG with `em_px`
-/// pixels per em. Fails on invalid TeX, an empty formula, or one larger than
-/// [`MAX_RASTER_PX`].
+/// pixels per em. Fails on invalid TeX, an empty formula, one longer than
+/// [`MAX_TEX_BYTES`] or larger than [`MAX_RASTER_PX`], and one that needs a
+/// glyph the `KaTeX` fonts lack.
 pub(crate) fn typeset(tex: &str, color: Rgb, em_px: f64) -> anyhow::Result<String> {
+    if tex.len() > MAX_TEX_BYTES {
+        anyhow::bail!("formula source too long");
+    }
     let ast = ratex_parser::parse(tex).map_err(|e| anyhow::anyhow!("{e}"))?;
     let options = ratex_layout::LayoutOptions::default().with_color(Color::rgb(
         f32::from(color.0) / 255.0,
@@ -111,6 +120,7 @@ pub(crate) fn typeset(tex: &str, color: Rgb, em_px: f64) -> anyhow::Result<Strin
     if w_em.max(h_em) * em_px > MAX_RASTER_PX {
         anyhow::bail!("formula too large");
     }
+    katex_glyphs_only(&list)?;
     let options = ratex_svg::SvgOptions {
         font_size: em_px,
         padding: PADDING_EM * em_px,
@@ -118,6 +128,48 @@ pub(crate) fn typeset(tex: &str, color: Rgb, em_px: f64) -> anyhow::Result<Strin
         ..Default::default()
     };
     Ok(size_in_px(&ratex_svg::render_to_svg(&list, &options)))
+}
+
+/// Fail unless every glyph in `list` is in the embedded `KaTeX` fonts. `RaTeX`
+/// draws other glyphs from system fonts, and loading those prints to stderr
+/// (over the pager's screen) and, for emoji, reads a large color font whose
+/// bitmaps resvg here cannot draw. Mirrors the glyph lookup in `ratex-svg`.
+fn katex_glyphs_only(list: &DisplayList) -> anyhow::Result<()> {
+    use ab_glyph::Font as _;
+    use ratex_font::FontId;
+    let glyphs = || {
+        list.items.iter().filter_map(|item| match item {
+            DisplayItem::GlyphPath {
+                font, char_code, ..
+            } => Some((
+                FontId::parse(font).unwrap_or(FontId::MainRegular),
+                *char_code,
+            )),
+            _ => None,
+        })
+    };
+    // Checked first: loading the fonts for these ids would reach the system.
+    if glyphs().any(|(font, _)| {
+        matches!(
+            font,
+            FontId::CjkRegular | FontId::CjkFallback | FontId::EmojiFallback
+        )
+    }) {
+        anyhow::bail!("formula needs a font other than KaTeX");
+    }
+    let fonts = ratex_font_loader::load_fonts_for_items_parsed("", &list.items)
+        .map_err(|e| anyhow::anyhow!(e))?;
+    for (font_id, char_code) in glyphs() {
+        let font = fonts
+            .get(&font_id)
+            .or_else(|| fonts.get(&FontId::MainRegular))
+            .ok_or_else(|| anyhow::anyhow!("KaTeX font {} missing", font_id.as_str()))?;
+        let ch = ratex_font::katex_ttf_glyph_char(font_id, char_code);
+        if font.glyph_id(ch).0 == 0 {
+            anyhow::bail!("no KaTeX glyph for {ch:?}");
+        }
+    }
+    Ok(())
 }
 
 /// `svg` with its root `width` and `height` in pixels. `RaTeX` gives them in
@@ -238,6 +290,25 @@ mod tests {
         ] {
             assert!(typeset(tex, WHITE, 16.0).is_err(), "{tex:?} typeset");
         }
+    }
+
+    #[test]
+    fn glyphs_outside_the_katex_fonts_fall_back() {
+        // These would come from system fonts, which RaTeX loads with output
+        // on stderr; emoji would be drawn as bitmaps resvg here drops.
+        for tex in [r"\text{α}", r"\text{日本}", r"\text{€}", r"\text{😀}", "😀"] {
+            assert!(typeset(tex, WHITE, 16.0).is_err(), "{tex} typeset");
+        }
+        // KaTeX itself covers these.
+        for tex in [r"\alpha", "α", r"\mathbb{R}", r"\text{é}", r"a \times b"] {
+            typeset(tex, WHITE, 16.0).unwrap_or_else(|e| panic!("{tex}: {e}"));
+        }
+    }
+
+    #[test]
+    fn very_long_sources_are_not_typeset() {
+        let tex = "x".repeat(MAX_TEX_BYTES + 1);
+        assert!(typeset(&tex, WHITE, 16.0).is_err());
     }
 
     #[test]

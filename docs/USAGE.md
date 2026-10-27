@@ -272,9 +272,11 @@ Fractions, sums and integrals with limits, matrices (`pmatrix`, `bmatrix`,
 - Formulas typeset on the same background thread as images; the source shows
   until the image is ready. Typeset formulas are cached by source, theme and
   cell size.
-- A formula that does not typeset (invalid or unsupported TeX), one larger
-  than 4096 pixels, or one that would have to shrink below half its size to
-  fit the content column keeps its raw source, as above. A narrower content
+- A formula that does not typeset (invalid or unsupported TeX), one that needs
+  a glyph the KaTeX fonts lack (such as non-Latin text in `\text{}`, or
+  emoji), one longer than 16 KiB of source or larger than 4096 pixels, or one
+  that would have to shrink below half its size to fit the content column
+  keeps its raw source, as above. A narrower content
   column scales wider formulas down.
 
 Inline math (`$...$`) and display math inside list items stay raw source.
